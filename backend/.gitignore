@@ -1,0 +1,22 @@
+# Local environment / secrets (never commit)
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+
+# Credentials / key material
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+credentials.json
+service-account*.json
+firebase-service-account.json

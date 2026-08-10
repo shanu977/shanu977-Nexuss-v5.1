@@ -1,0 +1,131 @@
+import logging
+import os
+import uuid
+from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..models import User, UserSettings
+from ..models.models import utc_now_ms
+from ..services import firebase_service
+
+logger = logging.getLogger("uvicorn.error")
+
+LOCAL_USER_ID = "test-uid-1"
+
+
+def get_current_user(
+    authorization: str | None = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> User:
+    """Centralized authentication dependency.
+
+    1. Reads Authorization header (`Bearer <Firebase ID Token>`).
+    2. Verifies token with Firebase Admin SDK.
+    3. Extracts verified Firebase UID, email, and name.
+    4. Looks up application user by firebase_uid (or email fallback).
+    5. Syncs/provisions user and default UserSettings if new.
+    6. Returns verified User instance.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header. Expected Bearer token.",
+        )
+
+    token = authorization.split("Bearer ", 1)[1].strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Empty Authorization token.",
+        )
+
+    # Handle test environment / mock tokens during unit test execution ONLY.
+    # Guarded by PYTEST_CURRENT_TEST so mock tokens can never authenticate in
+    # development or production (they bypass Firebase token verification).
+    if os.environ.get("PYTEST_CURRENT_TEST") and token.startswith("test-mock-token"):
+        # Allow test tokens such as "test-mock-token" or "test-mock-token-user2"
+        mock_uid = "test-uid-1" if token == "test-mock-token" else f"test-uid-{token}"
+        mock_email = "test@example.com" if token == "test-mock-token" else f"{token}@example.com"
+        decoded = {
+            "uid": mock_uid,
+            "email": mock_email,
+            "name": "Test User",
+            "picture": None,
+        }
+    else:
+        try:
+            decoded = firebase_service.verify_id_token(token)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(exc),
+            )
+
+    uid = decoded.get("uid")
+    if not uid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token payload missing uid",
+        )
+
+    email = decoded.get("email") or f"{uid}@firebase.user"
+    name = decoded.get("name") or email.split("@")[0]
+    photo_url = decoded.get("picture")
+
+    # 1. Search user by firebase_uid
+    user = db.scalar(select(User).where(User.firebase_uid == uid))
+    if user is not None:
+        return user
+
+    # 2. Search user by email as fallback
+    user = db.scalar(select(User).where(User.email == email))
+    if user is not None:
+        user.firebase_uid = uid
+        if photo_url:
+            user.photo_url = photo_url
+        user.updated_at = utc_now_ms()
+        db.commit()
+        db.refresh(user)
+        return user
+
+    # 3. Create new application user
+    new_id = uid
+    user = User(
+        id=new_id,
+        firebase_uid=uid,
+        email=email,
+        name=name,
+        photo_url=photo_url,
+        provider="firebase",
+        created_at=utc_now_ms(),
+        updated_at=utc_now_ms(),
+    )
+    db.add(user)
+    try:
+        db.flush()
+        settings = UserSettings(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            theme="light",
+            language="en",
+            provider="groq",
+            model="llama-3.3-70b-versatile",
+            updated_at=utc_now_ms(),
+        )
+        db.add(settings)
+        db.commit()
+        db.refresh(user)
+    except IntegrityError:
+        db.rollback()
+        user = db.scalar(select(User).where(User.firebase_uid == uid))
+        if user is None:
+            user = db.scalar(select(User).where(User.email == email))
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="User provisioning race condition failed.",
+            )
+    return user
