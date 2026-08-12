@@ -74,23 +74,54 @@ class Settings(BaseSettings):
     # does not return a Retry-After / reset hint).
     ai_fallback_cooldown_seconds: int = 30
 
-    cors_origins: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:8080",
-    ]
+    # Browser origins allowed to call this backend (CORS). Kept as a plain
+    # string so Pydantic Settings never attempts to JSON-decode the variable
+    # before our own parser runs (a bare URL like "https://app.example.com"
+    # is not valid JSON and crashed startup with SettingsError). Split into a
+    # list via the cors_origins_list property. Override in production with the
+    # CORS_ORIGINS env var: comma-separated values, or a JSON list for
+    # backward compatibility. Whitespace, trailing slashes and duplicates are
+    # normalized away when parsing.
+    cors_origins: str = Field(
+        default=(
+            "http://localhost:3000,http://localhost:3001,http://localhost:8080,"
+            "https://shanu977-nexuss-v5-1.vercel.app"
+        ),
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v):
-        if isinstance(v, str):
-            if v.startswith("["):
-                try:
-                    return json.loads(v)
-                except Exception:
-                    pass
-            return [item.strip() for item in v.split(",") if item.strip()]
+    def cors_origins_to_string(cls, v):
+        # Programmatic callers (and tests) may pass a real list; normalize it
+        # to a comma-separated string before storing.
+        if isinstance(v, (list, tuple)):
+            return ",".join(str(x) for x in v)
         return v
+
+    @property
+    def cors_origins_list(self) -> List[str]:
+        raw = self.cors_origins
+        if isinstance(raw, (list, tuple)):
+            items = raw
+        elif isinstance(raw, str):
+            raw = raw.strip()
+            if raw.startswith("["):
+                try:
+                    items = json.loads(raw)
+                except Exception:
+                    items = raw.split(",")
+            else:
+                items = raw.split(",")
+        elif raw is None:
+            items = []
+        else:
+            items = [raw]
+        normalized: List[str] = []
+        for item in items:
+            item = str(item).strip().rstrip("/")
+            if item and item not in normalized:
+                normalized.append(item)
+        return normalized
 
     @field_validator("firebase_credentials_path", mode="after")
     @classmethod
@@ -153,7 +184,7 @@ class Settings(BaseSettings):
             )
 
         local_origins = [
-            o for o in self.cors_origins
+            o for o in self.cors_origins_list
             if "localhost" in o or "127.0.0.1" in o
         ]
         if local_origins:
