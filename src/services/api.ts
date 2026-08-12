@@ -1,10 +1,25 @@
 import { auth } from "@/lib/firebase";
 
-const BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+).replace(/\/$/, "");
 
 export class ApiError extends Error {
   status: number;
-  attempts?: { provider: string; model: string; attempt: number; status: string; input_tokens: number; output_tokens: number; total_tokens: number; response_time_ms: number; http_status?: number | null; reason?: string | null; timestamp: number }[];
+
+  attempts?: {
+    provider: string;
+    model: string;
+    attempt: number;
+    status: string;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    response_time_ms: number;
+    http_status?: number | null;
+    reason?: string | null;
+    timestamp: number;
+  }[];
 
   constructor(
     status: number,
@@ -22,8 +37,10 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
+
   try {
     const currentUser = auth.currentUser;
+
     if (currentUser) {
       const token = await currentUser.getIdToken();
       headers["Authorization"] = `Bearer ${token}`;
@@ -31,11 +48,16 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   } catch (err) {
     console.error("Failed to retrieve auth token:", err);
   }
+
   return headers;
 }
 
-export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<T> {
   let res: Response;
+
   const defaultHeaders = await getAuthHeaders();
 
   try {
@@ -54,25 +76,34 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   if (!res.ok) {
     let detail = res.statusText || `Request failed (${res.status})`;
     let attempts: ApiError["attempts"];
+
     try {
       const body = await res.json();
+
       if (body && typeof body.detail === "string") {
         detail = body.detail;
-      } else if (body && Array.isArray(body.detail) && body.detail.length > 0) {
+      } else if (
+        body &&
+        Array.isArray(body.detail) &&
+        body.detail.length > 0
+      ) {
         const first = body.detail[0];
         detail = first?.msg || first?.message || detail;
       }
+
       if (body && Array.isArray(body.attempts)) {
         attempts = body.attempts;
       }
     } catch {
-      // ignore parse errors, keep statusText
+      // Ignore JSON parsing errors.
     }
+
     throw new ApiError(res.status, detail, attempts);
   }
 
   if (res.status === 204) {
     return undefined as T;
   }
+
   return (await res.json()) as T;
 }
