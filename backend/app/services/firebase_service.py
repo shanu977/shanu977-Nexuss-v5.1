@@ -1,5 +1,6 @@
 import logging
 import os
+from urllib.parse import quote
 
 from ..config import settings
 
@@ -27,12 +28,26 @@ def _build_credential_from_components():
         from firebase_admin import credentials
 
         private_key = settings.firebase_private_key.replace("\\n", "\n")
+        # google-auth validates the service-account info dict as a whole and
+        # rejects a minimal dict missing token_uri ("Service account info was
+        # not in the expected format"). The missing fields are public, fixed
+        # Google service-account endpoints, so supply the standard values.
+        client_x509 = (
+            "https://www.googleapis.com/robot/v1/metadata/x509/"
+            + quote(settings.firebase_client_email, safe="")
+        )
         cred = credentials.Certificate(
             {
                 "type": "service_account",
                 "project_id": settings.firebase_project_id,
                 "private_key": private_key,
                 "client_email": settings.firebase_client_email,
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "auth_provider_x509_cert_url": (
+                    "https://www.googleapis.com/oauth2/v1/certs"
+                ),
+                "client_x509_cert_url": client_x509,
             }
         )
         return cred, settings.firebase_project_id

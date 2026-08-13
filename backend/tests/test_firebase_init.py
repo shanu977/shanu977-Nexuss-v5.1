@@ -71,6 +71,39 @@ def test_load_credentials_raises_when_component_build_fails(monkeypatch):
     assert firebase_service._load_credentials() == (None, None)
 
 
+def test_component_credentials_build_certificate_and_pin_project(monkeypatch):
+    """The component env-var path must build a working Certificate and pin the
+    configured project.
+
+    Regression: a minimal credential dict was rejected by google-auth
+    ("missing fields token_uri"), so Railway would keep returning 401 even with
+    correct FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY.
+    """
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+
+    _no_creds(monkeypatch)
+    monkeypatch.setattr(firebase_service.settings, "firebase_project_id", "your-project")
+    monkeypatch.setattr(
+        firebase_service.settings,
+        "firebase_client_email",
+        "srv@your-project.iam.gserviceaccount.com",
+    )
+    monkeypatch.setattr(firebase_service.settings, "firebase_private_key", pem)
+
+    cred, project_id = firebase_service._load_credentials()
+    assert project_id == "your-project"
+    assert cred is not None
+    assert getattr(cred, "project_id", None) == "your-project"
+
+
 def test_production_fails_fast_without_credentials(monkeypatch):
     """A production backend with no service-account credential refuses to
     start instead of starting a default app that 401s every request."""
