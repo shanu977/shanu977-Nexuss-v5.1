@@ -2,6 +2,7 @@
 
 import MessageList from "@/components/MessageList";
 import ChatInput from "@/components/ChatInput";
+import AdSlot from "@/components/AdSlot";
 import { useChat } from "@/hooks/useChat";
 import { useChatStore } from "@/store";
 import { PROVIDER_LABELS } from "@/utils/providerLabels";
@@ -97,6 +98,7 @@ export default function ChatPage({
           streamingMessage={streamingMessage}
           onSendSuggestion={sendMessageStream}
         />
+        <AdSlot />
         <ChatInput
           onSend={sendMessageStream}
           loading={loading}
