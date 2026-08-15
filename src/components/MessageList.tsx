@@ -137,37 +137,37 @@ export default function MessageList({
 
   if (messages.length === 0 && !loading && !isStreaming) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-12 text-center max-w-3xl mx-auto w-full">
+      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col items-center justify-center px-6 py-12 text-center">
         {/* Emblem */}
-        <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-card border border-border shadow-md relative">
+        <div className="relative mb-6 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-card shadow-md">
           <img
             src="/nexuss-logo.png"
             alt="NEXUSS Logo"
-            className="w-8 h-8 object-contain"
+            className="h-8 w-8 object-contain"
           />
         </div>
         <h2 className="text-xl font-bold tracking-tight text-foreground font-sans">
-          What can I help you build?
+          What&apos;s on your mind today?
         </h2>
         <p className="mt-2 max-w-md text-xs text-muted-foreground font-sans leading-relaxed">
           Ask technical questions, generate clean code, analyze complex architectures, or debug your code with NEXUSS AI.
         </p>
 
         {/* Suggestion Cards */}
-        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl text-left">
+        <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-3 text-left sm:grid-cols-2">
           {SUGGESTIONS.map((item) => (
             <button
               key={item.title}
               onClick={() => void onSendSuggestion?.(item.prompt)}
-              className="flex flex-col justify-between rounded-xl border border-border bg-card p-3.5 text-left transition-all duration-150 hover:bg-muted/70 hover:border-ring/30 group cursor-pointer shadow-xs"
+              className="flex flex-col justify-between rounded-xl border border-border bg-card p-3.5 text-left shadow-xs transition-all duration-150 hover:bg-muted/70 hover:border-ring/30 group cursor-pointer"
             >
-              <div className="flex items-center gap-2 mb-1.5">
+              <div className="mb-1.5 flex items-center gap-2">
                 <span className="text-sm">{item.icon}</span>
                 <span className="text-xs font-semibold text-foreground font-mono">
                   {item.title}
                 </span>
               </div>
-              <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed font-sans">
+              <p className="line-clamp-2 text-[11px] text-muted-foreground leading-relaxed font-sans">
                 {item.prompt}
               </p>
             </button>
@@ -256,7 +256,7 @@ function MessageItem(props: MessageActionProps) {
 
   return (
     <div
-      className={`flex w-full items-start gap-3 ${
+      className={`flex w-full items-start gap-3 animate-message-in ${
         isAssistant ? "justify-start" : "justify-end"
       }`}
     >
@@ -309,14 +309,14 @@ function MessageItem(props: MessageActionProps) {
           </div>
         ) : (
           <div
-            className={`rounded-2xl px-4 py-3 text-xs leading-relaxed border shadow-xs ${
+            className={
               isAssistant
-                ? "rounded-tl-sm border-border bg-card text-card-foreground"
-                : "rounded-tr-sm border-transparent bg-primary text-primary-foreground"
-            }`}
+                ? "text-xs leading-relaxed text-foreground"
+                : "rounded-2xl rounded-tr-sm border border-border bg-secondary px-4 py-3 text-xs leading-relaxed text-secondary-foreground shadow-xs"
+            }
           >
             <MessageContent content={message.content} isAssistant={isAssistant} />
-            <p className="mt-2 text-[10px] font-mono opacity-60 text-right">
+            <p className="mt-2 text-right text-[10px] font-mono text-muted-foreground/70">
               {new Date(message.timestamp).toLocaleTimeString([], {
                 hour: "numeric",
                 minute: "2-digit"

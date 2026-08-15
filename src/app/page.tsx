@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AuthProvider from "@/components/AuthProvider";
 import AuthView from "@/components/AuthView";
 import Hydrate from "@/components/Hydrate";
@@ -11,8 +11,13 @@ import { useAuthStore } from "@/store/useAuthStore";
 
 function MainApp() {
   const { user } = useAuthStore();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<"landing" | "auth">("landing");
+
+  // Default the sidebar to open on desktop, closed on tablet/mobile.
+  useEffect(() => {
+    setSidebarOpen(window.innerWidth >= 1024);
+  }, []);
 
   if (!user) {
     if (view === "landing") {

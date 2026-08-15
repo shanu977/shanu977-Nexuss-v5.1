@@ -46,6 +46,13 @@ export default function ChatItem({
       }`}
       onClick={onSelect}
       role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       aria-current={isActive ? "true" : undefined}
     >
       <div className="min-w-0 flex-1 flex flex-col gap-0.5">

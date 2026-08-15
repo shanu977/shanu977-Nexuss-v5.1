@@ -28,23 +28,26 @@
   }
 
   .dark {
-    --background: 222.2 47.4% 11.2%;
-    --foreground: 210 40% 98%;
-    --card: 224 71.4% 17.6%;
-    --card-foreground: 210 40% 98%;
-    --popover: 224 71.4% 17.6%;
-    --popover-foreground: 210 40% 98%;
-    --secondary: 222.2 47.4% 15.9%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 222.2 47.4% 15.9%;
-    --muted-foreground: 214.5 35.5% 78.6%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 50.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 263.4 70.1% 66.7%;
+    /* Very dark neutral main background */
+    --background: 0 0% 9%;
+    --foreground: 0 0% 95%;
+    /* Slightly lighter elevated surface (sidebar, cards, composer) */
+    --card: 0 0% 13%;
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 16%;
+    --popover-foreground: 0 0% 95%;
+    --secondary: 0 0% 17%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 58%;
+    /* Subtle neutral highlight for the active conversation row */
+    --accent: 0 0% 19%;
+    --accent-foreground: 0 0% 95%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 20%;
+    --input: 0 0% 22%;
+    --ring: 262 83% 66%;
     color-scheme: dark;
   }
 
@@ -114,6 +117,56 @@
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
+
+  /* Subtle entrance animation for newly rendered chat messages */
+  .animate-message-in {
+    animation: message-in 220ms ease-out both;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 150ms ease-out both;
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 220ms ease-out both;
+  }
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Visible focus ring for keyboard users on interactive elements */
+:where(a, button, input, select, textarea, [role="button"]):focus-visible {
+  outline: 2px solid hsl(var(--ring) / 0.7);
+  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
