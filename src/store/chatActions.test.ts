@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
 import { Chat, Message } from "@/types/chats";
 import { chatService } from "@/services/chat";
 import db from "@/lib/db/db";
+import { useWorkspaceStore } from "@/workspace/store";
 
 const mocks = vi.hoisted(() => {
   const current = { uid: null as string | null };
@@ -516,5 +517,59 @@ describe("long conversations must keep working (20+ messages in one chat)", () =
         expect(turn.content.startsWith("data:image/")).toBe(false);
       }
     });
+  });
+});
+
+describe("Path workspace context flows into chat requests", () => {
+  beforeEach(async () => {
+    await useWorkspaceStore.getState().disconnect();
+  });
+
+  afterEach(async () => {
+    await useWorkspaceStore.getState().disconnect();
+  });
+
+  it("omits workspaceContext when no workspace is connected", async () => {
+    const chat = makeChat("chat-ws-off", "No workspace");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("Hello");
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const [req] = sendMock.mock.calls[0];
+    expect(req.workspaceContext).toBeUndefined();
+  });
+
+  it("attaches a token-minimized workspace context for the question", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const chat = makeChat("chat-ws", "Workspace chat");
+    await seed(chat, []);
+
+    await useChatStore
+      .getState()
+      .sendMessageStream("Why does login.ts reject valid users?");
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const [req] = sendMock.mock.calls[0];
+    expect(req.message).toBe("Why does login.ts reject valid users?");
+    expect(req.workspaceContext).toBeTruthy();
+    expect(req.workspaceContext).toContain("src/auth/login.ts");
+    // The context is selected context, never the whole project.
+    expect(req.workspaceContext.length).toBeLessThan(20000);
+    expect(req.image).toBeUndefined();
+  });
+
+  it("still sends the screen frame together with workspace context", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const chat = makeChat("chat-ws-img", "Workspace + frame");
+    await seed(chat, []);
+
+    await useChatStore
+      .getState()
+      .sendMessageStream("What is this error?", "data:image/jpeg;base64,FRAME");
+
+    const [req] = sendMock.mock.calls[0];
+    expect(req.image).toBe("data:image/jpeg;base64,FRAME");
+    expect(req.workspaceContext).toBeTruthy();
   });
 });

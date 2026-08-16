@@ -99,3 +99,35 @@ def build_vision_messages(
         ],
     }
     return messages
+
+
+WORKSPACE_CONTEXT_TEMPLATE = (
+    "The user has granted access to a local workspace (a folder on their "
+    "computer). Below are the relevant files/sections the workspace engine "
+    "selected for this request. Use them to answer accurately; never invent "
+    "files or contents that are not shown. If the workspace context is "
+    "irrelevant to the question, ignore it.\n\n{context}"
+)
+
+
+def attach_workspace_context(
+    messages: List[Dict],
+    workspace_context: str,
+    max_tokens: int = MAX_CONTEXT_TOKENS,
+) -> List[Dict]:
+    """Insert a workspace-context note before the current (last) user message.
+
+    Chat history and the workspace note stay separate prompt regions. The
+    client already caps the context to a small budget; as a hard guard the note
+    is truncated from the front (keeping the newest, most relevant sections)
+    when it alone would exceed the context budget. Blank context is ignored.
+    """
+    text = workspace_context.strip()
+    if not text:
+        return messages
+    content = WORKSPACE_CONTEXT_TEMPLATE.format(context=text)
+    if estimate_tokens(content) > max_tokens:
+        tail = text[-max(1, max_tokens * 4 - 400) :]
+        content = WORKSPACE_CONTEXT_TEMPLATE.format(context=tail)
+    note = {"role": "system", "content": content}
+    return messages[:-1] + [note, messages[-1]]

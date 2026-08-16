@@ -28,6 +28,12 @@ class ChatRequest(BaseModel):
     # image is processed transiently and never persisted. When present the
     # backend routes the request to a vision-capable model.
     image: Optional[str] = Field(default=None, max_length=5_000_000)
+    # Optional client-selected workspace context from the Path engine: the most
+    # relevant local files/sections for THIS question, capped to a small token
+    # budget client-side. Attached to the prompt as a separate note so chat
+    # history and workspace context stay distinct. The full project is never
+    # sent to the backend.
+    workspace_context: Optional[str] = Field(default=None, max_length=100_000)
 
     model_config = {"extra": "forbid"}
 

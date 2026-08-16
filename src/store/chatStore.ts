@@ -24,6 +24,7 @@ import { filterReasoning } from "@/utils/reasoning";
 import db from "@/lib/db/db";
 import { useUsageStore } from "@/store/usageStore";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useWorkspaceStore } from "@/workspace/store";
 import Dexie from "dexie";
 
 interface ChatStore extends ChatState {
@@ -144,7 +145,18 @@ async function requestAssistant(
 
   try {
     const startTime = performance.now();
-    const res = await chatService.send({ message: text, history, provider, model, image });
+    // When the user has connected a Path workspace, the engine selects the most
+    // relevant local files/sections for THIS question and attaches them as
+    // optional context. The full project is never sent.
+    const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
+    const res = await chatService.send({
+      message: text,
+      history,
+      provider,
+      model,
+      image,
+      workspaceContext: workspaceResult?.contextText
+    });
     const responseTime = performance.now() - startTime;
 
     // Record usage for EVERY attempted request (primary + fallbacks). The

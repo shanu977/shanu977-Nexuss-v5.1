@@ -371,6 +371,79 @@ def test_chat_rejects_oversized_history(client, fake_llm):
     assert resp.status_code == 422
 
 
+# ------------------------------------------------------- workspace context
+
+
+def test_chat_attaches_workspace_context(client, fake_llm):
+    headers = auth_headers(client)
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={
+            "message": "Fix the auth bug",
+            "workspace_context": (
+                "Relevant files from the user's local workspace:\n\n"
+                "### src/auth/login.ts\nimport { validateToken } from './token';\n\n"
+                "### server/api.py\ndef login(payload):\n    return payload\n"
+            ),
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    msgs = fake_llm["messages"]
+    # The workspace note is its own region, inserted before the current user
+    # message; chat history stays separate.
+    assert msgs[-2]["role"] == "system"
+    assert "src/auth/login.ts" in msgs[-2]["content"]
+    assert "workspace" in msgs[-2]["content"]
+    assert msgs[-1] == {"role": "user", "content": "Fix the auth bug"}
+
+
+def test_chat_workspace_context_keeps_history_and_frame_last(client, fake_llm):
+    headers = auth_headers(client)
+    history = [
+        {"role": "user", "content": "I connected my project."},
+        {"role": "assistant", "content": "Ask me anything about it."},
+    ]
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={
+            "message": "Check this error",
+            "history": history,
+            "image": SCREEN_IMAGE,
+            "workspace_context": "### src/app.ts\nconsole.log('hi');\n",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    msgs = fake_llm["messages"]
+    # History stays text-only and in order; the workspace note sits right
+    # before the multimodal current user message (which keeps the frame last).
+    assert msgs[1:3] == history
+    assert msgs[-2]["role"] == "system"
+    assert "src/app.ts" in msgs[-2]["content"]
+    assert isinstance(msgs[-1]["content"], list)
+
+
+def test_chat_ignores_blank_workspace_context(client, fake_llm):
+    headers = auth_headers(client)
+    resp = client.post(
+        "/chat", headers=headers, json={"message": "hi", "workspace_context": "   "}
+    )
+    assert resp.status_code == 200, resp.text
+    # Only the base system prompt and the user message; no workspace note.
+    assert [m["role"] for m in fake_llm["messages"]] == ["system", "user"]
+
+
+def test_chat_rejects_oversized_workspace_context(client, fake_llm):
+    headers = auth_headers(client)
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={"message": "hi", "workspace_context": "x" * 200_000},
+    )
+    assert resp.status_code == 422
+
+
 # ------------------------------------------------------------- error handling
 
 

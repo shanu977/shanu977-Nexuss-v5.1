@@ -88,6 +88,14 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
         primary_model = model
         messages = prompt_service.build_messages(history, payload.message)
 
+    # Optional workspace context (relevant local files selected by the client's
+    # Path engine) is attached as its own prompt region before the user message,
+    # keeping chat history and workspace context distinct.
+    if payload.workspace_context:
+        messages = prompt_service.attach_workspace_context(
+            messages, payload.workspace_context
+        )
+
     result = fallback_service.execute_with_fallback(
         db,
         user,

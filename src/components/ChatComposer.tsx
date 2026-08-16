@@ -24,13 +24,15 @@ interface ChatComposerProps {
   loading: boolean;
   disabled?: boolean;
   onStartScreenShare?: () => void;
+  onOpenWorkspace?: () => void;
 }
 
 export default function ChatComposer({
   onSend,
   loading,
   disabled,
-  onStartScreenShare
+  onStartScreenShare,
+  onOpenWorkspace
 }: ChatComposerProps) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -82,7 +84,10 @@ export default function ChatComposer({
           {/* Composer Footer Bar */}
           <div className="mt-1 flex items-center justify-between gap-2 border-t border-border/80 px-2 pt-2">
             <div className="flex min-w-0 items-center gap-2">
-              <AttachMenu onStartScreenShare={onStartScreenShare} />
+              <AttachMenu
+                onStartScreenShare={onStartScreenShare}
+                onOpenWorkspace={onOpenWorkspace}
+              />
               <div className="flex min-w-0 items-center gap-2 overflow-hidden">
                 <ModelSelector
                   provider={provider}
@@ -125,9 +130,10 @@ export default function ChatComposer({
 
 interface AttachMenuProps {
   onStartScreenShare?: () => void;
+  onOpenWorkspace?: () => void;
 }
 
-function AttachMenu({ onStartScreenShare }: AttachMenuProps) {
+function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -154,6 +160,11 @@ function AttachMenu({ onStartScreenShare }: AttachMenuProps) {
     onStartScreenShare?.();
   };
 
+  const handleOpenWorkspace = () => {
+    setOpen(false);
+    onOpenWorkspace?.();
+  };
+
   return (
     <div className="relative shrink-0" ref={ref}>
       <button
@@ -174,19 +185,16 @@ function AttachMenu({ onStartScreenShare }: AttachMenuProps) {
           aria-label="Add attachment"
           className="absolute bottom-full left-0 z-50 mb-2 w-56 overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-2xl animate-fade-in text-popover-foreground"
         >
-          {/* Path is a FUTURE feature: placeholder only, no behavior. */}
+          {/* Path opens the workspace interface: connect a local folder and the
+              engine attaches the most relevant files to your questions. */}
           <button
             type="button"
             role="menuitem"
-            disabled
-            title="Coming soon"
-            className="flex w-full cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs text-muted-foreground opacity-60"
+            onClick={handleOpenWorkspace}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs text-foreground transition-colors hover:bg-muted cursor-pointer"
           >
-            <FolderIcon className="h-4 w-4 shrink-0" />
+            <FolderIcon className="h-4 w-4 shrink-0 text-primary" />
             <span className="min-w-0 flex-1">Path</span>
-            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wide text-muted-foreground">
-              Soon
-            </span>
           </button>
           <button
             type="button"
