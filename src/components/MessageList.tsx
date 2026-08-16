@@ -14,6 +14,8 @@ interface MessageListProps {
   isStreaming: boolean;
   streamingMessage: string;
   onSendSuggestion?: (content: string) => Promise<void>;
+  screenShareActive?: boolean;
+  captureScreenFrame?: () => string | null;
 }
 
 const SUGGESTIONS = [
@@ -59,7 +61,9 @@ export default function MessageList({
   loading,
   isStreaming,
   streamingMessage,
-  onSendSuggestion
+  onSendSuggestion,
+  screenShareActive,
+  captureScreenFrame
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const editMessageAndRegenerate = useChatStore((s) => s.editMessageAndRegenerate);
@@ -116,7 +120,13 @@ export default function MessageList({
     if (!content) return;
     setBusyId(msg.id);
     try {
-      await editMessageAndRegenerate(msg.id, content);
+      // While screen sharing is active, attach exactly one fresh frame taken
+      // at send time so the edited question is answered with the current screen.
+      const image =
+        screenShareActive && captureScreenFrame
+          ? (captureScreenFrame() ?? undefined)
+          : undefined;
+      await editMessageAndRegenerate(msg.id, content, image);
     } finally {
       setBusyId(null);
     }
@@ -127,7 +137,12 @@ export default function MessageList({
   const handleRegenerate = async (msg: Message) => {
     setBusyId(msg.id);
     try {
-      await regenerateResponse(msg.id);
+      // Same rule as edit/send: one fresh frame per regenerate while sharing.
+      const image =
+        screenShareActive && captureScreenFrame
+          ? (captureScreenFrame() ?? undefined)
+          : undefined;
+      await regenerateResponse(msg.id, image);
     } finally {
       setBusyId(null);
     }

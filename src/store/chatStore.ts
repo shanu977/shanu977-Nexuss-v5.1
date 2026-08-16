@@ -39,8 +39,12 @@ interface ChatStore extends ChatState {
   clearError: () => void;
   hydrate: () => Promise<void>;
   searchChats: (query: string) => Promise<Chat[]>;
-  editMessageAndRegenerate: (messageId: string, newContent: string) => Promise<void>;
-  regenerateResponse: (messageId: string) => Promise<void>;
+  editMessageAndRegenerate: (
+    messageId: string,
+    newContent: string,
+    image?: string
+  ) => Promise<void>;
+  regenerateResponse: (messageId: string, image?: string) => Promise<void>;
 }
 
 function newId(): string {
@@ -528,7 +532,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
   // Replace an existing user message and everything generated after it, then
   // resubmit the edited text through the exact same request path as a normal
   // send (same provider/model routing, fallbacks, streaming, usage, errors).
-  editMessageAndRegenerate: async (messageId, newContent) => {
+  // While screen sharing is active, `image` carries the fresh frame captured
+  // at send time so the edit is analyzed against the current screen too.
+  editMessageAndRegenerate: async (messageId, newContent, image) => {
     const text = newContent.trim();
     if (!text) return;
 
@@ -589,14 +595,16 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const history = kept
       .map((m) => ({ role: m.role, content: m.content }))
       .slice(-99);
-    await requestAssistant(currentChat, text, history);
+    await requestAssistant(currentChat, text, history, image);
   },
 
   // Regenerate the assistant response for the preceding user turn. The
   // regenerated reply replaces the current assistant message and everything
   // generated after it, and reuses the existing request path so provider,
   // model, fallbacks, streaming, usage, and error handling are unchanged.
-  regenerateResponse: async (messageId) => {
+  // While screen sharing is active, `image` carries the fresh frame captured
+  // at send time so the re-answer also sees the current screen.
+  regenerateResponse: async (messageId, image) => {
     const uid = currentUid();
     if (!uid) return;
     const currentChat = get().currentChat;
@@ -651,6 +659,6 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       .slice(0, userIdx)
       .map((m) => ({ role: m.role, content: m.content }))
       .slice(-99);
-    await requestAssistant(currentChat, userText, history);
+    await requestAssistant(currentChat, userText, history, image);
   }
 }));

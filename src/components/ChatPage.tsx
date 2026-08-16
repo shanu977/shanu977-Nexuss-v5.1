@@ -78,6 +78,8 @@ export default function ChatPage({
           isStreaming={isStreaming}
           streamingMessage={streamingMessage}
           onSendSuggestion={handleSend}
+          screenShareActive={screenShareActive}
+          captureScreenFrame={captureFrame}
         />
         {showScreenSharePanel && <ScreenSharePanel screenShare={screenShare} />}
         <ChatComposer

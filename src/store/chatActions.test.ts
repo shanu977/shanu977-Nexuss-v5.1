@@ -124,6 +124,26 @@ describe("editMessageAndRegenerate", () => {
     expect(req.history).toEqual([]);
   });
 
+  it("sends a fresh screen frame with the edited question when sharing is active", async () => {
+    const chat = makeChat("chat-1", "My chat");
+    const userMsg = makeMessage("m1", "chat-1", "user", "Explain React hooks");
+    const asstMsg = makeMessage("m2", "chat-1", "assistant", "Hooks let you use state.");
+    await seed(chat, [userMsg, asstMsg]);
+
+    await useChatStore
+      .getState()
+      .editMessageAndRegenerate(
+        "m1",
+        "Explain hooks with examples",
+        "data:image/jpeg;base64,FRAME"
+      );
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const [req] = sendMock.mock.calls[0];
+    expect(req.message).toBe("Explain hooks with examples");
+    expect(req.image).toBe("data:image/jpeg;base64,FRAME");
+  });
+
   it("drops messages generated after the edited message", async () => {
     const chat = makeChat("chat-1", "My chat");
     await seed(chat, [
@@ -231,6 +251,23 @@ describe("regenerateResponse", () => {
 
     expect(useChatStore.getState().messages).toHaveLength(2);
     expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it("sends a fresh screen frame with the regenerated question when sharing is active", async () => {
+    const chat = makeChat("chat-1", "My chat");
+    await seed(chat, [
+      makeMessage("m1", "chat-1", "user", "Explain hooks"),
+      makeMessage("m2", "chat-1", "assistant", "old answer")
+    ]);
+
+    await useChatStore
+      .getState()
+      .regenerateResponse("m2", "data:image/jpeg;base64,FRAME2");
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const [req] = sendMock.mock.calls[0];
+    expect(req.message).toBe("Explain hooks");
+    expect(req.image).toBe("data:image/jpeg;base64,FRAME2");
   });
 
   it("does nothing when there is no preceding user message", async () => {
