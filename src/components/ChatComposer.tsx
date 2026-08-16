@@ -72,7 +72,7 @@ export default function ChatComposer({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message NEXUSS AI... (Shift+Enter for new line)"
+            placeholder="What’s the mission?"
             className="max-h-40 min-h-[44px] w-full resize-none bg-transparent px-3 py-2 text-xs font-sans leading-relaxed text-foreground placeholder-muted-foreground outline-none"
             rows={Math.min(4, Math.max(1, Math.ceil(text.length / 80)))}
             disabled={blocked}

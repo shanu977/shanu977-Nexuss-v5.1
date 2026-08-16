@@ -33,6 +33,20 @@ function makeStream(label = "VS Code") {
   return { stream, track, listeners };
 }
 
+function makeVideo(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    srcObject: null,
+    muted: false,
+    autoplay: false,
+    playsInline: false,
+    videoWidth: 1920,
+    videoHeight: 1080,
+    readyState: HTMLMediaElement.HAVE_CURRENT_DATA,
+    play: vi.fn().mockResolvedValue(undefined),
+    ...overrides
+  } as unknown as HTMLVideoElement;
+}
+
 let getDisplayMediaMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -170,12 +184,9 @@ describe("useScreenShare", () => {
       .spyOn(HTMLCanvasElement.prototype, "toDataURL")
       .mockReturnValue("data:image/jpeg;base64,FRAME");
 
-    result.current.videoRef.current = {
-      videoWidth: 1920,
-      videoHeight: 1080,
-      readyState: HTMLMediaElement.HAVE_CURRENT_DATA,
-      play: vi.fn().mockResolvedValue(undefined)
-    } as unknown as HTMLVideoElement;
+    act(() => {
+      result.current.videoRef(makeVideo());
+    });
 
     const frame = result.current.captureFrame();
     const frame2 = result.current.captureFrame();
@@ -199,11 +210,105 @@ describe("useScreenShare", () => {
 
     expect(result.current.captureFrame()).toBeNull();
 
-    result.current.videoRef.current = {
-      videoWidth: 0,
-      videoHeight: 0,
-      readyState: 0
-    } as unknown as HTMLVideoElement;
+    act(() => {
+      result.current.videoRef(makeVideo({ videoWidth: 0, videoHeight: 0, readyState: 0 }));
+    });
     expect(result.current.captureFrame()).toBeNull();
+  });
+
+  it("reattaches the live stream to a newly mounted video element", async () => {
+    const { stream } = makeStream("Chrome");
+    getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStream);
+    const { result } = renderHook(() => useScreenShare());
+
+    await act(async () => {
+      await result.current.startSharing();
+    });
+
+    // A fresh <video> element appears (e.g. the preview remounts after the
+    // details section is collapsed and expanded again). It must be reconnected
+    // to the SAME persistent MediaStream, not a new one.
+    const video = makeVideo();
+    act(() => {
+      result.current.videoRef(video);
+    });
+
+    expect(video.srcObject).toBe(stream);
+    expect(video.muted).toBe(true);
+    expect(video.autoplay).toBe(true);
+    expect(video.playsInline).toBe(true);
+    expect(video.play).toHaveBeenCalled();
+    expect(result.current.isActive).toBe(true);
+  });
+
+  it("unmounting the preview element does not stop the stream", async () => {
+    const { stream, track } = makeStream("Chrome");
+    getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStream);
+    const { result } = renderHook(() => useScreenShare());
+
+    await act(async () => {
+      await result.current.startSharing();
+    });
+
+    act(() => {
+      result.current.videoRef(makeVideo());
+    });
+    expect(result.current.isActive).toBe(true);
+
+    // Collapse: React unmounts the preview -> the ref callback receives null.
+    // The stream must stay alive and the session must stay active.
+    act(() => {
+      result.current.videoRef(null);
+    });
+
+    expect(track.stop).not.toHaveBeenCalled();
+    expect(result.current.isActive).toBe(true);
+
+    // Expand: a new element reconnects to the same still-live stream.
+    const video2 = makeVideo();
+    act(() => {
+      result.current.videoRef(video2);
+    });
+    expect(video2.srcObject).toBe(stream);
+    expect(track.stop).not.toHaveBeenCalled();
+    expect(result.current.isActive).toBe(true);
+  });
+
+  it("captures a fresh frame for every question without stopping the stream", async () => {
+    const { stream, track } = makeStream("Chrome");
+    getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStream);
+    const { result } = renderHook(() => useScreenShare());
+
+    await act(async () => {
+      await result.current.startSharing();
+    });
+
+    const fakeCtx = { drawImage: vi.fn() };
+    const getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D);
+    const frames = ["FRAME1", "FRAME2", "FRAME3"];
+    const toDataURLSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockImplementation(() => `data:image/jpeg;base64,${frames.shift()}`);
+
+    act(() => {
+      result.current.videoRef(makeVideo());
+    });
+
+    // Simulates the send path: capture once per question, stream stays alive.
+    const q1 = result.current.captureFrame();
+    const q2 = result.current.captureFrame();
+    const q3 = result.current.captureFrame();
+
+    expect(q1).toBe("data:image/jpeg;base64,FRAME1");
+    expect(q2).toBe("data:image/jpeg;base64,FRAME2");
+    expect(q3).toBe("data:image/jpeg;base64,FRAME3");
+    expect(fakeCtx.drawImage).toHaveBeenCalledTimes(3);
+    expect(track.stop).not.toHaveBeenCalled();
+    expect(result.current.isActive).toBe(true);
+
+    getContextSpy.mockRestore();
+    toDataURLSpy.mockRestore();
   });
 });

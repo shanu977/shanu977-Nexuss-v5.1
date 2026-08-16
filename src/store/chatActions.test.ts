@@ -267,6 +267,35 @@ describe("sendMessageStream with a screen frame", () => {
     expect(stored[0].content).toBe("What is this error?");
   });
 
+  it("sends a fresh frame for every question in the same chat", async () => {
+    const chat = makeChat("chat-multi", "Multi frame chat");
+    await seed(chat, []);
+
+    await useChatStore
+      .getState()
+      .sendMessageStream("Q1", "data:image/jpeg;base64,FRAME1");
+    await useChatStore
+      .getState()
+      .sendMessageStream("Q2", "data:image/jpeg;base64,FRAME2");
+    await useChatStore
+      .getState()
+      .sendMessageStream("Q3", "data:image/jpeg;base64,FRAME3");
+
+    expect(sendMock).toHaveBeenCalledTimes(3);
+    const frames = sendMock.mock.calls.map(([req]) => req.image);
+    expect(frames).toEqual([
+      "data:image/jpeg;base64,FRAME1",
+      "data:image/jpeg;base64,FRAME2",
+      "data:image/jpeg;base64,FRAME3"
+    ]);
+
+    // Screen-share requests do not change the user's selected model/provider
+    // (the backend answers with a server-side vision model), so the dropdown
+    // stays valid for every subsequent question.
+    const reqs = sendMock.mock.calls.map(([req]) => [req.provider, req.model]);
+    expect(new Set(reqs.map((r) => r.join(":"))).size).toBe(1);
+  });
+
   it("omits the image field when sending without screen sharing", async () => {
     const chat = makeChat("chat-text", "Text chat");
     await seed(chat, []);

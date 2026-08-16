@@ -13,8 +13,12 @@ export interface UseScreenShare {
   /** Whether the details section is expanded. */
   isExpanded: boolean;
   setExpanded: (value: boolean) => void;
-  /** Ref attached to the <video> element rendering the live preview. */
-  videoRef: React.RefObject<HTMLVideoElement | null>;
+  /**
+   * Callback ref attached to the <video> element rendering the live preview.
+   * Fires whenever the element mounts/unmounts so the still-live MediaStream is
+   * reattached after the preview is hidden and shown again.
+   */
+  videoRef: (node: HTMLVideoElement | null) => void;
   startSharing: () => Promise<boolean>;
   stopSharing: () => void;
   changeScreen: () => Promise<void>;
@@ -33,7 +37,7 @@ const MAX_FRAME_DIMENSION = 1280;
  * cleanup, on external termination (browser/OS controls), and on unmount.
  */
 export function useScreenShare(): UseScreenShare {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [isActive, setIsActive] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -43,24 +47,51 @@ export function useScreenShare(): UseScreenShare {
 
   const clearError = useCallback(() => setError(null), []);
 
+  // Attach the persistent MediaStream to whatever <video> element is current.
+  // The stream is the source of truth; the element is only a visual consumer.
+  // Idempotent, so it is safe to run on every mount/re-render path.
+  const attachStream = useCallback((video: HTMLVideoElement | null) => {
+    if (!video) return;
+    const stream = streamRef.current;
+    if (!stream) return;
+    video.srcObject = stream;
+    video.muted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    void video.play().catch(() => {});
+  }, []);
+
+  // Callback ref: connect the stream whenever the preview element mounts, and
+  // clear the internal pointer when it unmounts (e.g. details collapsed). The
+  // stream itself is never touched here, so collapse/expand is a pure UI action.
+  const videoRef = useCallback(
+    (video: HTMLVideoElement | null) => {
+      videoElementRef.current = video;
+      attachStream(video);
+    },
+    [attachStream]
+  );
+
   const cleanupStream = useCallback(() => {
     const stream = streamRef.current;
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
     }
     streamRef.current = null;
+    const video = videoElementRef.current;
+    if (video) {
+      video.srcObject = null;
+    }
     setIsActive(false);
     setSelectedSourceName(null);
   }, []);
 
-  // Connect the active stream to the preview <video> element.
+  // Connect the active stream to the preview <video> element. Runs when the
+  // stream is adopted/replaced while the element is already mounted (the
+  // callback ref above already covers the element-mount case).
   useEffect(() => {
-    const video = videoRef.current;
-    const stream = streamRef.current;
-    if (!video || !stream) return;
-    video.srcObject = stream;
-    void video.play().catch(() => {});
-  }, [isActive]);
+    attachStream(videoElementRef.current);
+  }, [isActive, attachStream]);
 
   // Detect external termination (browser/OS "Stop sharing" controls). When the
   // video track ends, release the stream and reset state without touching the
@@ -135,9 +166,11 @@ export function useScreenShare(): UseScreenShare {
   }, [cleanupStream, startSharing]);
 
   // Capture ONE current frame from the live preview. Downscaled JPEG keeps the
-  // payload small; the frame is transient and never stored.
+  // payload small; the frame is transient and never stored. Each call reads the
+  // live video at that moment and builds a fresh temporary canvas, so it is a
+  // fully reusable operation that never consumes the stream, video, or ref.
   const captureFrame = useCallback((): string | null => {
-    const video = videoRef.current;
+    const video = videoElementRef.current;
     if (!video || !streamRef.current) return null;
     if (
       video.videoWidth === 0 ||

@@ -65,63 +65,77 @@ export default function ScreenSharePanel({ screenShare }: ScreenSharePanelProps)
             />
           </button>
 
-          {isExpanded && (
-            <div id={panelId} className="border-t border-border p-4">
-              {/* Live preview fed by the MediaStream */}
-              <div className="overflow-hidden rounded-xl border border-border bg-black">
-                <video
-                  ref={videoRef}
-                  muted
-                  autoPlay
-                  playsInline
-                  aria-label="Live screen share preview"
-                  className="aspect-video w-full object-contain"
-                />
-                {isStarting && (
-                  <div className="flex items-center justify-center gap-2 bg-card py-3 text-[11px] font-mono text-muted-foreground">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-                    Waiting for selection…
-                  </div>
-                )}
-              </div>
-
-              {/* Active source (only the selected one is ever shown: the
-                  browser does not expose the full list to the page) */}
-              <p className="mb-2 mt-4 text-[10px] font-mono font-semibold uppercase tracking-wider text-muted-foreground">
-                Sharing
-              </p>
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
-                <span
-                  className="h-2 w-2 shrink-0 rounded-full bg-emerald-500"
-                  aria-hidden="true"
-                />
-                <span className="truncate text-xs text-foreground">
-                  {selectedSourceName || (isStarting ? "Selecting…" : "Live screen")}
-                </span>
-              </div>
-
-              {/* Controls */}
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void changeScreen()}
-                  disabled={isStarting}
-                  className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-1.5 text-[11px] font-mono font-medium text-foreground transition-colors hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-                >
-                  <ArrowRightLeftIcon className="h-3.5 w-3.5" />
-                  Change screen
-                </button>
-                <button
-                  type="button"
-                  onClick={stopSharing}
-                  className="flex items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-[11px] font-mono font-medium text-destructive transition-colors hover:bg-destructive/20 cursor-pointer"
-                >
-                  <XCircleIcon className="h-3.5 w-3.5" />
-                  Stop sharing
-                </button>
-              </div>
+          {/* The details body collapses via CSS only. The <video> preview stays
+              mounted in both states so the MediaStream is never detached:
+              collapsing hides it (max-h-0 + overflow-hidden), and expanding
+              shows the current live frame again instantly — no re-request, no
+              re-call to getDisplayMedia, no black screen. */}
+          <div
+            id={panelId}
+            className={
+              isExpanded
+                ? "border-t border-border p-4 animate-fade-in-up"
+                : "max-h-0 overflow-hidden"
+            }
+          >
+            {/* Live preview fed by the MediaStream */}
+            <div className="overflow-hidden rounded-xl border border-border bg-black">
+              <video
+                ref={videoRef}
+                muted
+                autoPlay
+                playsInline
+                aria-label="Live screen share preview"
+                className="aspect-video w-full object-contain"
+              />
+              {isStarting && (
+                <div className="flex items-center justify-center gap-2 bg-card py-3 text-[11px] font-mono text-muted-foreground">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                  Waiting for selection…
+                </div>
+              )}
             </div>
-          )}
+
+            {isExpanded && (
+              <>
+                {/* Active source (only the selected one is ever shown: the
+                    browser does not expose the full list to the page) */}
+                <p className="mb-2 mt-4 text-[10px] font-mono font-semibold uppercase tracking-wider text-muted-foreground">
+                  Sharing
+                </p>
+                <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+                    aria-hidden="true"
+                  />
+                  <span className="truncate text-xs text-foreground">
+                    {selectedSourceName || (isStarting ? "Selecting…" : "Live screen")}
+                  </span>
+                </div>
+
+                {/* Controls */}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void changeScreen()}
+                    disabled={isStarting}
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-1.5 text-[11px] font-mono font-medium text-foreground transition-colors hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                  >
+                    <ArrowRightLeftIcon className="h-3.5 w-3.5" />
+                    Change screen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={stopSharing}
+                    className="flex items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-[11px] font-mono font-medium text-destructive transition-colors hover:bg-destructive/20 cursor-pointer"
+                  >
+                    <XCircleIcon className="h-3.5 w-3.5" />
+                    Stop sharing
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Concise, user-friendly errors (cancelled, denied, unsupported) */}
           {error && (
