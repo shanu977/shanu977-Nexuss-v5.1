@@ -64,7 +64,11 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
             provider, settings_service.DEFAULT_MODELS["groq"]
         )
 
-    history = [{"role": turn.role, "content": turn.content} for turn in payload.history]
+    history = [
+        {"role": turn.role, "content": turn.content}
+        for turn in payload.history
+        if turn.content.strip()
+    ]
 
     fallback_models = None
     if payload.image:

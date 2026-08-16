@@ -96,6 +96,30 @@ def test_chat_sends_client_history_for_context(client, fake_llm):
     assert msgs[-1] == {"role": "user", "content": "And of Spain?"}
 
 
+def test_chat_tolerates_empty_history_turns_and_drops_them(client, fake_llm):
+    headers = auth_headers(client)
+    history = [
+        {"role": "user", "content": "What is the capital of France?"},
+        # A reasoning-only reply previously produced an empty assistant turn;
+        # it must not 422 the next message in the conversation.
+        {"role": "assistant", "content": ""},
+        {"role": "assistant", "content": "   "},
+        {"role": "user", "content": "And of Spain?"},
+    ]
+    resp = client.post(
+        "/chat", headers=headers, json={"message": "Also Portugal?", "history": history}
+    )
+    assert resp.status_code == 200, resp.text
+
+    msgs = fake_llm["messages"]
+    # Empty turns are dropped before the prompt is built.
+    assert msgs[1:-1] == [
+        {"role": "user", "content": "What is the capital of France?"},
+        {"role": "user", "content": "And of Spain?"},
+    ]
+    assert msgs[-1] == {"role": "user", "content": "Also Portugal?"}
+
+
 def test_chat_uses_selected_provider_and_key_from_supabase(client, fake_llm):
     headers = auth_headers(client)
     # Pick a Gemini model and verify the backend routes the request to it.

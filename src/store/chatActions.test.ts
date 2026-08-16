@@ -406,3 +406,115 @@ describe("reasoning is filtered out of every assistant reply", () => {
     expect(cs.messages[1].content).not.toContain("thinking");
   });
 });
+
+describe("reasoning-only reply must not poison the next request (production 422)", () => {
+  const reasoningOnly = " thinking\nThis is internal reasoning with no answer produced.";
+
+  beforeEach(() => {
+    sendMock.mockResolvedValue({
+      reply: reasoningOnly,
+      provider: "groq",
+      model: "llama-3.3-70b-versatile"
+    });
+  });
+
+  it("stores a non-empty assistant message and never sends an empty history turn", async () => {
+    const chat = makeChat("chat-empty-r", "Empty reply chat");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("first question");
+
+    // The reply is 100% internal reasoning: there is no answer to show. The
+    // stored assistant message must still be a valid, non-empty string so the
+    // conversation stays usable.
+    const cs = useChatStore.getState();
+    expect(cs.messages).toHaveLength(2);
+    expect(cs.messages[1].role).toBe("assistant");
+    expect(cs.messages[1].content.length).toBeGreaterThan(0);
+
+    await useChatStore.getState().sendMessageStream("second question");
+
+    const [req] = sendMock.mock.calls[1];
+    // A prior empty assistant turn would be rejected by the backend schema
+    // (ChatTurn.content has min_length=1), producing the production 422.
+    for (const turn of req.history) {
+      expect(turn.content.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("drops any legacy empty assistant messages when building history", async () => {
+    const chat = makeChat("chat-legacy-empty", "Legacy chat");
+    await seed(chat, [
+      makeMessage("m1", "chat-legacy-empty", "user", "q1"),
+      makeMessage("m2", "chat-legacy-empty", "assistant", ""),
+      makeMessage("m3", "chat-legacy-empty", "user", "q2"),
+      makeMessage("m4", "chat-legacy-empty", "assistant", "ok")
+    ]);
+
+    await useChatStore.getState().sendMessageStream("q3");
+
+    const [req] = sendMock.mock.calls[0];
+    expect(req.history.some((t: { content: string }) => t.content === "")).toBe(false);
+    expect(req.history).toHaveLength(3);
+  });
+});
+
+describe("long conversations must keep working (20+ messages in one chat)", () => {
+  beforeEach(() => {
+    sendMock.mockResolvedValue({
+      reply: "A concise reply.",
+      provider: "groq",
+      model: "llama-3.3-70b-versatile"
+    });
+  });
+
+  it("sends 20 sequential messages with no duplicates and valid history", async () => {
+    const chat = makeChat("chat-20", "Twenty-message chat");
+    await seed(chat, []);
+
+    for (let i = 1; i <= 20; i++) {
+      await useChatStore.getState().sendMessageStream(`message number ${i}`);
+    }
+
+    const cs = useChatStore.getState();
+    expect(cs.messages).toHaveLength(40); // 20 user + 20 assistant, none duplicated
+    expect(new Set(cs.messages.map((m) => m.id)).size).toBe(40);
+    expect(sendMock).toHaveBeenCalledTimes(20);
+
+    // History grows linearly (2 prior turns per previous message), stays under
+    // the backend's 100-turn cap, and never contains an empty or stray turn.
+    sendMock.mock.calls.forEach(([req], i) => {
+      expect(req.history).toHaveLength(2 * i);
+      expect(req.history.length).toBeLessThanOrEqual(99);
+      for (const turn of req.history) {
+        expect(turn.content.trim().length).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  it("sends 20 screen-share messages, each carrying only its own fresh frame", async () => {
+    const chat = makeChat("chat-20f", "Twenty-frame chat");
+    await seed(chat, []);
+
+    for (let i = 1; i <= 20; i++) {
+      await useChatStore
+        .getState()
+        .sendMessageStream(`What is on screen ${i}?`, `data:image/jpeg;base64,FRAME${i}`);
+    }
+
+    // Every request carries exactly its own frame; no frame ever accumulates.
+    sendMock.mock.calls.forEach(([req], i) => {
+      expect(req.image).toBe(`data:image/jpeg;base64,FRAME${i + 1}`);
+    });
+    // Frames never leak into the persisted user messages or into history.
+    const cs = useChatStore.getState();
+    for (const m of cs.messages) {
+      expect(m.content.startsWith("data:image/")).toBe(false);
+    }
+    sendMock.mock.calls.forEach(([req]) => {
+      for (const turn of req.history) {
+        expect(turn.content.startsWith("data:image/")).toBe(false);
+      }
+    });
+  });
+});

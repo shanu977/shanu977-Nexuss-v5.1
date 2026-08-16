@@ -112,6 +112,12 @@ interface ChatRequestHistory {
   content: string;
 }
 
+// Shown (and persisted) when a model reply is entirely internal reasoning with
+// no recoverable answer. Storing an empty string would corrupt the next
+// request's history (backend ChatTurn.content requires at least 1 char -> 422).
+const EMPTY_REPLY_FALLBACK =
+  "I couldn't generate a complete response. Please try again or rephrase your question.";
+
 // Shared request path for sending a user turn and persisting the assistant
 // reply. Used by the initial send AND by edit/regenerate so that every path
 // preserves provider routing, model selection, fallback behavior, streaming
@@ -190,11 +196,12 @@ async function requestAssistant(
       }
     }
 
+    const filtered = filterReasoning(res.reply).trim();
     const asstMsg: Message = {
       id: newId(),
       chatId: chat.id,
       role: "assistant",
-      content: filterReasoning(res.reply),
+      content: filtered.length > 0 ? filtered : EMPTY_REPLY_FALLBACK,
       timestamp: Date.now()
     };
     await db.messages.add(asstMsg);
@@ -510,7 +517,12 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       }));
 
       const history = get()
-        .messages.filter((m) => m.chatId === currentChat!.id && m.id !== userMsg.id)
+        .messages.filter(
+          (m) =>
+            m.chatId === currentChat!.id &&
+            m.id !== userMsg.id &&
+            m.content.trim().length > 0
+        )
         .map((m) => ({ role: m.role, content: m.content }))
         .slice(-99);
 
@@ -594,6 +606,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     }));
 
     const history = kept
+      .filter((m) => m.content.trim().length > 0)
       .map((m) => ({ role: m.role, content: m.content }))
       .slice(-99);
     await requestAssistant(currentChat, text, history, image);
@@ -658,6 +671,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     // history is everything before it.
     const history = kept
       .slice(0, userIdx)
+      .filter((m) => m.content.trim().length > 0)
       .map((m) => ({ role: m.role, content: m.content }))
       .slice(-99);
     await requestAssistant(currentChat, userText, history, image);

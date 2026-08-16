@@ -5,7 +5,12 @@ from pydantic import BaseModel, Field, field_validator
 
 class ChatTurn(BaseModel):
     role: Literal["user", "assistant"] = "user"
-    content: str = Field(min_length=1, max_length=20000)
+    # Prior turns are tolerated even when empty: the client can legitimately
+    # end up with an empty assistant turn (e.g. a reasoning-only reply with no
+    # answer). Rejecting the whole request with a 422 for a useless empty turn
+    # would break every subsequent message in the chat. Empty turns are dropped
+    # before the prompt is built. The current `message` still must be non-empty.
+    content: str = Field(max_length=20000)
 
     model_config = {"extra": "forbid"}
 
