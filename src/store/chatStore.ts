@@ -20,6 +20,7 @@ import { chatService } from "@/services/chat";
 import { ApiError } from "@/services/api";
 import { settingsService } from "@/services/settings";
 import { generateTitle, getErrorMessage } from "@/utils";
+import { filterReasoning } from "@/utils/reasoning";
 import db from "@/lib/db/db";
 import { useUsageStore } from "@/store/usageStore";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -193,7 +194,7 @@ async function requestAssistant(
       id: newId(),
       chatId: chat.id,
       role: "assistant",
-      content: res.reply,
+      content: filterReasoning(res.reply),
       timestamp: Date.now()
     };
     await db.messages.add(asstMsg);

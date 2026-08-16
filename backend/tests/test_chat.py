@@ -53,6 +53,32 @@ def test_chat_returns_reply(client, fake_llm):
     assert fake_llm["messages"][-1] == {"role": "user", "content": "Hi there"}
 
 
+def test_chat_filters_internal_reasoning_from_the_reply(client, monkeypatch):
+    from app.services import llm_service
+    from app.services.llm_service import UsageInfo
+
+    def _reasoning(messages, **kwargs):
+        usage = UsageInfo(input_tokens=10, output_tokens=5, total_tokens=15)
+        return "\n".join(
+            [
+                " thinking",
+                "The user's screen shows an error.",
+                "This reasoning must never reach the client.",
+                " response",
+                "The fix is to install pandas.",
+            ]
+        ), usage
+
+    monkeypatch.setattr(llm_service, "complete", _reasoning)
+    headers = auth_headers(client)
+    resp = client.post("/chat", headers=headers, json={"message": "Why does this fail?"})
+    assert resp.status_code == 200, resp.text
+
+    assert resp.json()["reply"] == "The fix is to install pandas."
+    assert "thinking" not in resp.json()["reply"]
+    assert "reasoning" not in resp.json()["reply"]
+
+
 def test_chat_sends_client_history_for_context(client, fake_llm):
     headers = auth_headers(client)
     history = [

@@ -8,6 +8,7 @@ from ..schemas.settings import (
     VISION_CAPABLE_MODELS,
     VISION_MODELS,
 )
+from ..utils.reasoning import filter_reasoning
 from . import fallback_service, llm_service, prompt_service, settings_service
 
 
@@ -93,7 +94,7 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
     )
 
     return ChatResponse(
-        reply=result["reply"],
+        reply=filter_reasoning(result["reply"]),
         provider=result["provider"],
         model=result["model"],
         usage=result["usage"].to_dict(),

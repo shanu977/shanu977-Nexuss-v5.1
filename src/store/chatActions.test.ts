@@ -345,3 +345,64 @@ describe("sendMessageStream with a screen frame", () => {
     expect(req.image).toBeUndefined();
   });
 });
+
+describe("reasoning is filtered out of every assistant reply", () => {
+  const reasoningReply = [
+    " thinking",
+    "The user's screen shows an error.",
+    "This is internal reasoning that must never be shown.",
+    " response",
+    "The fix is to install pandas."
+  ].join("\n");
+
+  beforeEach(() => {
+    sendMock.mockResolvedValue({
+      reply: reasoningReply,
+      provider: "groq",
+      model: "llama-3.3-70b-versatile"
+    });
+  });
+
+  it("stores a filtered reply for a normal send", async () => {
+    const chat = makeChat("chat-r", "Reasoning chat");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("Why does this fail?");
+
+    const cs = useChatStore.getState();
+    expect(cs.messages[1].role).toBe("assistant");
+    expect(cs.messages[1].content).toBe("The fix is to install pandas.");
+    expect(cs.messages[1].content).not.toContain("thinking");
+    expect(cs.messages[1].content).not.toContain("internal reasoning");
+  });
+
+  it("stores a filtered reply after editing a message", async () => {
+    const chat = makeChat("chat-edit-r", "Edit chat");
+    await seed(chat, [
+      makeMessage("m1", "chat-edit-r", "user", "Explain hooks"),
+      makeMessage("m2", "chat-edit-r", "assistant", "old answer")
+    ]);
+
+    await useChatStore.getState().editMessageAndRegenerate("m1", "Explain hooks better");
+
+    const cs = useChatStore.getState();
+    expect(cs.messages[1].role).toBe("assistant");
+    expect(cs.messages[1].content).toBe("The fix is to install pandas.");
+    expect(cs.messages[1].content).not.toContain("thinking");
+  });
+
+  it("stores a filtered reply after regenerating a response", async () => {
+    const chat = makeChat("chat-regen-r", "Regen chat");
+    await seed(chat, [
+      makeMessage("m1", "chat-regen-r", "user", "Explain hooks"),
+      makeMessage("m2", "chat-regen-r", "assistant", "old answer")
+    ]);
+
+    await useChatStore.getState().regenerateResponse("m2");
+
+    const cs = useChatStore.getState();
+    expect(cs.messages[1].role).toBe("assistant");
+    expect(cs.messages[1].content).toBe("The fix is to install pandas.");
+    expect(cs.messages[1].content).not.toContain("thinking");
+  });
+});
