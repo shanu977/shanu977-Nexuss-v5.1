@@ -117,9 +117,12 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
     depth: number
   ): Promise<void> {
     if (this.closed || depth > MAX_SCAN_DEPTH) return;
-    const entries = handle.entries;
-    if (!entries) return;
-    for await (const [name, child] of entries()) {
+    if (typeof handle.entries !== "function") return;
+    // Call entries() directly on the handle so `this` stays bound to it. File
+    // System Access API methods brand-check their receiver and throw
+    // `TypeError: Illegal invocation` if called detached (e.g. after being
+    // assigned to a local variable).
+    for await (const [name, child] of handle.entries()) {
       if (this.closed || this.scanned >= MAX_SCANNED_FILES) return;
       if (IGNORED_DIR_NAMES.has(name)) continue;
       this.scanned++;

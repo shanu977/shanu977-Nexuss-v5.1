@@ -70,4 +70,40 @@ describe("WorkspacePanel", () => {
       /does not support folder access/i
     );
   });
+
+  it("starts collapsed and expands via the header toggle", () => {
+    render(<WorkspacePanel />);
+    const toggle = screen.getByRole("button", { name: /Path/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("button", { name: "Connect a folder" })
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the connection and search query across collapse/expand", async () => {
+    render(<WorkspacePanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Try sample workspace" }));
+    await screen.findByText(/files indexed/);
+
+    const input = screen.getByLabelText("Search workspace");
+    fireEvent.change(input, { target: { value: "login" } });
+    await screen.findByText("src/auth/login.ts");
+
+    const toggle = screen.getByRole("button", { name: /Path/i });
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(useWorkspaceStore.getState().connected).toBe(true);
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Search workspace")).toHaveValue("login");
+    expect(useWorkspaceStore.getState().connected).toBe(true);
+  });
 });

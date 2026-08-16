@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useWorkspaceStore } from "@/workspace/store";
 import {
+  ChevronDownIcon,
   FolderIcon,
   SearchIcon,
   XIcon,
@@ -31,6 +32,8 @@ export default function WorkspacePanel() {
   const search = useWorkspaceStore((s) => s.search);
   const closePanel = useWorkspaceStore((s) => s.closePanel);
   const [query, setQuery] = useState("");
+  const [isExpanded, setIsExpanded] = useState(false);
+  const panelId = "workspace-details";
 
   const handleSearch = (value: string) => {
     setQuery(value);
@@ -44,23 +47,39 @@ export default function WorkspacePanel() {
           aria-label="Workspace"
           className="overflow-hidden rounded-2xl border border-border bg-card shadow-lg animate-fade-in-up"
         >
-          {/* Header row */}
-          <div className="flex w-full items-center justify-between gap-2 px-4 py-3">
-            <span className="flex min-w-0 items-center gap-2 text-xs font-mono font-semibold text-foreground">
-              <FolderIcon className="h-4 w-4 shrink-0 text-primary" />
-              <span className="truncate">Path</span>
-              {connected && workspace && (
-                <span className="truncate text-[10px] font-normal text-muted-foreground">
-                  • {workspace.name}
-                </span>
-              )}
-              {connecting && (
-                <span className="flex items-center gap-1.5 text-[10px] font-normal text-muted-foreground">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-                  Opening…
-                </span>
-              )}
-            </span>
+          {/* Header row: the left side toggles collapse/expand (the compact
+              collapsed row shows the connected workspace name); the X fully
+              closes the panel. Collapsing only hides the body below — it never
+              touches the connection, index, or permissions. */}
+          <div className="flex w-full items-center gap-1 px-4 py-3">
+            <button
+              type="button"
+              onClick={() => setIsExpanded(!isExpanded)}
+              aria-expanded={isExpanded}
+              aria-controls={panelId}
+              className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-muted/50 cursor-pointer"
+            >
+              <span className="flex min-w-0 items-center gap-2 text-xs font-mono font-semibold text-foreground">
+                <FolderIcon className="h-4 w-4 shrink-0 text-primary" />
+                <span className="truncate">Path</span>
+                {connected && workspace && !isExpanded && (
+                  <span className="truncate text-[10px] font-normal text-muted-foreground">
+                    • {workspace.name}
+                  </span>
+                )}
+                {connecting && (
+                  <span className="flex items-center gap-1.5 text-[10px] font-normal text-muted-foreground">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+                    Opening…
+                  </span>
+                )}
+              </span>
+              <ChevronDownIcon
+                className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                  isExpanded ? "rotate-180" : ""
+                }`}
+              />
+            </button>
             <button
               type="button"
               onClick={closePanel}
@@ -71,7 +90,17 @@ export default function WorkspacePanel() {
             </button>
           </div>
 
-          {/* Body */}
+          {/* Body: collapses via CSS only so the connection, index, and query
+              stay alive — collapsing hides it (max-h-0 + overflow-hidden), and
+              expanding restores it instantly, mirroring the screen-share panel. */}
+          <div
+            id={panelId}
+            className={
+              isExpanded
+                ? "border-t border-border animate-fade-in-up"
+                : "max-h-0 overflow-hidden"
+            }
+          >
           {!connected ? (
             <div className="border-t border-border p-4 animate-fade-in-up">
               <p className="text-[11px] font-mono text-muted-foreground">
@@ -160,6 +189,7 @@ export default function WorkspacePanel() {
               )}
             </div>
           )}
+          </div>
 
           {error && (
             <div
