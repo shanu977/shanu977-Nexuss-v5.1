@@ -57,9 +57,12 @@ class Settings(BaseSettings):
     smtp_from_email: str = Field(default="", validation_alias="SMTP_FROM_EMAIL")
     smtp_from_name: str = Field(default="", validation_alias="SMTP_FROM_NAME")
 
-    # Only trust X-Forwarded-For when behind a proxy that overwrites it
-    # (e.g. nginx/Railway). Keep False otherwise so clients can't spoof
-    # their identity to bypass the rate limiter.
+    # Rate-limiter client identity. Default (false): X-Forwarded-For is trusted
+    # ONLY when the socket peer is a private/internal address (i.e. behind a
+    # proxy such as Railway's ingress), so a client reaching a public port
+    # directly cannot spoof its identity to bypass the limiter. Set to true to
+    # trust X-Forwarded-For unconditionally (only needed when the proxy does not
+    # present a private peer address).
     trust_proxy_headers: bool = False
 
     retention_days: int = 4

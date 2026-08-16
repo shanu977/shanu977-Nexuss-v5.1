@@ -106,10 +106,19 @@ def test_key(provider: str, api_key: str) -> Dict[str, object]:
         return {"valid": False, "message": f"Unsupported provider: {provider}"}
 
     url = _VALIDATION_ENDPOINTS[provider]
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    # Gemini's classic REST API authenticates via X-Goog-Api-Key, not a Bearer
+    # token (Bearer is only accepted by its OpenAI-compatible endpoints). Sending
+    # the key as Bearer would make a valid Gemini key always appear invalid.
+    if provider == "gemini":
+        headers = {
+            "X-Goog-Api-Key": api_key,
+            "Content-Type": "application/json",
+        }
+    else:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
 
     try:
         resp = httpx.get(url, headers=headers, timeout=15.0)

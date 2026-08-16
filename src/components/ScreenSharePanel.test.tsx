@@ -192,4 +192,30 @@ describe("ScreenSharePanel + useScreenShare", () => {
     expect((video as HTMLVideoElement).srcObject).toBeNull();
     expect(video).not.toBeInTheDocument();
   });
+
+  it("shows the selected source and the return-to-chat hint while sharing", async () => {
+    const { stream, track } = makeStream("Google Chrome — ChatGPT");
+    getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStream);
+
+    render(<Harness onFrame={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start sharing" }));
+    await screen.findByLabelText("Live screen share preview");
+
+    // Expanded: the active source is surfaced as source information and the
+    // user is guided back to the chat to ask a question.
+    expect(screen.getByText("Google Chrome — ChatGPT")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The screen is being shared. Return to this chat to ask your question."
+      )
+    ).toBeInTheDocument();
+    expect(track.stop).not.toHaveBeenCalled();
+
+    // Collapsed: the header still shows the source so the share stays obvious.
+    fireEvent.click(screen.getByRole("button", { name: /screen share/i }));
+    expect(screen.getByText(/Google Chrome — ChatGPT/)).toBeInTheDocument();
+    expect(screen.queryByText("Sharing")).not.toBeInTheDocument();
+    expect(track.stop).not.toHaveBeenCalled();
+  });
 });

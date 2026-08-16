@@ -24,8 +24,11 @@ import re
 from dataclasses import dataclass
 
 _ANGLE_RE = re.compile(r"<\s*/?\s*(?:thinking|think|response)\s*>", re.IGNORECASE)
+# `\r` is included so CRLF line endings (rare but possible in provider output)
+# are recognized the same as LF: otherwise a "thinking"/"response" marker on a
+# `\r\n` line would not match and the internal reasoning would leak.
 _BARE_LINE_RE = re.compile(
-    r"^[ \t]*(thinking|response)[ \t]*$", re.MULTILINE | re.IGNORECASE
+    r"^[ \t\r]*(thinking|response)[ \t\r]*$", re.MULTILINE | re.IGNORECASE
 )
 _LEADING_WS_RE = re.compile(r"^[ \t\r\n]+")
 _OPEN_NAMES = frozenset({"thinking", "think"})

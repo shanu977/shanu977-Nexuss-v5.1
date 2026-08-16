@@ -113,8 +113,6 @@ def pull(db: Session, user_id: str, since: int = 0) -> SyncPullResponse:
             db.scalars(select(Message).where(Message.conversation_id.in_(conv_ids)))
         )
 
-    by_conversation = {m.conversation_id: m for m in messages}
-
     return SyncPullResponse(
         conversations=[_to_conv(c) for c in conversations],
         messages=[_to_msg(m) for m in messages],

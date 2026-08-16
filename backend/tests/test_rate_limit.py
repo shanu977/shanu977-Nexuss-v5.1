@@ -67,3 +67,58 @@ def test_chat_rate_limiting_returns_json_429():
         last = _chat(client, message="chatrl-last")
         assert last.status_code == 429
         assert last.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Client identity: X-Forwarded-For must only be trusted from a proxy peer.
+# ---------------------------------------------------------------------------
+
+def _client_id_for(client_host: str, xff: str | None = None) -> str:
+    """Directly exercise RateLimitMiddleware._client_id with a synthetic request."""
+    from starlette.requests import Request
+
+    from app.middleware.rate_limit import RateLimitMiddleware
+
+    headers = [(b"host", b"testserver")]
+    if xff is not None:
+        headers.append((b"x-forwarded-for", xff.encode()))
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/chat",
+        "raw_path": b"/chat",
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": (client_host, 1234),
+        "server": ("testserver", 80),
+        "app": {},
+    }
+    mw = RateLimitMiddleware(lambda *_: None, paths=())
+    return mw._client_id(Request(scope))
+
+
+def test_proxy_peer_uses_first_xff_hop():
+    # Railway-style: the socket peer is an internal address and the first
+    # X-Forwarded-For hop is the real client.
+    assert _client_id_for("10.0.0.7", xff="203.0.113.5, 10.0.0.1") == "203.0.113.5"
+
+
+def test_public_peer_ignores_spoofed_xff():
+    # Direct public peer: a client-supplied X-Forwarded-For must not grant a
+    # fresh rate-limit budget.
+    assert _client_id_for("8.8.8.8", xff="1.1.1.1") == "8.8.8.8"
+
+
+def test_no_xff_uses_socket_peer():
+    assert _client_id_for("10.0.0.7") == "10.0.0.7"
+    assert _client_id_for("8.8.8.8") == "8.8.8.8"
+
+
+def test_trust_proxy_headers_trusts_xff_from_public_peer(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "trust_proxy_headers", True)
+    assert _client_id_for("8.8.8.8", xff="1.1.1.1") == "1.1.1.1"

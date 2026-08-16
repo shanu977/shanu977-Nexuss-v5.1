@@ -53,7 +53,7 @@ export default function ScreenSharePanel({ screenShare }: ScreenSharePanelProps)
               <MonitorIcon className="h-4 w-4 shrink-0 text-primary" />
               <span className="truncate">Screen Share</span>
               {isActive && selectedSourceName && !isExpanded && (
-                <span className="hidden truncate text-[10px] font-normal text-muted-foreground sm:inline">
+                <span className="truncate text-[10px] font-normal text-muted-foreground">
                   • {selectedSourceName}
                 </span>
               )}
@@ -112,6 +112,10 @@ export default function ScreenSharePanel({ screenShare }: ScreenSharePanelProps)
                     {selectedSourceName || (isStarting ? "Selecting…" : "Live screen")}
                   </span>
                 </div>
+
+                <p className="mt-2 text-[10px] font-mono text-muted-foreground">
+                  The screen is being shared. Return to this chat to ask your question.
+                </p>
 
                 {/* Controls */}
                 <div className="mt-4 flex flex-wrap items-center gap-2">

@@ -105,3 +105,13 @@ def test_filters_screen_share_style_response_with_reasoning():
         "The error is ModuleNotFoundError: No module named 'pandas'. "
         "Install it with `pip install pandas`."
     )
+
+
+def test_filters_reasoning_delimited_with_crlf_line_endings():
+    raw = "thinking\r\ninternal reasoning\r\nresponse\r\nFinal answer.\r\n"
+    assert filter_reasoning(raw) == "Final answer."
+
+
+def test_never_exposes_reasoning_when_a_crlf_block_is_unclosed():
+    raw = " thinking\r\nunfinished internal reasoning"
+    assert filter_reasoning(raw) == ""

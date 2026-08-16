@@ -175,4 +175,14 @@ describe("ReasoningFilter streaming", () => {
     const raw = "\n\n  thinking \n\n reasoning text \n\n  response \n\n  The answer.";
     expect(filterReasoning(raw)).toBe("The answer.");
   });
+
+  it("filters reasoning delimited with CRLF line endings", () => {
+    const raw = "thinking\r\ninternal reasoning\r\nresponse\r\nFinal answer.";
+    expect(filterReasoning(raw)).toBe("Final answer.");
+  });
+
+  it("does not leak reasoning when a CRLF block is unclosed", () => {
+    const raw = " thinking\r\nunfinished internal reasoning";
+    expect(filterReasoning(raw)).toBe("");
+  });
 });

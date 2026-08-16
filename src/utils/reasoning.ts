@@ -30,7 +30,10 @@ export type ReasoningState = "normal" | "thinking";
 const MAX_MARKER = 24;
 
 const ANGLE_MARKER_RE = /<\s*\/?\s*(thinking|think|response)\s*>/i;
-const BARE_LINE_MARKER_RE = /^[ \t]*(thinking|response)[ \t]*$/m;
+// `\r` is included so CRLF line endings (rare but possible in provider output)
+// are recognized the same as LF: otherwise a "thinking"/"response" marker on a
+// `\r\n` line would not match and the internal reasoning would leak.
+const BARE_LINE_MARKER_RE = /^[ \t\r]*(thinking|response)[ \t\r]*$/m;
 
 interface Marker {
   index: number;

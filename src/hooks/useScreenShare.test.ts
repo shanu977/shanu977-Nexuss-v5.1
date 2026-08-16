@@ -78,6 +78,33 @@ describe("useScreenShare", () => {
     expect(track.stop).not.toHaveBeenCalled();
   });
 
+  it("never navigates, opens windows, or uses the source label as a navigation target", async () => {
+    // A realistic Chrome tab label. It must be surfaced ONLY as source info and
+    // must never be interpreted as a URL, route, or tab to switch to.
+    const { stream, track } = makeStream("Google Chrome — ChatGPT");
+    getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStream);
+
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const hrefBefore = window.location.href;
+
+    const { result } = renderHook(() => useScreenShare());
+    let started = false;
+    await act(async () => {
+      started = await result.current.startSharing();
+    });
+
+    expect(started).toBe(true);
+    // The label is only surfaced as source information, never a navigation
+    // target, and no navigation/window/tab APIs are invoked.
+    expect(result.current.selectedSourceName).toBe("Google Chrome — ChatGPT");
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(window.location.href).toBe(hrefBefore);
+    expect(track.stop).not.toHaveBeenCalled();
+    expect(result.current.isActive).toBe(true);
+
+    openSpy.mockRestore();
+  });
+
   it("stops sharing and stops every track", async () => {
     const { stream, track } = makeStream();
     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStream);

@@ -260,3 +260,54 @@ def test_test_endpoint_does_not_save_key(client, mock_test_key_success):
     lst = client.get("/api-keys", headers=headers).json()
     groq = next(item for item in lst if item["provider"] == "groq")
     assert groq["has_key"] is False
+
+
+def test_test_key_uses_x_goog_api_key_for_gemini(monkeypatch):
+    """Gemini's REST API authenticates via X-Goog-Api-Key, not a Bearer token.
+
+    A valid Gemini key must not be reported invalid just because the client key
+    was sent as an Authorization header (which only Gemini's OpenAI-compatible
+    endpoints accept).
+    """
+    from app.services import api_key_service
+
+    captured = {}
+
+    def _fake_get(url, headers=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers or {}
+
+        class _Resp:
+            status_code = 200
+
+        return _Resp()
+
+    monkeypatch.setattr(api_key_service.httpx, "get", _fake_get)
+
+    result = api_key_service.test_key("gemini", "AIza-some-valid-key")
+    assert result["valid"] is True
+    assert captured["headers"]["X-Goog-Api-Key"] == "AIza-some-valid-key"
+    assert "Authorization" not in captured["headers"]
+
+
+def test_test_key_uses_bearer_for_groq(monkeypatch):
+    """Groq's REST API authenticates via Authorization: Bearer."""
+    from app.services import api_key_service
+
+    captured = {}
+
+    def _fake_get(url, headers=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers or {}
+
+        class _Resp:
+            status_code = 200
+
+        return _Resp()
+
+    monkeypatch.setattr(api_key_service.httpx, "get", _fake_get)
+
+    result = api_key_service.test_key("groq", "gsk-some-valid-key")
+    assert result["valid"] is True
+    assert captured["headers"]["Authorization"] == "Bearer gsk-some-valid-key"
+    assert "X-Goog-Api-Key" not in captured["headers"]

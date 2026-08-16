@@ -1,3 +1,4 @@
+import ipaddress
 import time
 from collections import defaultdict, deque
 from typing import Callable, Sequence
@@ -11,6 +12,18 @@ from starlette.types import ASGIApp
 from ..config import settings
 
 MAX_TRACKED_KEYS = 10_000
+
+
+def _is_proxy_peer(host: str) -> bool:
+    """True when the socket peer is a private/internal address, i.e. the app is
+    behind a proxy (Railway's ingress, nginx, ...) rather than directly
+    reachable by clients. Non-IP hostnames (e.g. TestClient) are treated as
+    non-proxy so a client-supplied X-Forwarded-For is never trusted there."""
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return addr.is_private or addr.is_loopback or addr.is_link_local
 
 # Test support: track middleware instances so the test suite can reset the
 # in-memory windows between tests (all TestClient calls share one client host,
@@ -47,11 +60,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         _instances.add(self)
 
     def _client_id(self, request: Request) -> str:
-        if settings.trust_proxy_headers:
-            forwarded = request.headers.get("x-forwarded-for")
-            if forwarded:
-                return forwarded.split(",")[0].strip()
-        return request.client.host if request.client else "unknown"
+        forwarded = request.headers.get("x-forwarded-for")
+        peer = request.client.host if request.client else "unknown"
+        if forwarded:
+            hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+            if hops:
+                # TRUST_PROXY_HEADERS=true: explicit opt-in to trust the header
+                # unconditionally (for proxies that preserve the peer address or
+                # run on a public port).
+                if settings.trust_proxy_headers:
+                    return hops[0]
+                # Default: only trust X-Forwarded-For when the socket peer is a
+                # proxy (private/internal address). A client reaching a public
+                # port directly must never be able to grant itself a fresh
+                # rate-limit budget by spoofing the header. Behind Railway's
+                # ingress the peer is an internal address and the first hop is
+                # the real client.
+                if _is_proxy_peer(peer):
+                    return hops[0]
+        return peer
 
     def _prune(self, now: float) -> None:
         """Drop expired windows and untracked keys so memory stays bounded."""
