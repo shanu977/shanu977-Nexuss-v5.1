@@ -19,6 +19,10 @@ class ChatRequest(BaseModel):
     # always authoritative. Defaults come from the user's saved settings.
     provider: Optional[str] = Field(default=None, max_length=50)
     model: Optional[str] = Field(default=None, max_length=200)
+    # Optional single frame (screen-share analysis): a base64 data URL. The
+    # image is processed transiently and never persisted. When present the
+    # backend routes the request to a vision-capable model.
+    image: Optional[str] = Field(default=None, max_length=5_000_000)
 
     model_config = {"extra": "forbid"}
 
@@ -28,6 +32,17 @@ class ChatRequest(BaseModel):
         if not v.strip():
             raise ValueError("Message must not be empty")
         return v.strip()
+
+    @field_validator("image")
+    @classmethod
+    def image_is_data_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not v.startswith("data:image/"):
+            raise ValueError("image must be a data:image URL")
+        if "base64," not in v:
+            raise ValueError("image must be a base64 data URL")
+        return v
 
 
 class UsageInfo(BaseModel):

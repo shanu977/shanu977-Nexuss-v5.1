@@ -33,6 +33,24 @@ ALLOWED_MODELS = {
     },
 }
 
+# Server-side vision models used by the screen-share feature. When a user
+# sends a frame+question, the backend routes to a vision-capable model instead
+# of blindly sending the image to a text-only model. The selected model is used
+# when it supports images; otherwise the provider's vision default below is used.
+VISION_MODELS = {
+    "groq": "llama-3.2-90b-vision-preview",
+    "gemini": "gemini-3.6-flash",
+    "openrouter": "meta-llama/llama-3.2-90b-vision-instruct:free",
+}
+
+# Model IDs that accept image input. A request with an image uses the user's
+# selected model only if it is listed here (Gemini models are all multimodal).
+VISION_CAPABLE_MODELS = {
+    "groq": {"llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"},
+    "gemini": set(ALLOWED_MODELS["gemini"]),
+    "openrouter": {"meta-llama/llama-3.2-90b-vision-instruct:free"},
+}
+
 
 class UserSettingsOut(BaseModel):
     theme: str

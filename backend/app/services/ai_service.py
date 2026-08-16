@@ -2,8 +2,26 @@ from sqlalchemy.orm import Session
 
 from ..models import User
 from ..schemas.chat import ChatRequest, ChatResponse, FallbackAttempt
-from ..schemas.settings import ALLOWED_MODELS, ALLOWED_PROVIDERS
+from ..schemas.settings import (
+    ALLOWED_MODELS,
+    ALLOWED_PROVIDERS,
+    VISION_CAPABLE_MODELS,
+    VISION_MODELS,
+)
 from . import fallback_service, llm_service, prompt_service, settings_service
+
+
+def _resolve_vision_model(provider: str, selected_model: str) -> str | None:
+    """Pick the model that actually receives a frame+question request.
+
+    Uses the user's selected model when it accepts images, otherwise the
+    provider's server-side vision default. Returns None when the provider has
+    no vision-capable model configured.
+    """
+    capable = VISION_CAPABLE_MODELS.get(provider, set())
+    if selected_model in capable:
+        return selected_model
+    return VISION_MODELS.get(provider)
 
 
 def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
@@ -15,6 +33,11 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
     the user's saved settings, and the API key is resolved from Supabase for
     that provider. This keeps the UI indicator and the actual call in lockstep
     and removes any need for the client to handle keys.
+
+    When `payload.image` carries a single screen-share frame, the request is
+    routed to a vision-capable model (the selected model if it accepts images,
+    otherwise the provider's vision default). The frame is processed transiently
+    and never stored.
 
     If the primary provider/model hits a temporary failure (rate limit,
     overload, 5xx, network), the centralized fallback engine retries the next
@@ -41,10 +64,32 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
         )
 
     history = [{"role": turn.role, "content": turn.content} for turn in payload.history]
-    messages = prompt_service.build_messages(history, payload.message)
+
+    fallback_models = None
+    if payload.image:
+        # A frame+question must never be sent to a text-only model. Route to a
+        # vision-capable model and keep every fallback candidate vision-capable.
+        primary_model = _resolve_vision_model(provider, model)
+        if primary_model is None:
+            raise llm_service.BadRequestError(
+                f"Provider '{provider}' has no vision-capable model configured "
+                "for screen analysis. Select a different provider or model."
+            )
+        messages = prompt_service.build_vision_messages(
+            history, payload.message, payload.image
+        )
+        fallback_models = VISION_MODELS
+    else:
+        primary_model = model
+        messages = prompt_service.build_messages(history, payload.message)
 
     result = fallback_service.execute_with_fallback(
-        db, user, messages, primary_provider=provider, primary_model=model
+        db,
+        user,
+        messages,
+        primary_provider=provider,
+        primary_model=primary_model,
+        fallback_models=fallback_models,
     )
 
     return ChatResponse(

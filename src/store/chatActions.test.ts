@@ -243,3 +243,39 @@ describe("regenerateResponse", () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 });
+
+describe("sendMessageStream with a screen frame", () => {
+  it("sends the captured frame together with the question", async () => {
+    const chat = makeChat("chat-screen", "Screen chat");
+    await seed(chat, []);
+
+    await useChatStore
+      .getState()
+      .sendMessageStream("What is this error?", "data:image/jpeg;base64,FRAME");
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const [req] = sendMock.mock.calls[0];
+    expect(req.message).toBe("What is this error?");
+    expect(req.image).toBe("data:image/jpeg;base64,FRAME");
+
+    // The frame is transient: only the text is persisted as the user message.
+    const stored = await db.messages
+      .where("chatId")
+      .equals("chat-screen")
+      .sortBy("timestamp");
+    expect(stored).toHaveLength(2); // user + assistant
+    expect(stored[0].content).toBe("What is this error?");
+  });
+
+  it("omits the image field when sending without screen sharing", async () => {
+    const chat = makeChat("chat-text", "Text chat");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("Hello");
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const [req] = sendMock.mock.calls[0];
+    expect(req.message).toBe("Hello");
+    expect(req.image).toBeUndefined();
+  });
+});

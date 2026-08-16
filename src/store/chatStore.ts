@@ -28,7 +28,7 @@ import Dexie from "dexie";
 interface ChatStore extends ChatState {
   theme: string;
   reset: (clearStorage?: boolean) => void;
-  sendMessageStream: (content: string) => Promise<void>;
+  sendMessageStream: (content: string, image?: string) => Promise<void>;
   createNewChat: () => Promise<Chat>;
   renameChat: (id: string, title: string) => Promise<void>;
   deleteChat: (id: string) => Promise<void>;
@@ -114,7 +114,8 @@ interface ChatRequestHistory {
 async function requestAssistant(
   chat: Chat,
   text: string,
-  history: ChatRequestHistory[]
+  history: ChatRequestHistory[],
+  image?: string
 ): Promise<void> {
   const state = useChatStore.getState();
   const provider = state.provider;
@@ -132,7 +133,7 @@ async function requestAssistant(
 
   try {
     const startTime = performance.now();
-    const res = await chatService.send({ message: text, history, provider, model });
+    const res = await chatService.send({ message: text, history, provider, model, image });
     const responseTime = performance.now() - startTime;
 
     // Record usage for EVERY attempted request (primary + fallbacks). The
@@ -170,13 +171,18 @@ async function requestAssistant(
     }
 
     // Echo the exact provider/model the backend used so the on-screen
-    // indicator can never drift from reality.
+    // indicator can never drift from reality. Screen-share requests are
+    // temporarily routed to a server-side vision model the user never picked;
+    // keep the user's selection untouched there so the dropdown stays valid
+    // for subsequent normal chat.
     const latest = useChatStore.getState();
-    if (res.provider && res.provider !== latest.provider) {
-      useChatStore.setState({ provider: res.provider as ProviderType });
-    }
-    if (res.model && res.model !== latest.model) {
-      useChatStore.setState({ model: res.model });
+    if (!image) {
+      if (res.provider && res.provider !== latest.provider) {
+        useChatStore.setState({ provider: res.provider as ProviderType });
+      }
+      if (res.model && res.model !== latest.model) {
+        useChatStore.setState({ model: res.model });
+      }
     }
 
     const asstMsg: Message = {
@@ -450,7 +456,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     return chats.filter((c) => c.title.toLowerCase().includes(q));
   },
 
-  sendMessageStream: async (content) => {
+  sendMessageStream: async (content, image) => {
     const text = content.trim();
     if (!text) return;
 
@@ -506,7 +512,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       // No API key is sent to the backend. The backend resolves the key for
       // this provider from the user's Supabase-stored keys. Provider/model are
       // sent explicitly so the UI selection is always what the backend uses.
-      await requestAssistant(currentChat, text, history);
+      // An optional `image` (a single fresh screen-share frame) is attached to
+      // this request only; it is transient and never stored with the message.
+      await requestAssistant(currentChat, text, history, image);
 
       const title = get().chats.find((c) => c.id === currentChat!.id)?.title;
       if (title === "New chat") {

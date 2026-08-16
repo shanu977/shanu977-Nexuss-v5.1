@@ -152,12 +152,18 @@ def _build_chain(
     user: User,
     primary_provider: str,
     primary_model: str,
+    fallback_models: Optional[Dict[str, str]] = None,
 ) -> List[Tuple[str, str, str]]:
     """Build the ordered attempt chain: primary first, then configured fallbacks.
 
     A candidate is only included when it is configured and has a usable API
     key, its model exists and belongs to that provider, and it is not in
     cooldown. The primary provider with no key is a permanent config error.
+
+    `fallback_models` overrides the fallback model per provider (used by the
+    screen-analysis path so every candidate is vision-capable). Models coming
+    from this server-side override are trusted and skip the ALLOWED_MODELS
+    check; only the user-selected primary model is strictly validated upstream.
     """
     candidates: List[Tuple[str, str, str]] = []
     seen: set = set()
@@ -175,9 +181,14 @@ def _build_chain(
     for provider in FALLBACK_PRIORITY:
         if provider == primary_provider or cooldown.active(provider):
             continue
-        model = llm_service.PROVIDER_DEFAULT_MODELS.get(provider)
-        if model is None or model not in ALLOWED_MODELS.get(provider, set()):
-            continue
+        if fallback_models is not None:
+            model = fallback_models.get(provider)
+            if model is None:
+                continue
+        else:
+            model = llm_service.PROVIDER_DEFAULT_MODELS.get(provider)
+            if model is None or model not in ALLOWED_MODELS.get(provider, set()):
+                continue
         key = _resolve_key_optional(db, user, provider)
         if key is None:
             continue  # skip fallbacks without a configured API key
@@ -233,9 +244,10 @@ def _log_failure(provider: str, exc: llm_service.AIProviderError) -> None:
 def execute_with_fallback(
     db: Session,
     user: User,
-    messages: List[Dict[str, str]],
+    messages: List[Dict],
     primary_provider: str,
     primary_model: str,
+    fallback_models: Optional[Dict[str, str]] = None,
 ) -> dict:
     """Run the bounded attempt chain for a chat request.
 
@@ -243,8 +255,13 @@ def execute_with_fallback(
     `fallback_used` (a human-readable notice when a fallback produced the
     reply). Raises a `ProviderFailureError` when every candidate fails; the
     error carries the full attempt log so usage can be recorded client-side.
+
+    `fallback_models` is forwarded to the chain builder so screen-analysis
+    requests only fall back to vision-capable models.
     """
-    candidates = _build_chain(db, user, primary_provider, primary_model)
+    candidates = _build_chain(
+        db, user, primary_provider, primary_model, fallback_models=fallback_models
+    )
     if not candidates:
         raise ProviderFailureError(
             status_code=503,

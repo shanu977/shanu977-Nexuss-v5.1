@@ -171,3 +171,34 @@ export function CheckIcon({ className }: IconProps) {
     </Icon>
   );
 }
+
+export function MonitorIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8" />
+      <path d="M12 17v4" />
+    </Icon>
+  );
+}
+
+export function XCircleIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m15 9-6 6" />
+      <path d="m9 9 6 6" />
+    </Icon>
+  );
+}
+
+export function ArrowRightLeftIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="m16 3 4 4-4 4" />
+      <path d="M20 7H4" />
+      <path d="m8 21-4-4 4-4" />
+      <path d="M4 17h16" />
+    </Icon>
+  );
+}

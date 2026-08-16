@@ -1,9 +1,12 @@
 "use client";
 
+import { useCallback } from "react";
 import MessageList from "@/components/MessageList";
 import ChatComposer from "@/components/ChatComposer";
 import ChatHeader from "@/components/ChatHeader";
+import ScreenSharePanel from "@/components/ScreenSharePanel";
 import { useChat } from "@/hooks/useChat";
+import { useScreenShare } from "@/hooks/useScreenShare";
 
 interface ChatPageProps {
   sidebarOpen?: boolean;
@@ -26,7 +29,25 @@ export default function ChatPage({
     clearError
   } = useChat();
 
+  const screenShare = useScreenShare();
+  const { isActive: screenShareActive, error: screenShareError, captureFrame } =
+    screenShare;
+
   const handleSidebarToggle = onToggleSidebar || onOpenSidebar || (() => {});
+
+  // While screen sharing is active, capture exactly ONE fresh frame from the
+  // live preview and attach it to this request only. The live stream itself is
+  // never sent anywhere. If the frame is not ready yet, fall back to a normal
+  // text request rather than blocking the chat.
+  const handleSend = useCallback(
+    async (content: string) => {
+      const image = screenShareActive ? captureFrame() ?? undefined : undefined;
+      await sendMessageStream(content, image);
+    },
+    [screenShareActive, captureFrame, sendMessageStream]
+  );
+
+  const showScreenSharePanel = screenShareActive || !!screenShareError;
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col bg-background text-foreground font-sans transition-colors duration-200 w-full">
@@ -56,12 +77,14 @@ export default function ChatPage({
           loading={loading}
           isStreaming={isStreaming}
           streamingMessage={streamingMessage}
-          onSendSuggestion={sendMessageStream}
+          onSendSuggestion={handleSend}
         />
+        {showScreenSharePanel && <ScreenSharePanel screenShare={screenShare} />}
         <ChatComposer
-          onSend={sendMessageStream}
+          onSend={handleSend}
           loading={loading}
           disabled={isStreaming}
+          onStartScreenShare={() => void screenShare.startSharing()}
         />
       </main>
     </div>

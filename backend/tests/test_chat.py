@@ -150,6 +150,131 @@ def test_chat_rejects_unsupported_provider_override(client, fake_llm):
     assert resp.status_code == 400
 
 
+# ------------------------------------------------------ screen-share analysis
+
+
+SCREEN_IMAGE = "data:image/png;base64,iVBORw0KGgo="
+
+
+def test_chat_with_image_routes_to_vision_model(client, fake_llm):
+    headers = auth_headers(client)
+    client.put(
+        "/settings", headers=headers, json={"provider": "gemini", "model": "gemini-3.6-flash"}
+    )
+    client.put(
+        "/api-keys", headers=headers, json={"provider": "gemini", "api_key": "gem-key-123"}
+    )
+
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={"message": "What error is on my screen?", "image": SCREEN_IMAGE},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["provider"] == "gemini"
+    assert data["model"] == "gemini-3.6-flash"
+    assert fake_llm["provider"] == "gemini"
+    assert fake_llm["model"] == "gemini-3.6-flash"
+
+    # The current user turn is multimodal: text + the single captured frame.
+    last = fake_llm["messages"][-1]
+    assert last["role"] == "user"
+    assert isinstance(last["content"], list)
+    parts = {p["type"]: p for p in last["content"]}
+    assert parts["text"]["text"] == "What error is on my screen?"
+    assert parts["image_url"]["image_url"]["url"] == SCREEN_IMAGE
+
+
+def test_chat_with_image_on_text_model_uses_vision_default(client, fake_llm):
+    headers = auth_headers(client)
+    # Default Groq selection (llama-3.3-70b-versatile) is text-only. The frame
+    # must be routed to a vision-capable model, never sent to the text model.
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={"message": "What do you see?", "image": SCREEN_IMAGE},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["model"] == "llama-3.2-90b-vision-preview"
+    assert fake_llm["model"] == "llama-3.2-90b-vision-preview"
+    assert isinstance(fake_llm["messages"][-1]["content"], list)
+
+
+def test_chat_with_image_keeps_history_text_only(client, fake_llm):
+    headers = auth_headers(client)
+    history = [
+        {"role": "user", "content": "I am sharing my screen."},
+        {"role": "assistant", "content": "Ask me anything about it."},
+    ]
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={"message": "Check this error", "history": history, "image": SCREEN_IMAGE},
+    )
+    assert resp.status_code == 200, resp.text
+    msgs = fake_llm["messages"]
+    # Prior turns stay plain text; only the current question carries the frame.
+    assert msgs[1:-1] == history
+    assert isinstance(msgs[-1]["content"], list)
+
+
+def test_chat_with_image_rejects_non_data_url(client, fake_llm):
+    headers = auth_headers(client)
+    assert (
+        client.post(
+            "/chat",
+            headers=headers,
+            json={"message": "hi", "image": "https://example.com/screen.png"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/chat",
+            headers=headers,
+            json={"message": "hi", "image": "data:text/plain;base64,YWJj"},
+        ).status_code
+        == 422
+    )
+
+
+def test_chat_with_image_errors_when_provider_has_no_vision_model(client, fake_llm, monkeypatch):
+    from app.services import ai_service
+
+    monkeypatch.setattr(ai_service, "VISION_MODELS", {})
+    headers = auth_headers(client)
+    resp = client.post(
+        "/chat", headers=headers, json={"message": "hi", "image": SCREEN_IMAGE}
+    )
+    assert resp.status_code == 400
+    assert "vision" in resp.json()["detail"].lower()
+    # The provider call was never attempted.
+    assert "provider" not in fake_llm
+
+
+def test_chat_with_image_uses_selected_vision_capable_model(client, fake_llm):
+    # A user-selected vision-capable model (gemini-2.5-pro) is honored instead
+    # of being swapped for the provider's vision default (gemini-3.6-flash).
+    headers = auth_headers(client)
+    client.put(
+        "/api-keys", headers=headers, json={"provider": "gemini", "api_key": "gem-key-123"}
+    )
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={
+            "message": "Look at this",
+            "provider": "gemini",
+            "model": "gemini-2.5-pro",
+            "image": SCREEN_IMAGE,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["model"] == "gemini-2.5-pro"
+    assert fake_llm["model"] == "gemini-2.5-pro"
+
+
 def test_chat_requires_auth_headers(client, fake_llm):
     resp = client.post("/chat", json={"message": "hi"})
     assert resp.status_code == 401

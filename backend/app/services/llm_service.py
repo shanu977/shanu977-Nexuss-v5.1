@@ -245,7 +245,7 @@ def _map_error(status_code: int | None, resp=None) -> AIProviderError:
 
 
 def complete(
-    messages: List[Dict[str, str]],
+    messages: List[Dict],
     *,
     provider: str = "groq",
     model: str | None = None,
@@ -253,7 +253,11 @@ def complete(
 ) -> tuple[str, UsageInfo]:
     """Send a chat completion request to the selected provider.
 
-    `messages` is OpenAI-style: [{"role": "system"|"user"|"assistant", "content": ...}].
+    `messages` is OpenAI-style: [{"role": "system"|"user"|"assistant",
+    "content": ...}]. `content` may be a string (text chat) or a list of
+    content parts (e.g. a text + image_url pair for screen analysis); the
+    payload is passed through unchanged to the provider's OpenAI-compatible
+    endpoint.
 
     - provider: one of "groq", "gemini", "openrouter"
     - model: user-selected model id; falls back to a provider default when absent

@@ -73,3 +73,29 @@ def build_messages(
         total += cost
 
     return [system] + list(reversed(kept)) + [user]
+
+
+def build_vision_messages(
+    history: List[Dict[str, str]],
+    user_message: str,
+    image_data_url: str,
+    max_tokens: int = MAX_CONTEXT_TOKENS,
+) -> List[Dict]:
+    """Build the full message list for a screen-analysis request.
+
+    Reuses the text budget/trimming from `build_messages` (history stays plain
+    text) and attaches the single captured frame to the current user message as
+    an OpenAI-style `image_url` content part. Only the live frame the user just
+    asked about is sent; nothing is stored server-side.
+
+    Raises ContextLimitError if the text alone would exceed the budget.
+    """
+    messages = build_messages(history, user_message, max_tokens=max_tokens)
+    messages[-1] = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": user_message},
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+        ],
+    }
+    return messages
