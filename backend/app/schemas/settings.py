@@ -39,22 +39,22 @@ ALLOWED_MODELS = {
 # when it supports images; otherwise the provider's vision default below is used.
 #
 # NOTE: Groq decommissioned the llama-3.2 vision-preview models on 2025-04-14
-# (calling them returns a provider 400). The current vision-capable model is
-# meta-llama/llama-4-maverick-17b-128e-instruct. OpenRouter's llama-3.2 vision
-# instruct model has also been retired; the free multimodal default is now a
-# Nemotron 3 Nano Omni model.
+# and later removed the Llama 4 models (calling a retired ID returns a provider
+# 400). The ONLY vision-capable model currently on Groq is qwen/qwen3.6-27b
+# (see Groq docs "Images and Vision"). OpenRouter's llama-3.2 vision instruct
+# model was also retired; the free multimodal default is a Nemotron 3 Nano Omni
+# model (verified present in OpenRouter's current /models catalog).
 VISION_MODELS = {
-    "groq": "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "groq": "qwen/qwen3.6-27b",
     "gemini": "gemini-3.6-flash",
     "openrouter": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
 }
 
 # Model IDs that accept image input. A request with an image uses the user's
 # selected model only if it is listed here (Gemini models are all multimodal).
-# Groq and OpenRouter have no user-selectable vision model today, so a
-# frame+question always uses the provider's vision default above.
+# qwen/qwen3.6-27b is the sole Groq vision model and is user-selectable.
 VISION_CAPABLE_MODELS = {
-    "groq": set(),
+    "groq": {"qwen/qwen3.6-27b"},
     "gemini": set(ALLOWED_MODELS["gemini"]),
     "openrouter": {"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"},
 }

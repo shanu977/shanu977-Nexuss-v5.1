@@ -196,8 +196,8 @@ def test_chat_with_image_on_text_model_uses_vision_default(client, fake_llm):
         json={"message": "What do you see?", "image": SCREEN_IMAGE},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["model"] == "meta-llama/llama-4-maverick-17b-128e-instruct"
-    assert fake_llm["model"] == "meta-llama/llama-4-maverick-17b-128e-instruct"
+    assert resp.json()["model"] == "qwen/qwen3.6-27b"
+    assert fake_llm["model"] == "qwen/qwen3.6-27b"
     assert isinstance(fake_llm["messages"][-1]["content"], list)
 
 
