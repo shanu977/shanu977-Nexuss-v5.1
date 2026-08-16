@@ -66,7 +66,7 @@ export default function ChatComposer({
     <form onSubmit={handleSubmit} className="shrink-0 bg-background p-3 sm:p-4">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
         {/* Floating Composer Container */}
-        <div className="flex flex-col rounded-3xl border border-border bg-card p-2.5 shadow-lg transition-all duration-150 focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
+        <div className="flex flex-col rounded-3xl border border-border bg-card p-2.5 shadow-lg transition-all duration-150">
           <textarea
             ref={textareaRef}
             value={text}

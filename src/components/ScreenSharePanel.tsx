@@ -85,21 +85,20 @@ export default function ScreenSharePanel({ screenShare }: ScreenSharePanelProps)
                 )}
               </div>
 
-              {/* Active source (only the selected one, marked green) */}
+              {/* Active source (only the selected one is ever shown: the
+                  browser does not expose the full list to the page) */}
               <p className="mb-2 mt-4 text-[10px] font-mono font-semibold uppercase tracking-wider text-muted-foreground">
-                Available screens/windows
+                Sharing
               </p>
-              <ul className="space-y-1">
-                <li className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full bg-emerald-500"
-                    aria-hidden="true"
-                  />
-                  <span className="truncate text-xs text-foreground">
-                    {selectedSourceName || (isStarting ? "Selecting…" : "Live screen")}
-                  </span>
-                </li>
-              </ul>
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full bg-emerald-500"
+                  aria-hidden="true"
+                />
+                <span className="truncate text-xs text-foreground">
+                  {selectedSourceName || (isStarting ? "Selecting…" : "Live screen")}
+                </span>
+              </div>
 
               {/* Controls */}
               <div className="mt-4 flex flex-wrap items-center gap-2">

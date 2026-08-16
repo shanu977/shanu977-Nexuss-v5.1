@@ -96,8 +96,9 @@ export function useScreenShare(): UseScreenShare {
         audio: false
       });
     } catch {
-      // Cancelled by the user or permission denied by the browser/OS.
-      setError("Screen sharing was cancelled or not permitted.");
+      // The user cancelled the picker or the browser/OS denied permission.
+      // This is an expected outcome, not an app error: stay quiet so no
+      // scary message appears and sharing simply remains off.
       return null;
     }
   }, []);

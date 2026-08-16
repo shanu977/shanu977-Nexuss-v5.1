@@ -112,7 +112,7 @@ describe("useScreenShare", () => {
 
     expect(started).toBe(false);
     expect(result.current.isActive).toBe(false);
-    expect(result.current.error).toMatch(/cancelled|permitted/i);
+    expect(result.current.error).toBeNull();
   });
 
   it("errors gracefully when screen capture is unsupported", async () => {

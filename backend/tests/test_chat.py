@@ -196,8 +196,8 @@ def test_chat_with_image_on_text_model_uses_vision_default(client, fake_llm):
         json={"message": "What do you see?", "image": SCREEN_IMAGE},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["model"] == "llama-3.2-90b-vision-preview"
-    assert fake_llm["model"] == "llama-3.2-90b-vision-preview"
+    assert resp.json()["model"] == "meta-llama/llama-4-maverick-17b-128e-instruct"
+    assert fake_llm["model"] == "meta-llama/llama-4-maverick-17b-128e-instruct"
     assert isinstance(fake_llm["messages"][-1]["content"], list)
 
 
@@ -217,6 +217,29 @@ def test_chat_with_image_keeps_history_text_only(client, fake_llm):
     # Prior turns stay plain text; only the current question carries the frame.
     assert msgs[1:-1] == history
     assert isinstance(msgs[-1]["content"], list)
+
+
+def test_chat_with_image_on_openrouter_uses_vision_default(client, fake_llm):
+    headers = auth_headers(client)
+    client.put(
+        "/api-keys", headers=headers, json={"provider": "openrouter", "api_key": "or-key"}
+    )
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={
+            "message": "What do you see?",
+            "provider": "openrouter",
+            "model": "openai/gpt-oss-120b:free",
+            "image": SCREEN_IMAGE,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert (
+        resp.json()["model"] == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+    )
+    assert fake_llm["model"] == "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+    assert isinstance(fake_llm["messages"][-1]["content"], list)
 
 
 def test_chat_with_image_rejects_non_data_url(client, fake_llm):
