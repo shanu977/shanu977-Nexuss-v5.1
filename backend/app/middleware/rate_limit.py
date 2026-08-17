@@ -90,6 +90,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 del self._hits[key]
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip rate limiting for OPTIONS (CORS preflight) requests.
+        # OPTIONS requests must be processed by CORSMiddleware without rate-limit
+        # checks to properly handle browser preflight with correct CORS headers.
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         if not any(request.url.path.startswith(p) for p in self.paths):
             return await call_next(request)
 
