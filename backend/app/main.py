@@ -3,11 +3,12 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import settings
 from .database import Base, engine, check_database, get_db
@@ -33,6 +34,20 @@ from .services.fallback_service import ProviderFailureError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn.error")
+
+
+def _add_cors_headers(response, request: Request) -> JSONResponse:
+    """Add CORS headers to a response if the request origin is allowed.
+    
+    This is a safety net to ensure error responses always include proper CORS headers,
+    even if the CORSMiddleware somehow doesn't reach them. In normal operation, the
+    middleware handles CORS; this is a fallback for edge cases.
+    """
+    origin = request.headers.get("origin")
+    if origin and origin in settings.cors_origins_list:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
 
 @asynccontextmanager
@@ -94,14 +109,36 @@ app.include_router(chat.router)
 app.include_router(conversations.router)
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Global exception handler for HTTPException that ensures CORS headers are included."""
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+    return _add_cors_headers(response, request)
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Catch-all exception handler for unexpected errors, ensures CORS headers are included."""
+    logger.exception(f"Unhandled exception: {exc}")
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+    return _add_cors_headers(response, request)
+
+
 @app.exception_handler(ProviderFailureError)
-async def provider_failure_handler(request, exc: ProviderFailureError):
+async def provider_failure_handler(request: Request, exc: ProviderFailureError):
     """Return provider failures with their attempt log (detail stays a string
     so clients that only read `detail` keep working)."""
-    return JSONResponse(
+    response = JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.message, "attempts": exc.attempts},
     )
+    return _add_cors_headers(response, request)
 
 
 @app.get("/health")

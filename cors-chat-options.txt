@@ -1,0 +1,83 @@
+﻿curl.exe : * Host shanu977-nexuss-v51-production.up.railway.app:443 was 
+resolved.
+At line:1 char:1
++ curl.exe -v -X OPTIONS `
++ ~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (* Host shanu977...3 was resolved. 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+* IPv6: 64:ff9b::452e:2e6c
+* IPv4: 69.46.46.108
+*   Trying [64:ff9b::452e:2e6c]:443...
+* schannel: disabled automatic use of client certificate
+* ALPN: curl offers http/1.1
+* ALPN: server accepted http/1.1
+* Established connection to shanu977-nexuss-v51-production.up.railway.app 
+(64:ff9b::452e:2e6c port 443) from 2409:40f0:3198:1905:f09b:407:d322:539a port 
+52710 
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+
+  0      0   0      0   0      0      0      0                              0* 
+using HTTP/1.x
+> OPTIONS /chat HTTP/1.1
+
+> Host: shanu977-nexuss-v51-production.up.railway.app
+
+> User-Agent: curl/8.21.0
+
+> Accept: */*
+
+> Origin: https://www.nexuss.in
+
+> Access-Control-Request-Method: POST
+
+> Access-Control-Request-Headers: authorization,content-type
+
+> 
+
+* Request completely sent off
+* schannel: remote party requests renegotiation
+* schannel: renegotiating SSL/TLS connection
+* schannel: SSL/TLS connection renegotiated
+< HTTP/1.1 200 OK
+
+< access-control-allow-credentials: true
+
+< access-control-allow-headers: authorization,content-type
+
+< access-control-allow-methods: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT
+
+< access-control-allow-origin: https://www.nexuss.in
+
+< access-control-max-age: 600
+
+< Content-Type: text/plain; charset=utf-8
+
+< Date: Mon, 17 Aug 2026 20:00:26 GMT
+
+< Server: railway-hikari
+
+< vary: Origin
+
+< x-railway-request-id: nlHBdsrqTb6aJWtFpHNmDw
+
+< Content-Length: 2
+
+< x-hikari-trace: sin1.hs0s
+
+< x-railway-edge: sin1
+
+< Connection: keep-alive
+
+< 
+
+{ [2 bytes data]
+
+100      2 100      2   0      0      4      0                              0
+100      2 100      2   0      0      4      0                              0
+100      2 100      2   0      0      4      0                              0
+* Connection #0 to host shanu977-nexuss-v51-production.up.railway.app:443 left 
+intact
+OK
