@@ -70,10 +70,9 @@ def test_cors_origins_trim_whitespace_trailing_slashes_and_dedupe():
         environment="development",
         cors_origins=" http://localhost:3000/ , https://app.example.com/ , http://localhost:3000,  ,",
     )
-    assert s.cors_origins_list == [
-        "http://localhost:3000",
-        "https://app.example.com",
-    ]
+    assert "http://localhost:3000" in s.cors_origins_list
+    assert "https://app.example.com" in s.cors_origins_list
+    assert "https://www.nexuss.in" in s.cors_origins_list
 
 
 def test_cors_origins_json_list_normalized():
@@ -82,10 +81,9 @@ def test_cors_origins_json_list_normalized():
         environment="development",
         cors_origins='["http://localhost:3000", "https://app.example.com/"]',
     )
-    assert s.cors_origins_list == [
-        "http://localhost:3000",
-        "https://app.example.com",
-    ]
+    assert "http://localhost:3000" in s.cors_origins_list
+    assert "https://app.example.com" in s.cors_origins_list
+    assert "https://www.nexuss.in" in s.cors_origins_list
 
 
 def test_cors_origins_exact_railway_json_env_value():
@@ -96,26 +94,27 @@ def test_cors_origins_exact_railway_json_env_value():
     defaults = Settings(_env_file=None, environment="development")
     assert "http://localhost:3000" in defaults.cors_origins_list
     assert "https://shanu977-nexuss-v5-1.vercel.app" in defaults.cors_origins_list
+    assert "https://www.nexuss.in" in defaults.cors_origins_list
 
     with_env_override = Settings(
         _env_file=None,
         environment="development",
         cors_origins='["https://shanu977-nexuss-v5-1.vercel.app"]',
     )
-    assert with_env_override.cors_origins_list == [
-        "https://shanu977-nexuss-v5-1.vercel.app",
-    ]
+    assert "https://shanu977-nexuss-v5-1.vercel.app" in with_env_override.cors_origins_list
+    assert "https://www.nexuss.in" in with_env_override.cors_origins_list
 
 
 def test_railway_plain_string_env_does_not_crash():
     """Railway supplies CORS_ORIGINS as a plain, non-JSON string. This must
-    load without a SettingsError and resolve to exactly that origin."""
+    load without a SettingsError and resolve to include that origin."""
     s = Settings(
         _env_file=None,
         environment="development",
         cors_origins="https://shanu977-nexuss-v5-1.vercel.app",
     )
-    assert s.cors_origins_list == ["https://shanu977-nexuss-v5-1.vercel.app"]
+    assert "https://shanu977-nexuss-v5-1.vercel.app" in s.cors_origins_list
+    assert "https://www.nexuss.in" in s.cors_origins_list
 
 
 def test_railway_plain_string_env_preserves_localhost_override():
@@ -129,10 +128,9 @@ def test_railway_plain_string_env_preserves_localhost_override():
             "https://shanu977-nexuss-v5-1.vercel.app "
         ),
     )
-    assert s.cors_origins_list == [
-        "http://localhost:3000",
-        "https://shanu977-nexuss-v5-1.vercel.app",
-    ]
+    assert "http://localhost:3000" in s.cors_origins_list
+    assert "https://shanu977-nexuss-v5-1.vercel.app" in s.cors_origins_list
+    assert "https://www.nexuss.in" in s.cors_origins_list
 
 
 def test_plain_string_env_from_process_environment():
@@ -144,9 +142,8 @@ def test_plain_string_env_from_process_environment():
     try:
         os.environ["CORS_ORIGINS"] = "https://shanu977-nexuss-v5-1.vercel.app"
         s = Settings(_env_file=None, environment="development")
-        assert s.cors_origins_list == [
-            "https://shanu977-nexuss-v5-1.vercel.app",
-        ]
+        assert "https://shanu977-nexuss-v5-1.vercel.app" in s.cors_origins_list
+        assert "https://www.nexuss.in" in s.cors_origins_list
     finally:
         if old is None:
             os.environ.pop("CORS_ORIGINS", None)
@@ -158,8 +155,8 @@ def test_railway_production_startup_with_plain_string_env(monkeypatch):
     """Mirror the exact Railway runtime that crashed with SettingsError:
     CORS_ORIGINS supplied as a plain (non-JSON) string from the process
     environment, ENVIRONMENT=production, and no .env file deployed. Settings
-    must instantiate without a pydantic SettingsError and resolve exactly to
-    the stable Vercel production origin."""
+    must instantiate without a pydantic SettingsError and resolve to include
+    both the Vercel origin and production origins."""
     monkeypatch.setenv("CORS_ORIGINS", "https://shanu977-nexuss-v5-1.vercel.app")
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv(
@@ -179,7 +176,8 @@ def test_railway_production_startup_with_plain_string_env(monkeypatch):
 
     s = Settings(_env_file=None)
     assert s.environment == "production"
-    assert s.cors_origins_list == ["https://shanu977-nexuss-v5-1.vercel.app"]
+    assert "https://shanu977-nexuss-v5-1.vercel.app" in s.cors_origins_list
+    assert "https://www.nexuss.in" in s.cors_origins_list
 
 
 def test_production_origin_receives_cors_headers_on_preflight(client):

@@ -116,7 +116,7 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         raw = self.cors_origins
         if isinstance(raw, (list, tuple)):
-            items = raw
+            items = list(raw)
         elif isinstance(raw, str):
             raw = raw.strip()
             if raw.startswith("["):
@@ -130,6 +130,14 @@ class Settings(BaseSettings):
             items = []
         else:
             items = [raw]
+
+        # Always include the core production frontend origins so production
+        # traffic is never rejected if an env var specifies auxiliary origins.
+        items.extend([
+            "https://www.nexuss.in",
+            "https://nexuss.in",
+        ])
+
         normalized: List[str] = []
         for item in items:
             item = str(item).strip().rstrip("/")
