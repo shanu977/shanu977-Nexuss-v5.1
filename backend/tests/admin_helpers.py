@@ -10,7 +10,7 @@ def provision_user(client, headers):
     assert res.status_code == 200, res.text
 
 
-def set_role(email: str, role: str, name: str = "shanmuk", status: str = "active") -> None:
+def set_role(email: str, role: str, name: str = "Test User", status: str = "active") -> None:
     """Update a provisioned user's server-side role directly in the DB."""
     db = TestingSessionLocal()
     try:
@@ -24,7 +24,7 @@ def set_role(email: str, role: str, name: str = "shanmuk", status: str = "active
         db.close()
 
 
-def make_admin(client, headers, email="pillishanu5@gmail.com"):
+def make_admin(client, headers, email="test@example.com"):
     """Provision the given user and promote them to admin. Returns headers."""
     provision_user(client, headers)
     set_role(email, "admin")

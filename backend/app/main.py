@@ -64,6 +64,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Middleware order: add_middleware() is LIFO — the LAST call added is the
+# OUTERMOST wrapper (executes first). CORSMiddleware MUST be outermost so that:
+#   1. OPTIONS preflight requests are handled before reaching RateLimitMiddleware.
+#   2. All responses (including 429 from RateLimitMiddleware) include the
+#      Access-Control-Allow-Origin header the browser requires.
+# Do NOT swap this order without understanding the LIFO semantics.
+app.add_middleware(RateLimitMiddleware, max_requests=20, window_seconds=60, paths=("/chat",))
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -71,8 +79,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.add_middleware(RateLimitMiddleware, max_requests=20, window_seconds=60, paths=("/chat",))
 
 app.include_router(auth.router)
 app.include_router(admin.router)

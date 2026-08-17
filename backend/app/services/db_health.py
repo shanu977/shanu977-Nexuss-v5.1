@@ -30,6 +30,13 @@ REQUIRED_TABLES: List[str] = [
     "user_api_keys",
     "conversations",
     "messages",
+    # Admin-foundation tables (migration f4b5c6d7e8f9)
+    "usage_records",
+    "feedback",
+    "app_settings",
+    "audit_log",
+    # OTP table (migration d5e6f7a8b9c0)
+    "email_otps",
 ]
 
 # Columns that MUST exist in each table.
@@ -80,6 +87,47 @@ REQUIRED_COLUMNS: Dict[str, Dict[str, str]] = {
         "content": "Text",
         "created_at": "BigInteger",
         "source": "String (default='sync')",
+    },
+    "usage_records": {
+        "id": "String (PK)",
+        "user_id": "String (FK -> users.id)",
+        "provider": "String",
+        "model": "String",
+        "request_type": "String",
+        "attempt": "Integer",
+        "status": "String",
+        "input_tokens": "Integer",
+        "output_tokens": "Integer",
+        "total_tokens": "Integer",
+        "latency_ms": "Integer",
+        "created_at": "BigInteger",
+    },
+    "feedback": {
+        "id": "String (PK)",
+        "user_id": "String (FK -> users.id)",
+        "message": "Text",
+        "status": "String",
+        "created_at": "BigInteger",
+    },
+    "app_settings": {
+        "id": "String (PK)",
+        "key": "String (unique, indexed)",
+        "value": "Text",
+        "value_type": "String",
+        "created_at": "BigInteger",
+        "updated_at": "BigInteger",
+    },
+    "audit_log": {
+        "id": "String (PK)",
+        "action": "String",
+        "created_at": "BigInteger",
+    },
+    "email_otps": {
+        "id": "String (PK)",
+        "email": "String (indexed)",
+        "otp_hash": "String",
+        "expires_at": "BigInteger",
+        "created_at": "BigInteger",
     },
 }
 

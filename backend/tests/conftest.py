@@ -63,6 +63,15 @@ def client():
         yield c
 
 
+@pytest.fixture(autouse=True)
+def configure_test_admin(monkeypatch):
+    """Set admin email and name to match the test mock token during unit tests."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "admin_email", "test@example.com")
+    monkeypatch.setattr(settings, "admin_name", "Test User")
+
+
 def auth_headers(client, email="test@example.com", name="Test User"):
     """Return Bearer authorization headers for testing."""
     return {"Authorization": "Bearer test-mock-token"}

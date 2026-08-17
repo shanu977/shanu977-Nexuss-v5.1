@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     # normalized away when parsing.
     cors_origins: str = Field(
         default=(
+            "http://localhost:3000,http://localhost:3001,http://localhost:8080,"
             "https://www.nexuss.in,https://nexuss.in,https://shanu977-nexuss-v5-1.vercel.app"
         ),
     )
