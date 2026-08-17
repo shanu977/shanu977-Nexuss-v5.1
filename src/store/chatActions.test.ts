@@ -572,4 +572,40 @@ describe("Path workspace context flows into chat requests", () => {
     expect(req.image).toBe("data:image/jpeg;base64,FRAME");
     expect(req.workspaceContext).toBeTruthy();
   });
+
+  it("answers a status question with workspace status, not file retrieval", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const chat = makeChat("chat-ws-status", "Workspace status");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("Can you see my folder?");
+
+    const [req] = sendMock.mock.calls[0];
+    expect(req.workspaceContext).toBeTruthy();
+    expect(req.workspaceContext).toContain("is connected");
+    expect(req.workspaceContext).not.toContain("### src/");
+  });
+
+  it("answers a manifest question with the workspace file list", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const chat = makeChat("chat-ws-manifest", "Workspace manifest");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("List my files.");
+
+    const [req] = sendMock.mock.calls[0];
+    expect(req.workspaceContext).toBeTruthy();
+    expect(req.workspaceContext).toContain("src/auth/login.ts");
+    expect(req.workspaceContext).toContain("Directories:");
+  });
+
+  it("omits workspaceContext for a status question with no workspace", async () => {
+    const chat = makeChat("chat-ws-status-off", "No workspace");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("Can you see my folder?");
+
+    const [req] = sendMock.mock.calls[0];
+    expect(req.workspaceContext).toBeUndefined();
+  });
 });

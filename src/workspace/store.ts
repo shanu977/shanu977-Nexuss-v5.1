@@ -7,7 +7,15 @@
 import { create } from "zustand";
 import { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge } from "./bridge";
 import type { FileSource, WorkspaceBridge } from "./bridge";
-import { DEFAULT_CONTEXT_BUDGET, buildContextText } from "./context";
+import {
+  DEFAULT_CONTEXT_BUDGET,
+  buildContextText,
+  buildManifestContext,
+  buildStatusContext
+} from "./context";
+import { buildManifest } from "./manifest";
+import type { WorkspaceManifest } from "./manifest";
+import { classifyWorkspaceIntent } from "./intent";
 import { MAX_FILE_SIZE, buildIndex, isSupportedFile, updateIndex } from "./indexer";
 import { assertInsideRoot, normalizeRelativePath } from "./path";
 import { searchIndex } from "./search";
@@ -19,8 +27,10 @@ import type {
   OperationResult,
   SearchHit,
   Workspace,
+  WorkspaceErrorKind,
   WorkspaceFile,
-  WorkspaceIndex
+  WorkspaceIndex,
+  WorkspaceStatus
 } from "./types";
 
 const DEMO_FILES: Record<string, string> = {
@@ -109,19 +119,45 @@ async function loadWorkspaceFiles(bridge: WorkspaceBridge): Promise<WorkspaceFil
   return files;
 }
 
+function classifyError(e: unknown): { kind: WorkspaceErrorKind; message: string } {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (/does not support folder access|does not support folder iteration/i.test(raw)) {
+    return {
+      kind: "unsupported-browser",
+      message:
+        "This browser does not support folder access. Try Chrome or Edge, or use the sample workspace."
+    };
+  }
+  if (/not allowed|permission|denied|illegal invocation|read only/i.test(raw)) {
+    return {
+      kind: "permission",
+      message:
+        "Folder access was not granted. Allow read permission and try connecting again."
+    };
+  }
+  return { kind: "unknown", message: raw || "Could not open the workspace." };
+}
+
 async function initializeWorkspace(
   bridge: WorkspaceBridge,
   kind: Workspace["kind"]
 ): Promise<void> {
+  useWorkspaceStore.setState({ status: "reading" });
   const files = await loadWorkspaceFiles(bridge);
+  useWorkspaceStore.setState({ status: "indexing" });
   const index = buildIndex(bridge.rootLabel, files);
+  const manifest = buildManifest(index);
   useWorkspaceStore.setState({
     workspace: { name: bridge.rootLabel, root: bridge.rootLabel, kind },
     bridge,
     index,
+    manifest,
     connected: true,
     connecting: false,
     error: null,
+    errorKind: null,
+    status: "connected",
+    discoveredFiles: bridge.lastScan?.files ?? files.length,
     searchQuery: "",
     searchResults: []
   });
@@ -131,9 +167,13 @@ interface WorkspaceState {
   workspace: Workspace | null;
   bridge: WorkspaceBridge | null;
   index: WorkspaceIndex | null;
+  manifest: WorkspaceManifest | null;
   connected: boolean;
   connecting: boolean;
+  status: WorkspaceStatus;
+  errorKind: WorkspaceErrorKind | null;
   error: string | null;
+  discoveredFiles: number;
   panelOpen: boolean;
   searchQuery: string;
   searchResults: SearchHit[];
@@ -158,9 +198,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   workspace: null,
   bridge: null,
   index: null,
+  manifest: null,
   connected: false,
   connecting: false,
+  status: "idle",
+  errorKind: null,
   error: null,
+  discoveredFiles: 0,
   panelOpen: false,
   searchQuery: "",
   searchResults: [],
@@ -178,32 +222,38 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // back to anything that would reach outside the picked directory.
   connectLocal: async () => {
     if (get().connecting) return;
-    set({ connecting: true, error: null });
+    set({ connecting: true, error: null, errorKind: null, status: "selecting" });
     try {
       const native = detectNativeBridge();
       const bridge = native ?? (await FileSystemAccessBridge.pick());
       await initializeWorkspace(bridge, native ? "native" : "fs-access");
     } catch (e) {
+      const { kind, message } = classifyError(e);
       set({
         connecting: false,
         connected: false,
-        error: e instanceof Error ? e.message : "Could not open the workspace."
+        status: "error",
+        errorKind: kind,
+        error: message
       });
     }
   },
 
   connectDemo: async () => {
-    set({ connecting: true, error: null });
+    set({ connecting: true, error: null, errorKind: null, status: "reading" });
     try {
       await initializeWorkspace(
         new InMemoryBridge("nexuss-sample", DEMO_FILES),
         "in-memory"
       );
     } catch (e) {
+      const { kind, message } = classifyError(e);
       set({
         connecting: false,
         connected: false,
-        error: e instanceof Error ? e.message : "Could not load the sample workspace."
+        status: "error",
+        errorKind: kind,
+        error: message
       });
     }
   },
@@ -215,9 +265,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       workspace: null,
       bridge: null,
       index: null,
+      manifest: null,
       connected: false,
       connecting: false,
+      status: "idle",
+      errorKind: null,
       error: null,
+      discoveredFiles: 0,
       searchQuery: "",
       searchResults: []
     });
@@ -226,17 +280,27 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   refresh: async () => {
     const { bridge, index, connecting } = get();
     if (!bridge || connecting) return;
-    set({ connecting: true, error: null });
+    set({ connecting: true, error: null, errorKind: null, status: "reading" });
     try {
       const files = await loadWorkspaceFiles(bridge);
       const next = index
         ? updateIndex(index, files)
         : buildIndex(bridge.rootLabel, files);
-      set({ index: next, connecting: false });
+      const manifest = buildManifest(next);
+      set({
+        index: next,
+        manifest,
+        connecting: false,
+        status: "connected",
+        discoveredFiles: bridge.lastScan?.files ?? files.length
+      });
     } catch (e) {
+      const { kind, message } = classifyError(e);
       set({
         connecting: false,
-        error: e instanceof Error ? e.message : "Could not refresh the workspace."
+        status: "error",
+        errorKind: kind,
+        error: message
       });
     }
   },
@@ -248,15 +312,33 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     set({ searchResults: results, searching: false });
   },
 
-  clearError: () => set({ error: null }),
+  clearError: () =>
+    set((s) => ({
+      error: null,
+      errorKind: null,
+      status: s.connected ? "connected" : "idle"
+    })),
 
   setContextBudget: (budget) =>
     set((s) => ({ contextBudget: { ...s.contextBudget, ...budget } })),
 
   // Token-minimized context for the CURRENT question: the model only ever sees
-  // the most relevant files/sections, never the whole project.
+  // the most relevant files/sections, never the whole project. Questions about
+  // the workspace itself (status / manifest / summary) get a small dedicated
+  // context instead of keyword retrieval, which can never match them.
   buildContextFor: (question) => {
-    const { index, contextBudget } = get();
+    const { workspace, index, manifest, contextBudget } = get();
+    if (!workspace) return null;
+    const intent = classifyWorkspaceIntent(question);
+    if (intent === "status") {
+      return buildStatusContext(workspace, index);
+    }
+    if (intent === "manifest" || intent === "summary") {
+      if (manifest && manifest.files.length > 0) {
+        return buildManifestContext(workspace, manifest, contextBudget);
+      }
+      return buildStatusContext(workspace, index);
+    }
     if (!index || index.files.length === 0 || !question.trim()) return null;
     const result = buildContextText(index, question, contextBudget);
     return result.contextText ? result : null;
@@ -289,7 +371,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       if (index) {
         try {
           const files = await loadWorkspaceFiles(bridge);
-          set({ index: updateIndex(index, files) });
+          const next = updateIndex(index, files);
+          set({
+            index: next,
+            manifest: buildManifest(next),
+            discoveredFiles: bridge.lastScan?.files ?? files.length
+          });
         } catch {
           // Index refresh is best-effort; the operation itself already succeeded.
         }

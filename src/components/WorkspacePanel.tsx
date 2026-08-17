@@ -21,6 +21,7 @@ export default function WorkspacePanel() {
   const workspace = useWorkspaceStore((s) => s.workspace);
   const connected = useWorkspaceStore((s) => s.connected);
   const connecting = useWorkspaceStore((s) => s.connecting);
+  const status = useWorkspaceStore((s) => s.status);
   const error = useWorkspaceStore((s) => s.error);
   const clearError = useWorkspaceStore((s) => s.clearError);
   const index = useWorkspaceStore((s) => s.index);
@@ -34,6 +35,13 @@ export default function WorkspacePanel() {
   const [query, setQuery] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
   const panelId = "workspace-details";
+
+  const connectingLabel =
+    status === "indexing"
+      ? "Indexing files…"
+      : status === "reading"
+        ? "Reading folder…"
+        : "Selecting folder…";
 
   const handleSearch = (value: string) => {
     setQuery(value);
@@ -70,7 +78,7 @@ export default function WorkspacePanel() {
                 {connecting && (
                   <span className="flex items-center gap-1.5 text-[10px] font-normal text-muted-foreground">
                     <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-                    Opening…
+                    {connectingLabel}
                   </span>
                 )}
               </span>
@@ -133,9 +141,16 @@ export default function WorkspacePanel() {
           ) : (
             <div className="border-t border-border p-4 animate-fade-in-up">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] font-mono text-muted-foreground">
-                  {index ? `${index.files.length} files indexed` : "Indexing…"}
-                </p>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-mono text-muted-foreground">
+                    {index ? `${index.files.length} files indexed` : "Indexing…"}
+                  </p>
+                  {index && index.files.length === 0 && (
+                    <p className="mt-0.5 text-[10px] font-mono text-muted-foreground/80">
+                      No supported files found in this folder.
+                    </p>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => void disconnect()}

@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONTEXT_BUDGET,
   WORKSPACE_CONTEXT_HEADER,
+  WORKSPACE_MANIFEST_HEADER,
+  WORKSPACE_STATUS_HEADER,
   buildContextText,
+  buildManifestContext,
+  buildStatusContext,
   estimateTokens
 } from "@/workspace/context";
 import { buildIndex } from "@/workspace/indexer";
+import { buildManifest } from "@/workspace/manifest";
 import type { WorkspaceIndex } from "@/workspace/types";
 
 function makeIndex(): WorkspaceIndex {
@@ -116,5 +121,57 @@ describe("buildContextText", () => {
     expect(result.estimatedTokens).toBeLessThanOrEqual(
       DEFAULT_CONTEXT_BUDGET.maxTokens
     );
+  });
+});
+
+describe("buildStatusContext", () => {
+  it("reports the connected workspace and indexed count", () => {
+    const result = buildStatusContext(
+      { name: "myapp", root: "myapp", kind: "in-memory" },
+      makeIndex()
+    );
+    expect(result.contextText.startsWith(WORKSPACE_STATUS_HEADER)).toBe(true);
+    expect(result.contextText).toContain('workspace "myapp" is connected');
+    expect(result.contextText).toContain("3 files are indexed");
+    expect(result.includedFiles).toEqual([]);
+  });
+
+  it("handles an empty index without inventing a count", () => {
+    const result = buildStatusContext(
+      { name: "empty", root: "empty", kind: "in-memory" },
+      null
+    );
+    expect(result.contextText).toContain("no files could be indexed");
+  });
+});
+
+describe("buildManifestContext", () => {
+  const workspace = { name: "myapp", root: "myapp", kind: "in-memory" as const };
+
+  it("lists directories and files under the manifest header", () => {
+    const index = makeIndex();
+    const manifest = buildManifest(index);
+    const result = buildManifestContext(workspace, manifest);
+    expect(result.contextText.startsWith(WORKSPACE_MANIFEST_HEADER)).toBe(true);
+    expect(result.contextText).toContain("Total files: 3");
+    expect(result.contextText).toContain("src/auth");
+    expect(result.contextText).toContain("src/utils");
+    expect(result.contextText).toContain("src/auth/login.ts");
+    expect(result.includedFiles).toEqual(manifest.files);
+  });
+
+  it("caps the file list to the token budget", () => {
+    const files: Record<string, string> = {};
+    const paths: string[] = [];
+    for (let i = 0; i < 200; i++) {
+      const p = `src/mod${i}/file${i}.ts`;
+      paths.push(p);
+      files[p] = "export const a = 1;\n";
+    }
+    const manifest = buildManifest(buildIndex("root", Object.entries(files).map(([path, content]) => ({ path, size: 0, mtime: 1, content }))));
+    const result = buildManifestContext(workspace, manifest, { maxTokens: 300, maxFiles: 20 });
+    expect(result.estimatedTokens).toBeLessThanOrEqual(300);
+    expect(result.truncated).toBe(true);
+    expect(result.contextText).toContain("more files not listed");
   });
 });

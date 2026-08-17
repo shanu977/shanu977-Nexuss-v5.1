@@ -32,10 +32,14 @@ class ChatRequest(BaseModel):
     # relevant local files/sections for THIS question, capped to a small token
     # budget client-side. Attached to the prompt as a separate note so chat
     # history and workspace context stay distinct. The full project is never
-    # sent to the backend.
-    workspace_context: Optional[str] = Field(default=None, max_length=100_000)
+    # sent to the backend. The frontend sends this key as `workspaceContext`
+    # (camelCase); the alias maps it to this field. `populate_by_name` keeps the
+    # snake_case form working for tests and any native/desktop client.
+    workspace_context: Optional[str] = Field(
+        default=None, max_length=100_000, alias="workspaceContext"
+    )
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "populate_by_name": True}
 
     @field_validator("message")
     @classmethod

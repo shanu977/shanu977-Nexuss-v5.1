@@ -7,11 +7,17 @@ export type {
   OperationResult,
   SearchHit,
   Workspace,
+  WorkspaceErrorKind,
   WorkspaceFile,
   WorkspaceIndex,
   WorkspaceKind,
-  WorkspaceSearchOptions
+  WorkspaceSearchOptions,
+  WorkspaceStatus
 } from "./types";
+export { buildManifest } from "./manifest";
+export type { WorkspaceManifest } from "./manifest";
+export { classifyWorkspaceIntent } from "./intent";
+export type { WorkspaceIntent } from "./intent";
 export {
   WorkspacePathError,
   assertInsideRoot,
@@ -40,7 +46,11 @@ export { findMentionedFiles, searchIndex, tokenize } from "./search";
 export {
   DEFAULT_CONTEXT_BUDGET,
   WORKSPACE_CONTEXT_HEADER,
+  WORKSPACE_MANIFEST_HEADER,
+  WORKSPACE_STATUS_HEADER,
   buildContextText,
+  buildManifestContext,
+  buildStatusContext,
   estimateTokens
 } from "./context";
 export { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge } from "./bridge";

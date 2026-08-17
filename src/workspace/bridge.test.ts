@@ -147,6 +147,42 @@ describe("FileSystemAccessBridge with a mocked directory handle", () => {
     expect(list.map((f) => f.path).sort()).toEqual(["README.md", "src/index.ts"]);
   });
 
+  it("throws loudly (never silently returns zero) when a handle lacks entries()", async () => {
+    // A directory handle without an entries() function: before the fix this
+    // silently made discovery report "0 files indexed". Now it surfaces the
+    // real condition so the store can classify it and the UI can show it.
+    const root: MockHandle = { kind: "directory", name: "broken" };
+    const bridge = new FileSystemAccessBridge(root);
+    await expect(bridge.list()).rejects.toThrow(
+      /does not support folder iteration/
+    );
+  });
+
+  it("discovers an empty folder without error and reports scan counts", async () => {
+    const root = mockDir("empty", {});
+    const bridge = new FileSystemAccessBridge(root);
+    const list = await bridge.list();
+    expect(list).toEqual([]);
+    expect(bridge.lastScan).toEqual({ entries: 0, files: 0 });
+  });
+
+  it("reports discovery counts from the last scan", async () => {
+    const root = mockDir("my-project", {
+      "README.md": mockFile("README.md", "# demo"),
+      src: mockDir("src", {
+        "index.ts": mockFile("index.ts", "export {}"),
+        auth: mockDir("auth", { "login.ts": mockFile("login.ts", "x") })
+      }),
+      node_modules: mockDir("node_modules", { "lodash.js": mockFile("lodash.js", "big") })
+    });
+    const bridge = new FileSystemAccessBridge(root);
+    const list = await bridge.list();
+    // Scanned entries: README.md + src at the root, index.ts + auth inside src,
+    // login.ts inside auth = 5. node_modules is skipped before being counted.
+    expect(bridge.lastScan.entries).toBe(5);
+    expect(bridge.lastScan.files).toBe(list.length);
+  });
+
   it("stops walking after the scanned-file cap", async () => {
     const children: Record<string, MockHandle> = {};
     for (let i = 0; i < 5001; i++) {

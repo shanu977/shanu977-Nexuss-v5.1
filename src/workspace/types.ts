@@ -77,3 +77,18 @@ export interface OperationResult {
   ok: boolean;
   error?: string;
 }
+
+/** High-level lifecycle state of the Path workspace, surfaced in the panel. */
+export type WorkspaceStatus =
+  | "idle"
+  | "selecting" // folder picker is open
+  | "reading" // walking the folder and reading supported files
+  | "indexing" // building the search index
+  | "connected" // discovery + indexing completed
+  | "error"; // discovery or indexing failed
+
+/** Classified connect failure so the UI can show a useful, safe message. */
+export type WorkspaceErrorKind =
+  | "unsupported-browser"
+  | "permission"
+  | "unknown";

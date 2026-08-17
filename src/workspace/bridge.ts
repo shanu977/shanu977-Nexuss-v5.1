@@ -20,6 +20,8 @@ export interface FileSource {
 export interface WorkspaceBridge {
   readonly kind: WorkspaceKind;
   readonly rootLabel: string;
+  /** Discovery stats from the most recent list() call, when available. */
+  readonly lastScan?: { entries: number; files: number };
   list(): Promise<FileSource[]>;
   read(path: string): Promise<string>;
   create(path: string, content: string): Promise<void>;
@@ -81,6 +83,7 @@ const MAX_SCANNED_FILES = 5000;
 export class FileSystemAccessBridge implements WorkspaceBridge {
   readonly kind = "fs-access" as const;
   readonly rootLabel: string;
+  readonly lastScan = { entries: 0, files: 0 };
   private readonly root: FsHandleLike;
   private closed = false;
   private scanned = 0;
@@ -107,6 +110,8 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
     const out: FileSource[] = [];
     this.scanned = 0;
     await this.walk(this.root, "", out, 0);
+    this.lastScan.entries = this.scanned;
+    this.lastScan.files = out.length;
     return out;
   }
 
@@ -117,7 +122,14 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
     depth: number
   ): Promise<void> {
     if (this.closed || depth > MAX_SCAN_DEPTH) return;
-    if (typeof handle.entries !== "function") return;
+    if (typeof handle.entries !== "function") {
+      // Never fail silently: a handle without entries() would otherwise make
+      // discovery return "0 files" with no explanation. Surface the real
+      // condition so the store can classify it and the UI can show it.
+      throw new Error(
+        "This folder cannot be read by the browser: it does not support folder iteration."
+      );
+    }
     // Call entries() directly on the handle so `this` stays bound to it. File
     // System Access API methods brand-check their receiver and throw
     // `TypeError: Illegal invocation` if called detached (e.g. after being
@@ -210,6 +222,7 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
 export class InMemoryBridge implements WorkspaceBridge {
   readonly kind = "in-memory" as const;
   readonly rootLabel: string;
+  readonly lastScan = { entries: 0, files: 0 };
   private readonly files = new Map<string, string>();
 
   constructor(name: string, files: Record<string, string> = {}) {
@@ -220,6 +233,8 @@ export class InMemoryBridge implements WorkspaceBridge {
   }
 
   async list(): Promise<FileSource[]> {
+    this.lastScan.entries = this.files.size;
+    this.lastScan.files = this.files.size;
     return [...this.files.entries()].map(([path, content]) => ({
       path,
       size: content.length,

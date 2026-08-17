@@ -398,6 +398,29 @@ def test_chat_attaches_workspace_context(client, fake_llm):
     assert msgs[-1] == {"role": "user", "content": "Fix the auth bug"}
 
 
+def test_chat_accepts_camelcase_workspace_context(client, fake_llm):
+    """The frontend sends workspaceContext (camelCase); the schema alias must
+    map it to workspace_context so the request is not rejected with a 422."""
+    headers = auth_headers(client)
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={
+            "message": "Can you see my folder?",
+            "workspaceContext": (
+                "Workspace status from the user's connected Path workspace:\n\n"
+                "The user's workspace \"MyProject\" is connected and 12 files "
+                "are indexed."
+            ),
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    msgs = fake_llm["messages"]
+    assert msgs[-2]["role"] == "system"
+    assert "MyProject" in msgs[-2]["content"]
+    assert msgs[-1] == {"role": "user", "content": "Can you see my folder?"}
+
+
 def test_chat_workspace_context_keeps_history_and_frame_last(client, fake_llm):
     headers = auth_headers(client)
     history = [

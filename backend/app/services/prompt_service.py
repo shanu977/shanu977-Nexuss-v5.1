@@ -103,10 +103,10 @@ def build_vision_messages(
 
 WORKSPACE_CONTEXT_TEMPLATE = (
     "The user has granted access to a local workspace (a folder on their "
-    "computer). Below are the relevant files/sections the workspace engine "
-    "selected for this request. Use them to answer accurately; never invent "
-    "files or contents that are not shown. If the workspace context is "
-    "irrelevant to the question, ignore it.\n\n{context}"
+    "computer). Below is the workspace context (files, sections, or workspace "
+    "status) the workspace engine selected for this request. Use it to answer "
+    "accurately; never invent files or contents that are not shown. If the "
+    "workspace context is irrelevant to the question, ignore it.\n\n{context}"
 )
 
 

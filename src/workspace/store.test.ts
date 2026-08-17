@@ -30,6 +30,12 @@ describe("workspace store lifecycle", () => {
     expect(s.workspace?.kind).toBe("in-memory");
     expect(s.index?.files.length).toBeGreaterThan(0);
     expect(s.index?.byPath.has("src/auth/login.ts")).toBe(true);
+    expect(s.status).toBe("connected");
+    expect(s.discoveredFiles).toBe(s.index?.files.length);
+    expect(s.manifest?.files).toEqual(
+      s.index?.files.map((f) => f.path).sort()
+    );
+    expect(s.manifest?.directories).toContain("src/auth");
   });
 
   it("disconnect clears the workspace and index", async () => {
@@ -39,14 +45,27 @@ describe("workspace store lifecycle", () => {
     expect(s.connected).toBe(false);
     expect(s.index).toBeNull();
     expect(s.workspace).toBeNull();
+    expect(s.manifest).toBeNull();
+    expect(s.status).toBe("idle");
   });
 
-  it("connectLocal surfaces a clear error in browsers without folder access", async () => {
+  it("connectLocal classifies browser-support failures", async () => {
     // jsdom has no showDirectoryPicker and no native bridge.
     await useWorkspaceStore.getState().connectLocal();
     const s = useWorkspaceStore.getState();
     expect(s.connected).toBe(false);
-    expect(s.error).toBeTruthy();
+    expect(s.status).toBe("error");
+    expect(s.errorKind).toBe("unsupported-browser");
+    expect(s.error).toMatch(/does not support folder access/i);
+  });
+
+  it("clearError resets the error and returns to idle", async () => {
+    await useWorkspaceStore.getState().connectLocal();
+    useWorkspaceStore.getState().clearError();
+    const s = useWorkspaceStore.getState();
+    expect(s.error).toBeNull();
+    expect(s.errorKind).toBeNull();
+    expect(s.status).toBe("idle");
   });
 });
 
@@ -98,6 +117,27 @@ describe("buildContextFor", () => {
     // ...while an irrelevant file is left out, and the payload is small.
     expect(result!.includedFiles).not.toContain("src/utils/format.ts");
     expect(result!.contextText.length).toBeLessThan(20000);
+  });
+
+  it("answers status questions with a workspace status context", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const result = useWorkspaceStore.getState().buildContextFor(
+      "Can you see my folder?"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contextText).toContain("is connected");
+    expect(result!.contextText).not.toContain("### src/");
+    expect(result!.includedFiles).toEqual([]);
+  });
+
+  it("answers manifest questions with the workspace file list", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const result = useWorkspaceStore.getState().buildContextFor(
+      "What files are in my project?"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.contextText).toContain("src/auth/login.ts");
+    expect(result!.contextText).toContain("Directories:");
   });
 });
 
