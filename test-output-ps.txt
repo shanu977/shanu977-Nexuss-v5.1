@@ -1,0 +1,1938 @@
+﻿node.exe : [33mBoth esbuild and oxc options were set. oxc options will be used and esbuild options will be 
+ignored.[39m The following esbuild options were set: `{ jsx: 'automatic' }`
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([33mBoth esbui... 'automatic' }`:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+ RUN  v4.1.10 C:/Users/pilli/Downloads/Nexuss-git
+
+ Γ¥» desktop/runtime-ipc.test.ts (0 test)
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/components/AuthView.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+75: });
+76: function gotoForgot() {
+77:   render(<AuthView />);
+             ^
+78:   fireEvent.click(screen.getByText("Forgot Password?"));
+79: }.
+ Γ¥» desktop/workspace-service.test.ts (0 test)
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/components/RegisterView.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+123: });
+124: function renderRegister() {
+125:   render(<RegisterView onBackToLogin={onBackToLogin} onExistingAccountLogin={onExistingAccountLogin} 
+onGoogleOnlySetP...
+              ^
+126: }
+127: describe("Registration page", () => {.
+ Γ¥» src/components/ChatComposer.test.tsx (0 test)
+ Γ¥» src/components/AuthView.test.tsx (0 test)
+ Γ¥» src/components/RegisterView.test.tsx (0 test)
+ Γ¥» src/workspace/bridge.test.ts (16 tests | 3 failed) 31ms
+     ├ù pick() uses window.showDirectoryPicker and adopts the chosen handle 5ms
+     ├ù returns null when no desktop bridge is exposed 1ms
+     ├ù adopts a compliant window.nexussDesktop.workspace 1ms
+ Γ¥» src/components/ScreenSharePanel.test.tsx (0 test)
+ Γ¥» src/store/usageStore.test.ts (10 tests | 10 failed) 8ms
+     ├ù records usage and builds summary 4ms
+     ├ù keeps providers separate 0ms
+     ├ù tracks failed requests separately 0ms
+     ├ù clears usage data 0ms
+     ├ù data survives page refresh via IndexedDB 0ms
+     ├ù filters records by provider 0ms
+     ├ù usage records are isolated between users 0ms
+     ├ù unauthenticated users cannot read or write usage records 0ms
+     ├ù estimates context tokens from messages 0ms
+     ├ù separates multiple models within same provider 0ms
+ Γ¥» src/workspace/WorkspacePanel.test.tsx (0 test)
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/components/admin/AdminLayout.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+20: describe("AdminLayout", () => {
+21:   it("renders children inside the main area", () => {
+22:     render(<AdminLayout>
+               ^
+23:         <div>Page content</div>
+24:       </AdminLayout>);.
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/components/admin/AdminHeader.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+21: describe("AdminHeader", () => {
+22:   it("shows the route title and description", () => {
+23:     render(<AdminHeader onOpenMobileMenu={() => {}} />);
+               ^
+24:     expect(screen.getByText("Dashboard")).toBeInTheDocument();
+25:     expect(screen.getByText("Overview of your Nexuss platform")).toBeInTheDocument();.
+ Γ¥» src/components/admin/AdminLayout.test.tsx (0 test)
+ Γ¥» src/hooks/useScreenShare.test.ts (12 tests | 12 failed) 13ms
+     ├ù starts sharing and reports the selected source 6ms
+     ├ù never navigates, opens windows, or uses the source label as a navigation target 1ms
+     ├ù stops sharing and stops every track 1ms
+     ├ù detects external termination and cleans up 1ms
+     ├ù handles user cancellation gracefully 1ms
+     ├ù errors gracefully when screen capture is unsupported 0ms
+     ├ù changes screen by picking a new source and replacing the stream 0ms
+     ├ù captures exactly one current frame from the live preview 0ms
+     ├ù returns null when the video is not ready 0ms
+     ├ù reattaches the live stream to a newly mounted video element 0ms
+     ├ù unmounting the preview element does not stop the stream 0ms
+     ├ù captures a fresh frame for every question without stopping the stream 0ms
+ Γ¥» src/components/admin/AdminHeader.test.tsx (0 test)
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/components/admin/AdminSidebar.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+24: describe("AdminSidebar", () => {
+25:   it("renders every nav destination", () => {
+26:     render(<AdminSidebar />);
+               ^
+27:     for (const item of ADMIN_NAV) {
+28:       expect(screen.getByText(item.label)).toBeInTheDocument();.
+ Γ¥» src/components/admin/AdminSidebar.test.tsx (0 test)
+ Γ¥» src/components/admin/DataTable.test.tsx (0 test)
+ Γ¥» src/components/admin/ConfirmationModal.test.tsx (0 test)
+ Γ¥» src/components/admin/FilterDropdown.test.tsx (0 test)
+ Γ¥» src/components/admin/KPICard.test.tsx (0 test)
+ Γ¥» src/components/admin/SearchBar.test.tsx (0 test)
+ Γ¥» src/components/admin/States.test.tsx (0 test)
+ Γ¥» src/workspace/agent/agentStore.test.ts (19 tests | 19 failed) 42ms
+     ├ù stages write/create proposals without writing anything 15ms
+     ├ù records rejected (unsafe) changes as errors and stages nothing 3ms
+     ├ù does nothing when the workspace is not connected 1ms
+     ├ù applies staged changes on approval and refreshes the index 1ms
+     ├ù rejects without touching the filesystem 1ms
+     ├ù returns an error when there is nothing to apply 1ms
+     ├ù refuses to overwrite a file that changed after it was read 1ms
+     ├ù refuses to create over an existing file 1ms
+     ├ù refresh re-reads files and recomputes diffs/hashes 1ms
+     ├ù clears staged changes on disconnect 2ms
+     ├ù stages a run command for approval without executing anything 2ms
+     ├ù stages a test request as a test command 1ms
+     ├ù executes the pending command on run and stores the result 1ms
+     ├ù surfaces a failed test result for the model to diagnose 1ms
+     ├ù reports a missing runtime when staging a command 2ms
+     ├ù refuses to stage a command the runtime cannot run 1ms
+     ├ù rejects a staged command without running it 1ms
+     ├ù cancels a running command through the runtime 2ms
+     ├ù clears command state on disconnect 1ms
+ Γ¥» src/workspace/store.test.ts (31 tests | 17 failed) 52ms
+     ├ù connectDemo builds an index and marks the workspace connected 12ms
+     ├ù connectLocal classifies browser-support failures 2ms
+     ├ù finds demo files and ranks by relevance 1ms
+     ├ù returns a token-minimized context for a relevant question 3ms
+     ├ù selects only relevant files, never the whole project 1ms
+     ├ù answers manifest questions with the workspace file list 3ms
+     ├ù records search results as resolvable file references 1ms
+     ├ù resolves 'the first one' to the first previous search result 1ms
+     ├ù resolves 'it' to the previously referenced file 2ms
+     ├ù resolves 'what is inside it?' to the workspace manifest 1ms
+     ├ù asks for clarification on an ambiguous 'that file' 1ms
+     ├ù resolves 'fix this code' to the referenced workspace file 1ms
+     ├ù resolves 'what was the folder name?' to the actual workspace name 2ms
+     ├ù keeps context within the file and token limits 1ms
+     ├ù clears references when switching workspaces 1ms
+     ├ù create/write/delete/rename succeed and refresh the index 2ms
+     ├ù rejects path traversal and absolute paths 1ms
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/app/admin/security/page.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+32:   it("renders audit entries from the API", async () => {
+33:     mocks.getAudit.mockResolvedValue(list);
+34:     render(<AdminSecurityPage />);
+               ^
+35:     expect(await screen.findByText("Root Admin")).toBeInTheDocument();
+36:     expect(screen.getAllByText("user.role.updated").length).toBeGreaterThan(0);.
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/app/admin/login/page.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+29: describe("AdminLoginPage", () => {
+30:   it("signs in with email and redirects when the backend confirms admin", async () => {
+31:     render(<AdminLoginPage />);
+               ^
+32:     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "admin@example.com" } });
+33:     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });.
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/app/admin/dashboard/page.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+120:       pages: 1
+121:     });
+122:     render(<AdminDashboardPage />);
+                ^
+123:     expect(await screen.findByText("Total Users")).toBeInTheDocument();
+124:     expect(screen.getByText("120")).toBeInTheDocument();.
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/app/admin/settings/page.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+38:   it("renders feature flags and configuration from the API", async () => {
+39:     mocks.getSettings.mockResolvedValue(settingsRes);
+40:     render(<AdminSettingsPage />);
+               ^
+41:     expect(await screen.findByText("Master switch for AI features")).toBeInTheDocument();
+42:     expect(screen.getAllByText("ai:enabled").length).toBeGreaterThan(0);.
+ Γ¥» src/components/admin/StatusBadge.test.tsx (0 test)
+ Γ¥» src/components/admin/ToggleSwitch.test.tsx (0 test)
+ Γ¥» src/app/admin/security/page.test.tsx (0 test)
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/app/admin/feedback/page.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+38:   it("renders feedback items from the API", async () => {
+39:     mocks.getFeedback.mockResolvedValue(list);
+40:     render(<AdminFeedbackPage />);
+               ^
+41:     expect(await screen.findByText(/Loved the chatbot/)).toBeInTheDocument();
+42:     expect(screen.getByText("Alice")).toBeInTheDocument();.
+ Γ¥» src/app/admin/login/page.test.tsx (0 test)
+ Γ¥» src/app/admin/settings/page.test.tsx (0 test)
+ Γ¥» src/app/admin/dashboard/page.test.tsx (0 test)
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/app/admin/users/page.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+57:   it("renders the user table and summary cards", async () => {
+58:     mocks.getUsers.mockImplementation((params) => Promise.resolve(listFor(params ?? {})));
+59:     render(<AdminUsersPage />);
+               ^
+60:     expect(await screen.findByText("Alice")).toBeInTheDocument();
+61:     expect(screen.getByText("bob@example.com")).toBeInTheDocument();.
+ Γ¥» src/app/admin/feedback/page.test.tsx (0 test)
+ Γ¥» src/app/admin/users/page.test.tsx (0 test)
+Cannot parse C:/Users/pilli/Downloads/Nexuss-git/src/app/admin/ai-usage/page.test.tsx:
+Parse failed with 1 error:
+Unexpected JSX expression
+88:   it("renders KPIs and chart panels from the API response", async () => {
+89:     mocks.getAiUsage.mockResolvedValue(usage);
+90:     render(<AdminAiUsagePage />);
+               ^
+91:     expect(await screen.findByText("AI Usage & Provider Intelligence")).toBeInTheDocument();
+92:     expect(screen.getByText("Total Requests")).toBeInTheDocument();.
+ Γ¥» src/app/admin/ai-usage/page.test.tsx (0 test)
+ Γ¥» src/store/deleteChat.test.ts (4 tests | 4 failed) 9ms
+     ├ù removes the chat and its messages, clearing currentChat when it is the active chat 5ms
+     ├ù keeps the active chat and its messages when deleting a different chat 1ms
+     ├ù does not restore a deleted chat after re-hydration (refresh) 0ms
+     ├ù does not delete a chat owned by another user 0ms
+ Γ¥» src/store/accountIsolation.test.ts (24 tests | 24 failed) 17ms
+     ├ù keeps device-local chats and re-hydrates them for the same user 6ms
+     ├ù restores last chat, theme and provider from device storage on refresh 1ms
+     ├ù clamps a stale stored model to a valid one for its provider on refresh 1ms
+     ├ù never keeps an invalid provider stored on refresh 0ms
+     ├ù A creates a chat; B cannot see it 0ms
+     ├ù B cannot load A's messages 0ms
+     ├ù B cannot delete A's chat 0ms
+     ├ù B cannot search A's chat 0ms
+     ├ù A sees A's chats after logout/login 0ms
+     ├ù B sees only B's chats after refresh 1ms
+     ├ù account switching cannot leak the previous user's state 0ms
+     ├ù unauthenticated users cannot hydrate chats 0ms
+     ├ù sendMessageStream never uses a chat owned by another user as context 0ms
+     ├ù creates a chat, sends history, and persists the assistant reply locally 0ms
+     ├ù persists a follow-up with the prior turns in history 0ms
+     ├ù surfaces errors from the chat API without losing the user message 0ms
+     ├ù never stores API keys in localStorage or IndexedDB 0ms
+     ├ù setProvider resets the model to that provider's default 0ms
+     ├ù setModel keeps the exact model selected for its provider 0ms
+     ├ù setModel rejects a model that belongs to another provider 0ms
+     ├ù sendMessageStream sends the exact selected model to the backend 0ms
+     ├ù records every attempt and echoes the actual fallback provider/model 0ms
+     ├ù records error attempts when every provider fails 0ms
+     ├ù clears the fallback notice when the primary succeeds next time 0ms
+ Γ¥» src/store/chatActions.test.ts (33 tests | 33 failed) 19ms
+     ├ù replaces the edited user message and the old assistant reply, then regenerates 6ms
+     ├ù sends a fresh screen frame with the edited question when sharing is active 1ms
+     ├ù drops messages generated after the edited message 1ms
+     ├ù does nothing when the target is an assistant message 0ms
+     ├ù does nothing for a chat owned by another user 0ms
+     ├ù replaces the assistant response for the preceding user turn and keeps prior turns 0ms
+     ├ù does nothing when the target is a user message 0ms
+     ├ù sends a fresh screen frame with the regenerated question when sharing is active 0ms
+     ├ù does nothing when there is no preceding user message 0ms
+     ├ù sends the captured frame together with the question 0ms
+     ├ù sends a fresh frame for every question in the same chat 0ms
+     ├ù omits the image field when sending without screen sharing 0ms
+     ├ù stores a filtered reply for a normal send 0ms
+     ├ù stores a filtered reply after editing a message 0ms
+     ├ù stores a filtered reply after regenerating a response 0ms
+     ├ù stores a non-empty assistant message and never sends an empty history turn 0ms
+     ├ù drops any legacy empty assistant messages when building history 0ms
+     ├ù sends 20 sequential messages with no duplicates and valid history 0ms
+     ├ù sends 20 screen-share messages, each carrying only its own fresh frame 0ms
+     ├ù omits workspaceContext when no workspace is connected 1ms
+     ├ù attaches a token-minimized workspace context for the question 0ms
+     ├ù still sends the screen frame together with workspace context 0ms
+     ├ù answers a status question with workspace status, not file retrieval 0ms
+     ├ù answers a manifest question with the workspace file list 0ms
+     ├ù reports a disconnected workspace for a status question 0ms
+     ├ù resolves 'the first one' then 'it' across turns 0ms
+     ├ù answers 'what was the folder name?' with the actual folder name 0ms
+     ├ù keeps normal chat free of workspace context 0ms
+     ├ù stages a valid block as a pending change and strips it from the reply 0ms
+     ├ù never stages an escaping-path block and strips raw JSON from the reply 0ms
+     ├ù leaves normal code fences untouched and stages nothing 0ms
+     ├ù stages a run request and strips the fence from the reply 0ms
+     ├ù strips the fence even when the command cannot be staged 0ms
+ Γ¥» native/runtime.test.ts (8 tests | 2 failed) 11193ms
+     ├ù invalidates the active command when the workspace switches 5027ms
+     ├ù cancels the active command via cancel() 5004ms
+ Γ¥» native/exec.test.ts (8 tests | 2 failed) 29219ms
+     ├ù truncates and then hard-kills an infinite writer 5113ms
+     ├ù lets a caller terminate the child via the onStart handle 20002ms
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Suites 25 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  desktop/runtime-ipc.test.ts [ desktop/runtime-ipc.test.ts ]
+Error: Transform failed with 4 errors:
+
+[31m[PARSE_ERROR] [0mInvalid Unicode escape sequence
+    [38;5;246mΓò¡[0m[38;5;246mΓöÇ[0m[38;5;246m[[0m desktop/runtime-ipc.test.ts:25:36 [38;5;246m][0m
+    [38;5;246mΓöé[0m
+ [38;5;246m25 Γöé[0m [38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m 
+[0m[38;5;249mr[0m[38;5;249mu[0m[38;5;249mn[0m[38;5;249m:[0m[38;5;249m [0m[38;5;249mv[0m[38;5;249mi[0m[3
+8;5;249m.[0m[38;5;249mf[0m[38;5;249mn[0m[38;5;249m([0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m 
+[0m[38;5;249m=[0m[38;5;249m>[0m[38;5;249m [0m[38;5;249m([0m[38;5;249m{[0m[38;5;249m [0m[38;5;249ms[0m[3
+8;5;249mt[0m[38;5;249md[0m[38;5;249mo[0m[38;5;249mu[0m[38;5;249mt[0m[38;5;249m:[0m[38;5;249m 
+[0m[38;5;249m\[0m"[38;5;249mo[0m[38;5;249mk[0m[38;5;249m\[0m[38;5;249m"[0m[38;5;249m,[0m[38;5;249m [0m[
+38;5;249ms[0m[38;5;249mt[0m[38;5;249md[0m[38;5;249me[0m[38;5;249mr[0m[38;5;249mr[0m[38;5;249m:[0m[38;5;24
+9m [0m[38;5;249m\[0m[38;5;249m"[0m[38;5;249m"[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249me[0m[38;5;249mx[0m
+[38;5;249mi[0m[38;5;249mt[0m[38;5;249mC[0m[38;5;249mo[0m[38;5;249md[0m[38;5;249me[0m[38;5;249m:[0m[38;5;
+249m [0m[38;5;249m0[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m)[0m[38;5;249m)[0m
+ [38;5;240m   Γöé[0m                                    Γö¼  
+ [38;5;240m   Γöé[0m                                    Γò░ΓöÇΓöÇ 
+[38;5;246mΓöÇΓöÇΓöÇΓöÇΓò»[0m
+
+[31m[PARSE_ERROR] [0mInvalid Unicode escape sequence
+    [38;5;246mΓò¡[0m[38;5;246mΓöÇ[0m[38;5;246m[[0m desktop/runtime-ipc.test.ts:25:40 [38;5;246m][0m
+    [38;5;246mΓöé[0m
+ [38;5;246m25 Γöé[0m [38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m 
+[0m[38;5;249mr[0m[38;5;249mu[0m[38;5;249mn[0m[38;5;249m:[0m[38;5;249m [0m[38;5;249mv[0m[38;5;249mi[0m[3
+8;5;249m.[0m[38;5;249mf[0m[38;5;249mn[0m[38;5;249m([0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m 
+[0m[38;5;249m=[0m[38;5;249m>[0m[38;5;249m [0m[38;5;249m([0m[38;5;249m{[0m[38;5;249m [0m[38;5;249ms[0m[3
+8;5;249mt[0m[38;5;249md[0m[38;5;249mo[0m[38;5;249mu[0m[38;5;249mt[0m[38;5;249m:[0m[38;5;249m 
+[0m[38;5;249m\[0m[38;5;249m"[0m[38;5;249mo[0m[38;5;249mk[0m[38;5;249m\[0m"[38;5;249m,[0m[38;5;249m [0m[
+38;5;249ms[0m[38;5;249mt[0m[38;5;249md[0m[38;5;249me[0m[38;5;249mr[0m[38;5;249mr[0m[38;5;249m:[0m[38;5;24
+9m [0m[38;5;249m\[0m[38;5;249m"[0m[38;5;249m"[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249me[0m[38;5;249mx[0m
+[38;5;249mi[0m[38;5;249mt[0m[38;5;249mC[0m[38;5;249mo[0m[38;5;249md[0m[38;5;249me[0m[38;5;249m:[0m[38;5;
+249m [0m[38;5;249m0[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m)[0m[38;5;249m)[0m
+ [38;5;240m   Γöé[0m                                        Γö¼  
+ [38;5;240m   Γöé[0m                                        Γò░ΓöÇΓöÇ 
+[38;5;246mΓöÇΓöÇΓöÇΓöÇΓò»[0m
+
+[31m[PARSE_ERROR] [0mInvalid Unicode escape sequence
+    [38;5;246mΓò¡[0m[38;5;246mΓöÇ[0m[38;5;246m[[0m desktop/runtime-ipc.test.ts:25:52 [38;5;246m][0m
+    [38;5;246mΓöé[0m
+ [38;5;246m25 Γöé[0m [38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m 
+[0m[38;5;249mr[0m[38;5;249mu[0m[38;5;249mn[0m[38;5;249m:[0m[38;5;249m [0m[38;5;249mv[0m[38;5;249mi[0m[3
+8;5;249m.[0m[38;5;249mf[0m[38;5;249mn[0m[38;5;249m([0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m 
+[0m[38;5;249m=[0m[38;5;249m>[0m[38;5;249m [0m[38;5;249m([0m[38;5;249m{[0m[38;5;249m [0m[38;5;249ms[0m[3
+8;5;249mt[0m[38;5;249md[0m[38;5;249mo[0m[38;5;249mu[0m[38;5;249mt[0m[38;5;249m:[0m[38;5;249m [0m[38;5;249
+m\[0m[38;5;249m"[0m[38;5;249mo[0m[38;5;249mk[0m[38;5;249m\[0m[38;5;249m"[0m[38;5;249m,[0m[38;5;249m [0m
+[38;5;249ms[0m[38;5;249mt[0m[38;5;249md[0m[38;5;249me[0m[38;5;249mr[0m[38;5;249mr[0m[38;5;249m:[0m[38;5;2
+49m [0m[38;5;249m\[0m"[38;5;249m"[0m[38;5;249m,[0m[38;5;249m [0m[38;5;249me[0m[38;5;249mx[0m[38;5;249mi[
+0m[38;5;249mt[0m[38;5;249mC[0m[38;5;249mo[0m[38;5;249md[0m[38;5;249me[0m[38;5;249m:[0m[38;5;249m 
+[0m[38;5;249m0[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m)[0m[38;5;249m)[0m
+ [38;5;240m   Γöé[0m                                                    Γö¼  
+ [38;5;240m   Γöé[0m                                                    Γò░ΓöÇΓöÇ 
+[38;5;246mΓöÇΓöÇΓöÇΓöÇΓò»[0m
+
+[31m[PARSE_ERROR] [0mUnterminated string
+    [38;5;246mΓò¡[0m[38;5;246mΓöÇ[0m[38;5;246m[[0m desktop/runtime-ipc.test.ts:25:53 [38;5;246m][0m
+    [38;5;246mΓöé[0m
+ [38;5;246m25 Γöé[0m [38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m [0m[38;5;249m 
+[0m[38;5;249mr[0m[38;5;249mu[0m[38;5;249mn[0m[38;5;249m:[0m[38;5;249m [0m[38;5;249mv[0m[38;5;249mi[0m[3
+8;5;249m.[0m[38;5;249mf[0m[38;5;249mn[0m[38;5;249m([0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m 
+[0m[38;5;249m=[0m[38;5;249m>[0m[38;5;249m [0m[38;5;249m([0m[38;5;249m{[0m[38;5;249m [0m[38;5;249ms[0m[3
+8;5;249mt[0m[38;5;249md[0m[38;5;249mo[0m[38;5;249mu[0m[38;5;249mt[0m[38;5;249m:[0m[38;5;249m [0m[38;5;249
+m\[0m[38;5;249m"[0m[38;5;249mo[0m[38;5;249mk[0m[38;5;249m\[0m[38;5;249m"[0m[38;5;249m,[0m[38;5;249m [0m
+[38;5;249ms[0m[38;5;249mt[0m[38;5;249md[0m[38;5;249me[0m[38;5;249mr[0m[38;5;249mr[0m[38;5;249m:[0m[38;5;2
+49m [0m[38;5;249m\[0m[38;5;249m"[0m", exitCode: 0 }))
+ [38;5;240m   Γöé[0m                                                     
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö¼ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ  
+ [38;5;240m   Γöé[0m                                                              
+Γò░ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ 
+[38;5;246mΓöÇΓöÇΓöÇΓöÇΓò»[0m
+
+  Plugin: vite:oxc
+  File: C:/Users/pilli/Downloads/Nexuss-git/desktop/runtime-ipc.test.ts
+ Γ¥» transformWithOxc node_modules/vite/dist/node/chunks/node.js:4097:19
+ Γ¥» TransformPluginContext.transform node_modules/vite/dist/node/chunks/node.js:4168:26
+ Γ¥» EnvironmentPluginContainer.transform node_modules/vite/dist/node/chunks/node.js:30851:51
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20619:26
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/169]ΓÄ»
+
+ FAIL  desktop/workspace-service.test.ts [ desktop/workspace-service.test.ts ]
+Error: Transform failed with 1 error:
+
+[31m[PARSE_ERROR] [0mExpected a semicolon or an implicit semicolon after a statement, but found none
+    [38;5;246mΓò¡[0m[38;5;246mΓöÇ[0m[38;5;246m[[0m desktop/workspace-service.test.ts:62:11 [38;5;246m][0m
+    [38;5;246mΓöé[0m
+ [38;5;246m62 Γöé[0m [38;5;249mr[0m[38;5;249mu[0m[38;5;249mn[0m[38;5;249mT[0m[38;5;249me[0m[38;5;249ms[0m
+[38;5;249mt[0m[38;5;249ms[0m[38;5;249m([0m[38;5;249m)[0m[38;5;249m [0m[38;5;249m{[0m
+ [38;5;240m   Γöé[0m           Γöé 
+ [38;5;240m   Γöé[0m           Γò░ΓöÇ 
+ [38;5;240m   Γöé[0m 
+ [38;5;240m   Γöé[0m [38;5;115mHelp[0m: Try inserting a semicolon here
+[38;5;246mΓöÇΓöÇΓöÇΓöÇΓò»[0m
+
+  Plugin: vite:oxc
+  File: C:/Users/pilli/Downloads/Nexuss-git/desktop/workspace-service.test.ts
+ Γ¥» transformWithOxc node_modules/vite/dist/node/chunks/node.js:4097:19
+ Γ¥» TransformPluginContext.transform node_modules/vite/dist/node/chunks/node.js:4168:26
+ Γ¥» EnvironmentPluginContainer.transform node_modules/vite/dist/node/chunks/node.js:30851:51
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20619:26
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/169]ΓÄ»
+
+ FAIL  src/components/AuthView.test.tsx [ src/components/AuthView.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+75: });
+76: function gotoForgot() {
+77:   render(<AuthView />);
+             ^
+78:   fireEvent.click(screen.getByText("Forgot Password?"));
+79: }
+At file: /src/components/AuthView.test.tsx:77:8
+  File: /src/components/AuthView.test.tsx:77:8
+  75 |  });
+  76 |  function gotoForgot() {
+  77 |  	render(<AuthView />);
+     |          ^
+  78 |  	fireEvent.click(screen.getByText("Forgot Password?"));
+  79 |  }
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[3/169]ΓÄ»
+
+ FAIL  src/components/ChatComposer.test.tsx [ src/components/ChatComposer.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+ 8:   const onSend = vi.fn();
+ 9:   const onStartScreenShare = overrides.onStartScreenShare ?? vi.fn();
+10:   render(<ChatComposer onSend={onSend} loading={false} onOpenWorkspace={overrides.onOpenWorkspace} 
+onStartScreenShare...
+             ^
+11:   return {
+12:     onSend,
+At file: /src/components/ChatComposer.test.tsx:10:8
+  File: /src/components/ChatComposer.test.tsx:10:8
+  8  |  	const onSend = vi.fn();
+  9  |  	const onStartScreenShare = overrides.onStartScreenShare ?? vi.fn();
+  10 |  	render(<ChatComposer onSend={onSend} loading={false} onOpenWorkspace={overrides.onOpenWorkspace} 
+onStartScreenShare=...
+     |          ^
+  11 |  	return {
+  12 |  		onSend,
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[4/169]ΓÄ»
+
+ FAIL  src/components/RegisterView.test.tsx [ src/components/RegisterView.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+123: });
+124: function renderRegister() {
+125:   render(<RegisterView onBackToLogin={onBackToLogin} onExistingAccountLogin={onExistingAccountLogin} 
+onGoogleOnlySetP...
+              ^
+126: }
+127: describe("Registration page", () => {
+At file: /src/components/RegisterView.test.tsx:125:8
+  File: /src/components/RegisterView.test.tsx:125:8
+  123 |  });
+  124 |  function renderRegister() {
+  125 |  	render(<RegisterView onBackToLogin={onBackToLogin} onExistingAccountLogin={onExistingAccountLogin} 
+onGoogleOnlySetPa...
+      |          ^
+  126 |  }
+  127 |  describe("Registration page", () => {
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[5/169]ΓÄ»
+
+ FAIL  src/components/ScreenSharePanel.test.tsx [ src/components/ScreenSharePanel.test.tsx ]
+ FAIL  src/components/admin/AdminLayout.test.tsx [ src/components/admin/AdminLayout.test.tsx ]
+ FAIL  src/components/admin/DataTable.test.tsx [ src/components/admin/DataTable.test.tsx ]
+Error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you use 
+tsconfig.json, make sure to not set jsx to preserve.
+  Plugin: vite:import-analysis
+  File: C:/Users/pilli/Downloads/Nexuss-git/src/components/ScreenSharePanel.test.tsx:41:15
+  26 |        <button type="button" onClick={() => void screenShare.startSharing()}>
+  27 |          Start sharing
+  28 |        </button>
+     |                 ^
+  29 |        <button type="button" onClick={() => onFrame(screenShare.captureFrame())}>
+  30 |          Capture frame
+ Γ¥» TransformPluginContext._formatLog node_modules/vite/dist/node/chunks/node.js:31066:39
+ Γ¥» TransformPluginContext.error node_modules/vite/dist/node/chunks/node.js:31063:14
+ Γ¥» TransformPluginContext.transform node_modules/vite/dist/node/chunks/node.js:27972:10
+ Γ¥» EnvironmentPluginContainer.transform node_modules/vite/dist/node/chunks/node.js:30851:14
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20619:26
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[6/169]ΓÄ»
+
+ FAIL  src/workspace/WorkspacePanel.test.tsx [ src/workspace/WorkspacePanel.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+13: describe("WorkspacePanel", () => {
+14:   it("shows connect controls when no workspace is connected", () => {
+15:     render(<WorkspacePanel />);
+               ^
+16:     expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+17:     expect(screen.getByRole("button", { name: "Connect a folder" })).toBeInTheDocument();
+At file: /src/workspace/WorkspacePanel.test.tsx:15:9
+  File: /src/workspace/WorkspacePanel.test.tsx:15:9
+  13 |  describe("WorkspacePanel", () => {
+  14 |  	it("shows connect controls when no workspace is connected", () => {
+  15 |  		render(<WorkspacePanel />);
+     |           ^
+  16 |  		expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+  17 |  		expect(screen.getByRole("button", { name: "Connect a folder" })).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[7/169]ΓÄ»
+
+ FAIL  src/components/admin/AdminHeader.test.tsx [ src/components/admin/AdminHeader.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+21: describe("AdminHeader", () => {
+22:   it("shows the route title and description", () => {
+23:     render(<AdminHeader onOpenMobileMenu={() => {}} />);
+               ^
+24:     expect(screen.getByText("Dashboard")).toBeInTheDocument();
+25:     expect(screen.getByText("Overview of your Nexuss platform")).toBeInTheDocument();
+At file: /src/components/admin/AdminHeader.test.tsx:23:9
+  File: /src/components/admin/AdminHeader.test.tsx:23:9
+  21 |  describe("AdminHeader", () => {
+  22 |  	it("shows the route title and description", () => {
+  23 |  		render(<AdminHeader onOpenMobileMenu={() => {}} />);
+     |           ^
+  24 |  		expect(screen.getByText("Dashboard")).toBeInTheDocument();
+  25 |  		expect(screen.getByText("Overview of your Nexuss platform")).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[8/169]ΓÄ»
+
+ FAIL  src/components/admin/AdminSidebar.test.tsx [ src/components/admin/AdminSidebar.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+24: describe("AdminSidebar", () => {
+25:   it("renders every nav destination", () => {
+26:     render(<AdminSidebar />);
+               ^
+27:     for (const item of ADMIN_NAV) {
+28:       expect(screen.getByText(item.label)).toBeInTheDocument();
+At file: /src/components/admin/AdminSidebar.test.tsx:26:9
+  File: /src/components/admin/AdminSidebar.test.tsx:26:9
+  24 |  describe("AdminSidebar", () => {
+  25 |  	it("renders every nav destination", () => {
+  26 |  		render(<AdminSidebar />);
+     |           ^
+  27 |  		for (const item of ADMIN_NAV) {
+  28 |  			expect(screen.getByText(item.label)).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[9/169]ΓÄ»
+
+ FAIL  src/components/admin/ConfirmationModal.test.tsx [ src/components/admin/ConfirmationModal.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+ 7: describe("ConfirmationModal", () => {
+ 8:   it("renders nothing when closed", () => {
+ 9:     const { container } = render(<ConfirmationModal isOpen={false} onClose={() => {}} onConfirm={() => {}} />);
+                                     ^
+10:     expect(container.firstChild).toBeNull();
+11:   });
+At file: /src/components/admin/ConfirmationModal.test.tsx:9:31
+  File: /src/components/admin/ConfirmationModal.test.tsx:9:31
+  7  |  describe("ConfirmationModal", () => {
+  8  |  	it("renders nothing when closed", () => {
+  9  |  		const { container } = render(<ConfirmationModal isOpen={false} onClose={() => {}} onConfirm={() => {}} />);
+     |                                 ^
+  10 |  		expect(container.firstChild).toBeNull();
+  11 |  	});
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[10/169]ΓÄ»
+
+ FAIL  src/components/admin/FilterDropdown.test.tsx [ src/components/admin/FilterDropdown.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+ 8:   it("renders options and notifies onChange", () => {
+ 9:     const onChange = vi.fn();
+10:     render(<FilterDropdown value="All" onChange={onChange} options={[{
+               ^
+11:       label: "All Statuses",
+12:       value: "All"
+At file: /src/components/admin/FilterDropdown.test.tsx:10:9
+  File: /src/components/admin/FilterDropdown.test.tsx:10:9
+  8  |  	it("renders options and notifies onChange", () => {
+  9  |  		const onChange = vi.fn();
+  10 |  		render(<FilterDropdown value="All" onChange={onChange} options={[{
+     |           ^
+  11 |  			label: "All Statuses",
+  12 |  			value: "All"
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[11/169]ΓÄ»
+
+ FAIL  src/components/admin/KPICard.test.tsx [ src/components/admin/KPICard.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+ 7: describe("KPICard", () => {
+ 8:   it("renders title and value", () => {
+ 9:     render(<KPICard title="Total Users" value="1,234" type="users" />);
+               ^
+10:     expect(screen.getByText("Total Users")).toBeInTheDocument();
+11:     expect(screen.getByText("1,234")).toBeInTheDocument();
+At file: /src/components/admin/KPICard.test.tsx:9:9
+  File: /src/components/admin/KPICard.test.tsx:9:9
+  7  |  describe("KPICard", () => {
+  8  |  	it("renders title and value", () => {
+  9  |  		render(<KPICard title="Total Users" value="1,234" type="users" />);
+     |           ^
+  10 |  		expect(screen.getByText("Total Users")).toBeInTheDocument();
+  11 |  		expect(screen.getByText("1,234")).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[12/169]ΓÄ»
+
+ FAIL  src/components/admin/SearchBar.test.tsx [ src/components/admin/SearchBar.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+ 7: describe("SearchBar", () => {
+ 8:   it("renders the placeholder and controlled value", () => {
+ 9:     render(<SearchBar value="alice" onChange={() => {}} placeholder="Search users..." />);
+               ^
+10:     const input = screen.getByLabelText("Search users...");
+11:     expect(input).toHaveValue("alice");
+At file: /src/components/admin/SearchBar.test.tsx:9:9
+  File: /src/components/admin/SearchBar.test.tsx:9:9
+  7  |  describe("SearchBar", () => {
+  8  |  	it("renders the placeholder and controlled value", () => {
+  9  |  		render(<SearchBar value="alice" onChange={() => {}} placeholder="Search users..." />);
+     |           ^
+  10 |  		const input = screen.getByLabelText("Search users...");
+  11 |  		expect(input).toHaveValue("alice");
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[13/169]ΓÄ»
+
+ FAIL  src/components/admin/States.test.tsx [ src/components/admin/States.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+ 7: describe("States", () => {
+ 8:   it("EmptyState renders title and message", () => {
+ 9:     render(<EmptyState title="No feedback found" message="Try changing your filters." />);
+               ^
+10:     expect(screen.getByText("No feedback found")).toBeInTheDocument();
+11:     expect(screen.getByText("Try changing your filters.")).toBeInTheDocument();
+At file: /src/components/admin/States.test.tsx:9:9
+  File: /src/components/admin/States.test.tsx:9:9
+  7  |  describe("States", () => {
+  8  |  	it("EmptyState renders title and message", () => {
+  9  |  		render(<EmptyState title="No feedback found" message="Try changing your filters." />);
+     |           ^
+  10 |  		expect(screen.getByText("No feedback found")).toBeInTheDocument();
+  11 |  		expect(screen.getByText("Try changing your filters.")).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[14/169]ΓÄ»
+
+ FAIL  src/components/admin/StatusBadge.test.tsx [ src/components/admin/StatusBadge.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+ 7: describe("StatusBadge", () => {
+ 8:   it("renders the status text", () => {
+ 9:     render(<StatusBadge status="new" />);
+               ^
+10:     expect(screen.getByText("new")).toBeInTheDocument();
+11:   });
+At file: /src/components/admin/StatusBadge.test.tsx:9:9
+  File: /src/components/admin/StatusBadge.test.tsx:9:9
+  7  |  describe("StatusBadge", () => {
+  8  |  	it("renders the status text", () => {
+  9  |  		render(<StatusBadge status="new" />);
+     |           ^
+  10 |  		expect(screen.getByText("new")).toBeInTheDocument();
+  11 |  	});
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[15/169]ΓÄ»
+
+ FAIL  src/components/admin/ToggleSwitch.test.tsx [ src/components/admin/ToggleSwitch.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+ 7: describe("ToggleSwitch", () => {
+ 8:   it("renders a switch with the checked state", () => {
+ 9:     render(<ToggleSwitch checked={true} onChange={() => {}} label="AI enabled" />);
+               ^
+10:     const toggle = screen.getByRole("switch", { name: "AI enabled" });
+11:     expect(toggle).toHaveAttribute("aria-checked", "true");
+At file: /src/components/admin/ToggleSwitch.test.tsx:9:9
+  File: /src/components/admin/ToggleSwitch.test.tsx:9:9
+  7  |  describe("ToggleSwitch", () => {
+  8  |  	it("renders a switch with the checked state", () => {
+  9  |  		render(<ToggleSwitch checked={true} onChange={() => {}} label="AI enabled" />);
+     |           ^
+  10 |  		const toggle = screen.getByRole("switch", { name: "AI enabled" });
+  11 |  		expect(toggle).toHaveAttribute("aria-checked", "true");
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[16/169]ΓÄ»
+
+ FAIL  src/app/admin/dashboard/page.test.tsx [ src/app/admin/dashboard/page.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+120:       pages: 1
+121:     });
+122:     render(<AdminDashboardPage />);
+                ^
+123:     expect(await screen.findByText("Total Users")).toBeInTheDocument();
+124:     expect(screen.getByText("120")).toBeInTheDocument();
+At file: /src/app/admin/dashboard/page.test.tsx:122:9
+  File: /src/app/admin/dashboard/page.test.tsx:122:9
+  120 |  			pages: 1
+  121 |  		});
+  122 |  		render(<AdminDashboardPage />);
+      |           ^
+  123 |  		expect(await screen.findByText("Total Users")).toBeInTheDocument();
+  124 |  		expect(screen.getByText("120")).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[17/169]ΓÄ»
+
+ FAIL  src/app/admin/feedback/page.test.tsx [ src/app/admin/feedback/page.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+38:   it("renders feedback items from the API", async () => {
+39:     mocks.getFeedback.mockResolvedValue(list);
+40:     render(<AdminFeedbackPage />);
+               ^
+41:     expect(await screen.findByText(/Loved the chatbot/)).toBeInTheDocument();
+42:     expect(screen.getByText("Alice")).toBeInTheDocument();
+At file: /src/app/admin/feedback/page.test.tsx:40:9
+  File: /src/app/admin/feedback/page.test.tsx:40:9
+  38 |  	it("renders feedback items from the API", async () => {
+  39 |  		mocks.getFeedback.mockResolvedValue(list);
+  40 |  		render(<AdminFeedbackPage />);
+     |           ^
+  41 |  		expect(await screen.findByText(/Loved the chatbot/)).toBeInTheDocument();
+  42 |  		expect(screen.getByText("Alice")).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[18/169]ΓÄ»
+
+ FAIL  src/app/admin/login/page.test.tsx [ src/app/admin/login/page.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+29: describe("AdminLoginPage", () => {
+30:   it("signs in with email and redirects when the backend confirms admin", async () => {
+31:     render(<AdminLoginPage />);
+               ^
+32:     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "admin@example.com" } });
+33:     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
+At file: /src/app/admin/login/page.test.tsx:31:9
+  File: /src/app/admin/login/page.test.tsx:31:9
+  29 |  describe("AdminLoginPage", () => {
+  30 |  	it("signs in with email and redirects when the backend confirms admin", async () => {
+  31 |  		render(<AdminLoginPage />);
+     |           ^
+  32 |  		fireEvent.change(screen.getByLabelText("Email"), { target: { value: "admin@example.com" } });
+  33 |  		fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[19/169]ΓÄ»
+
+ FAIL  src/app/admin/security/page.test.tsx [ src/app/admin/security/page.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+32:   it("renders audit entries from the API", async () => {
+33:     mocks.getAudit.mockResolvedValue(list);
+34:     render(<AdminSecurityPage />);
+               ^
+35:     expect(await screen.findByText("Root Admin")).toBeInTheDocument();
+36:     expect(screen.getAllByText("user.role.updated").length).toBeGreaterThan(0);
+At file: /src/app/admin/security/page.test.tsx:34:9
+  File: /src/app/admin/security/page.test.tsx:34:9
+  32 |  	it("renders audit entries from the API", async () => {
+  33 |  		mocks.getAudit.mockResolvedValue(list);
+  34 |  		render(<AdminSecurityPage />);
+     |           ^
+  35 |  		expect(await screen.findByText("Root Admin")).toBeInTheDocument();
+  36 |  		expect(screen.getAllByText("user.role.updated").length).toBeGreaterThan(0);
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[20/169]ΓÄ»
+
+ FAIL  src/app/admin/settings/page.test.tsx [ src/app/admin/settings/page.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+38:   it("renders feature flags and configuration from the API", async () => {
+39:     mocks.getSettings.mockResolvedValue(settingsRes);
+40:     render(<AdminSettingsPage />);
+               ^
+41:     expect(await screen.findByText("Master switch for AI features")).toBeInTheDocument();
+42:     expect(screen.getAllByText("ai:enabled").length).toBeGreaterThan(0);
+At file: /src/app/admin/settings/page.test.tsx:40:9
+  File: /src/app/admin/settings/page.test.tsx:40:9
+  38 |  	it("renders feature flags and configuration from the API", async () => {
+  39 |  		mocks.getSettings.mockResolvedValue(settingsRes);
+  40 |  		render(<AdminSettingsPage />);
+     |           ^
+  41 |  		expect(await screen.findByText("Master switch for AI features")).toBeInTheDocument();
+  42 |  		expect(screen.getAllByText("ai:enabled").length).toBeGreaterThan(0);
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[21/169]ΓÄ»
+
+ FAIL  src/app/admin/users/page.test.tsx [ src/app/admin/users/page.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+57:   it("renders the user table and summary cards", async () => {
+58:     mocks.getUsers.mockImplementation((params) => Promise.resolve(listFor(params ?? {})));
+59:     render(<AdminUsersPage />);
+               ^
+60:     expect(await screen.findByText("Alice")).toBeInTheDocument();
+61:     expect(screen.getByText("bob@example.com")).toBeInTheDocument();
+At file: /src/app/admin/users/page.test.tsx:59:9
+  File: /src/app/admin/users/page.test.tsx:59:9
+  57 |  	it("renders the user table and summary cards", async () => {
+  58 |  		mocks.getUsers.mockImplementation((params) => Promise.resolve(listFor(params ?? {})));
+  59 |  		render(<AdminUsersPage />);
+     |           ^
+  60 |  		expect(await screen.findByText("Alice")).toBeInTheDocument();
+  61 |  		expect(screen.getByText("bob@example.com")).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[22/169]ΓÄ»
+
+ FAIL  src/app/admin/ai-usage/page.test.tsx [ src/app/admin/ai-usage/page.test.tsx ]
+RolldownError: Parse failure: Parse failed with 1 error:
+Unexpected JSX expression
+88:   it("renders KPIs and chart panels from the API response", async () => {
+89:     mocks.getAiUsage.mockResolvedValue(usage);
+90:     render(<AdminAiUsagePage />);
+               ^
+91:     expect(await screen.findByText("AI Usage & Provider Intelligence")).toBeInTheDocument();
+92:     expect(screen.getByText("Total Requests")).toBeInTheDocument();
+At file: /src/app/admin/ai-usage/page.test.tsx:90:9
+  File: /src/app/admin/ai-usage/page.test.tsx:90:9
+  88 |  	it("renders KPIs and chart panels from the API response", async () => {
+  89 |  		mocks.getAiUsage.mockResolvedValue(usage);
+  90 |  		render(<AdminAiUsagePage />);
+     |           ^
+  91 |  		expect(await screen.findByText("AI Usage & Provider Intelligence")).toBeInTheDocument();
+  92 |  		expect(screen.getByText("Total Requests")).toBeInTheDocument();
+ Γ¥» error node_modules/rolldown/dist/shared/logs-DmYCAKcW.mjs:159:24
+ Γ¥» normalizeParseError node_modules/rolldown/dist/parse-ast-index.mjs:25:9
+ Γ¥» wrap node_modules/rolldown/dist/parse-ast-index.mjs:5:39
+ Γ¥» parseAstAsync node_modules/rolldown/dist/parse-ast-index.mjs:54:9
+ Γ¥» ssrTransformScript node_modules/vite/dist/node/chunks/node.js:12378:9
+ Γ¥» loadAndTransform node_modules/vite/dist/node/chunks/node.js:20653:64
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[23/169]ΓÄ»
+
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 126 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  native/exec.test.ts > runCommand (real processes) > truncates and then hard-kills an infinite writer
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ Γ¥» native/exec.test.ts:95:3
+     93|   });
+     94|
+     95|   it("truncates and then hard-kills an infinite writer", async () => {
+       |   ^
+     96|     const fx = makeFixture();
+     97|     try {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[24/169]ΓÄ»
+
+ FAIL  native/exec.test.ts > runCommand (real processes) > lets a caller terminate the child via the onStart handle
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ Γ¥» native/exec.test.ts:117:3
+    115|   });
+    116|
+    117|   it("lets a caller terminate the child via the onStart handle", asyncΓÇª
+       |   ^
+    118|     const fx = makeFixture();
+    119|     try {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[25/169]ΓÄ»
+
+ FAIL  native/runtime.test.ts > createNativeRuntime > invalidates the active command when the workspace switches
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ Γ¥» native/runtime.test.ts:105:3
+    103|   });
+    104|
+    105|   it("invalidates the active command when the workspace switches", asyΓÇª
+       |   ^
+    106|     const fx = makeFixture();
+    107|     const fx2 = makeFixture();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[26/169]ΓÄ»
+
+ FAIL  native/runtime.test.ts > createNativeRuntime > cancels the active command via cancel()
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ Γ¥» native/runtime.test.ts:131:3
+    129|   });
+    130|
+    131|   it("cancels the active command via cancel()", async () => {
+       |   ^
+    132|     const fx = makeFixture();
+    133|     try {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[27/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > starts sharing and reports the selected source
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:67:24
+     65|     const { stream, track } = makeStream("Chrome");
+     66|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+     67|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+     68|
+     69|     let started = false;
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[28/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > never navigates, opens windows, or uses the source label as 
+a navigation target
+ReferenceError: window is not defined
+ Γ¥» src/hooks/useScreenShare.test.ts:87:30
+     85|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+     86|
+     87|     const openSpy = vi.spyOn(window, "open").mockImplementation(() => ΓÇª
+       |                              ^
+     88|     const hrefBefore = window.location.href;
+     89|
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[29/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > stops sharing and stops every track
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:111:24
+    109|     const { stream, track } = makeStream();
+    110|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+    111|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    112|
+    113|     await act(async () => {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[30/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > detects external termination and cleans up
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:128:24
+    126|     const { stream, track, listeners } = makeStream("Terminal");
+    127|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+    128|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    129|
+    130|     await act(async () => {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[31/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > handles user cancellation gracefully
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:147:24
+    145|       new DOMException("The user closed the dialog", "NotAllowedError")
+    146|     );
+    147|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    148|
+    149|     let started = true;
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[32/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > errors gracefully when screen capture is unsupported
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:164:24
+    162|       value: {}
+    163|     });
+    164|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    165|
+    166|     let started = true;
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[33/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > changes screen by picking a new source and replacing the 
+stream
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:180:24
+    178|     getDisplayMediaMock.mockResolvedValueOnce(first.stream as unknown ΓÇª
+    179|     getDisplayMediaMock.mockResolvedValueOnce(second.stream as unknownΓÇª
+    180|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    181|
+    182|     await act(async () => {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[34/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > captures exactly one current frame from the live preview
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:200:24
+    198|     const { stream } = makeStream("Chrome");
+    199|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+    200|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    201|
+    202|     await act(async () => {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[35/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > returns null when the video is not ready
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:232:24
+    230|     const { stream } = makeStream();
+    231|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+    232|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    233|
+    234|     await act(async () => {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[36/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > reattaches the live stream to a newly mounted video element
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:249:24
+    247|     const { stream } = makeStream("Chrome");
+    248|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+    249|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    250|
+    251|     await act(async () => {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[37/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > unmounting the preview element does not stop the stream
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:274:24
+    272|     const { stream, track } = makeStream("Chrome");
+    273|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+    274|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    275|
+    276|     await act(async () => {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[38/169]ΓÄ»
+
+ FAIL  src/hooks/useScreenShare.test.ts > useScreenShare > captures a fresh frame for every question without stopping 
+the stream
+ReferenceError: document is not defined
+ Γ¥» render node_modules/@testing-library/react/dist/pure.js:256:5
+ Γ¥» renderHook node_modules/@testing-library/react/dist/pure.js:339:7
+ Γ¥» src/hooks/useScreenShare.test.ts:307:24
+    305|     const { stream, track } = makeStream("Chrome");
+    306|     getDisplayMediaMock.mockResolvedValue(stream as unknown as MediaStΓÇª
+    307|     const { result } = renderHook(() => useScreenShare());
+       |                        ^
+    308|
+    309|     await act(async () => {
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[39/169]ΓÄ»
+
+ FAIL  src/store/accountIsolation.test.ts > local chat persistence > keeps device-local chats and re-hydrates them for 
+the same user
+ FAIL  src/store/accountIsolation.test.ts > local chat persistence > restores last chat, theme and provider from 
+device storage on refresh
+ FAIL  src/store/accountIsolation.test.ts > local chat persistence > clamps a stale stored model to a valid one for 
+its provider on refresh
+ FAIL  src/store/accountIsolation.test.ts > local chat persistence > never keeps an invalid provider stored on refresh
+ FAIL  src/store/accountIsolation.test.ts > account isolation > A creates a chat; B cannot see it
+ FAIL  src/store/accountIsolation.test.ts > account isolation > B cannot load A's messages
+ FAIL  src/store/accountIsolation.test.ts > account isolation > B cannot delete A's chat
+ FAIL  src/store/accountIsolation.test.ts > account isolation > B cannot search A's chat
+ FAIL  src/store/accountIsolation.test.ts > account isolation > A sees A's chats after logout/login
+ FAIL  src/store/accountIsolation.test.ts > account isolation > B sees only B's chats after refresh
+ FAIL  src/store/accountIsolation.test.ts > account isolation > account switching cannot leak the previous user's state
+ FAIL  src/store/accountIsolation.test.ts > account isolation > unauthenticated users cannot hydrate chats
+ FAIL  src/store/accountIsolation.test.ts > account isolation > sendMessageStream never uses a chat owned by another 
+user as context
+ FAIL  src/store/accountIsolation.test.ts > sendMessageStream > creates a chat, sends history, and persists the 
+assistant reply locally
+ FAIL  src/store/accountIsolation.test.ts > sendMessageStream > persists a follow-up with the prior turns in history
+ FAIL  src/store/accountIsolation.test.ts > sendMessageStream > surfaces errors from the chat API without losing the 
+user message
+ FAIL  src/store/accountIsolation.test.ts > sendMessageStream > never stores API keys in localStorage or IndexedDB
+ FAIL  src/store/accountIsolation.test.ts > provider/model selection > setProvider resets the model to that provider's 
+default
+ FAIL  src/store/accountIsolation.test.ts > provider/model selection > setModel keeps the exact model selected for its 
+provider
+ FAIL  src/store/accountIsolation.test.ts > provider/model selection > setModel rejects a model that belongs to 
+another provider
+ FAIL  src/store/accountIsolation.test.ts > provider/model selection > sendMessageStream sends the exact selected 
+model to the backend
+ FAIL  src/store/accountIsolation.test.ts > fallback usage tracking > records every attempt and echoes the actual 
+fallback provider/model
+ FAIL  src/store/accountIsolation.test.ts > fallback usage tracking > records error attempts when every provider fails
+ FAIL  src/store/accountIsolation.test.ts > fallback usage tracking > clears the fallback notice when the primary 
+succeeds next time
+ReferenceError: window is not defined
+ Γ¥» src/store/accountIsolation.test.ts:57:3
+     55|
+     56| beforeEach(async () => {
+     57|   window.localStorage.clear();
+       |   ^
+     58|   await db.transaction("rw", db.chats, db.messages, db.usageRecords, aΓÇª
+     59|     await db.chats.clear();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[40/169]ΓÄ»
+
+ FAIL  src/store/chatActions.test.ts > editMessageAndRegenerate > replaces the edited user message and the old 
+assistant reply, then regenerates
+ FAIL  src/store/chatActions.test.ts > editMessageAndRegenerate > sends a fresh screen frame with the edited question 
+when sharing is active
+ FAIL  src/store/chatActions.test.ts > editMessageAndRegenerate > drops messages generated after the edited message
+ FAIL  src/store/chatActions.test.ts > editMessageAndRegenerate > does nothing when the target is an assistant message
+ FAIL  src/store/chatActions.test.ts > editMessageAndRegenerate > does nothing for a chat owned by another user
+ FAIL  src/store/chatActions.test.ts > regenerateResponse > replaces the assistant response for the preceding user 
+turn and keeps prior turns
+ FAIL  src/store/chatActions.test.ts > regenerateResponse > does nothing when the target is a user message
+ FAIL  src/store/chatActions.test.ts > regenerateResponse > sends a fresh screen frame with the regenerated question 
+when sharing is active
+ FAIL  src/store/chatActions.test.ts > regenerateResponse > does nothing when there is no preceding user message
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a screen frame > sends the captured frame together with 
+the question
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a screen frame > sends a fresh frame for every question 
+in the same chat
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a screen frame > omits the image field when sending 
+without screen sharing
+ FAIL  src/store/chatActions.test.ts > reasoning is filtered out of every assistant reply > stores a filtered reply 
+for a normal send
+ FAIL  src/store/chatActions.test.ts > reasoning is filtered out of every assistant reply > stores a filtered reply 
+after editing a message
+ FAIL  src/store/chatActions.test.ts > reasoning is filtered out of every assistant reply > stores a filtered reply 
+after regenerating a response
+ FAIL  src/store/chatActions.test.ts > reasoning-only reply must not poison the next request (production 422) > stores 
+a non-empty assistant message and never sends an empty history turn
+ FAIL  src/store/chatActions.test.ts > reasoning-only reply must not poison the next request (production 422) > drops 
+any legacy empty assistant messages when building history
+ FAIL  src/store/chatActions.test.ts > long conversations must keep working (20+ messages in one chat) > sends 20 
+sequential messages with no duplicates and valid history
+ FAIL  src/store/chatActions.test.ts > long conversations must keep working (20+ messages in one chat) > sends 20 
+screen-share messages, each carrying only its own fresh frame
+ FAIL  src/store/chatActions.test.ts > Path workspace context flows into chat requests > omits workspaceContext when 
+no workspace is connected
+ FAIL  src/store/chatActions.test.ts > Path workspace context flows into chat requests > attaches a token-minimized 
+workspace context for the question
+ FAIL  src/store/chatActions.test.ts > Path workspace context flows into chat requests > still sends the screen frame 
+together with workspace context
+ FAIL  src/store/chatActions.test.ts > Path workspace context flows into chat requests > answers a status question 
+with workspace status, not file retrieval
+ FAIL  src/store/chatActions.test.ts > Path workspace context flows into chat requests > answers a manifest question 
+with the workspace file list
+ FAIL  src/store/chatActions.test.ts > Path workspace context flows into chat requests > reports a disconnected 
+workspace for a status question
+ FAIL  src/store/chatActions.test.ts > conversation-aware workspace references flow into chat requests > resolves 'the 
+first one' then 'it' across turns
+ FAIL  src/store/chatActions.test.ts > conversation-aware workspace references flow into chat requests > answers 'what 
+was the folder name?' with the actual folder name
+ FAIL  src/store/chatActions.test.ts > conversation-aware workspace references flow into chat requests > keeps normal 
+chat free of workspace context
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a workspace-change block > stages a valid block as a 
+pending change and strips it from the reply
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a workspace-change block > never stages an escaping-path 
+block and strips raw JSON from the reply
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a workspace-change block > leaves normal code fences 
+untouched and stages nothing
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a workspace-command block > stages a run request and 
+strips the fence from the reply
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a workspace-command block > strips the fence even when 
+the command cannot be staged
+ReferenceError: window is not defined
+ Γ¥» src/store/chatActions.test.ts:68:3
+     66|
+     67| beforeEach(async () => {
+     68|   window.localStorage.clear();
+       |   ^
+     69|   await db.transaction("rw", db.chats, db.messages, async () => {
+     70|     await db.chats.clear();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[41/169]ΓÄ»
+
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a workspace-command block > stages a run request and 
+strips the fence from the reply
+ FAIL  src/store/chatActions.test.ts > sendMessageStream with a workspace-command block > strips the fence even when 
+the command cannot be staged
+ReferenceError: window is not defined
+ Γ¥» src/store/chatActions.test.ts:782:5
+    780|
+    781|   afterEach(() => {
+    782|     (window as unknown as { nexussDesktop?: unknown }).nexussDesktop =ΓÇª
+       |     ^
+    783|   });
+    784|
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[42/169]ΓÄ»
+
+ FAIL  src/store/deleteChat.test.ts > deleteChat > removes the chat and its messages, clearing currentChat when it is 
+the active chat
+ FAIL  src/store/deleteChat.test.ts > deleteChat > keeps the active chat and its messages when deleting a different 
+chat
+ FAIL  src/store/deleteChat.test.ts > deleteChat > does not restore a deleted chat after re-hydration (refresh)
+ FAIL  src/store/deleteChat.test.ts > deleteChat > does not delete a chat owned by another user
+ReferenceError: window is not defined
+ Γ¥» src/store/deleteChat.test.ts:44:3
+     42|
+     43| beforeEach(async () => {
+     44|   window.localStorage.clear();
+       |   ^
+     45|   await db.transaction("rw", db.chats, db.messages, async () => {
+     46|     await db.chats.clear();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[43/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > records usage and builds summary
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[44/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > keeps providers separate
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[45/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > tracks failed requests separately
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[46/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > clears usage data
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[47/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > data survives page refresh via IndexedDB
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[48/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > filters records by provider
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[49/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > usage records are isolated between users
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[50/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > unauthenticated users cannot read or write usage records
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[51/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > estimates context tokens from messages
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[52/169]ΓÄ»
+
+ FAIL  src/store/usageStore.test.ts > usageStore > separates multiple models within same provider
+DatabaseClosedError: MissingAPIError IndexedDB API missing. Please visit https://tinyurl.com/y2uuvskb
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[53/169]ΓÄ»
+
+ FAIL  src/workspace/bridge.test.ts > FileSystemAccessBridge with a mocked directory handle > pick() uses 
+window.showDirectoryPicker and adopts the chosen handle
+ReferenceError: window is not defined
+ Γ¥» src/workspace/bridge.test.ts:259:27
+    257|     });
+    258|     const picker = vi.fn(async () => root);
+    259|     Object.defineProperty(window, "showDirectoryPicker", {
+       |                           ^
+    260|       value: picker,
+    261|       configurable: true,
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[54/169]ΓÄ»
+
+ FAIL  src/workspace/bridge.test.ts > detectNativeBridge > returns null when no desktop bridge is exposed
+ReferenceError: window is not defined
+ Γ¥» detectNativeBridge src/workspace/bridge.ts:297:15
+    295|
+    296| export function detectNativeBridge(): NativeWorkspaceBridge | null {
+    297|   const win = window as unknown as { nexussDesktop?: NexussDesktop };
+       |               ^
+    298|   const native = win.nexussDesktop?.workspace;
+    299|   return native && typeof native.list === "function" ? native : null;
+ Γ¥» src/workspace/bridge.test.ts:278:12
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[55/169]ΓÄ»
+
+ FAIL  src/workspace/bridge.test.ts > detectNativeBridge > adopts a compliant window.nexussDesktop.workspace
+ReferenceError: window is not defined
+ Γ¥» src/workspace/bridge.test.ts:293:5
+    291|       close: async () => {}
+    292|     };
+    293|     (window as unknown as { nexussDesktop?: unknown }).nexussDesktop =ΓÇª
+       |     ^
+    294|       workspace
+    295|     };
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[56/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > workspace store lifecycle > connectDemo builds an index and marks the workspace 
+connected
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ Γ¥» src/workspace/store.test.ts:28:25
+     26|     await useWorkspaceStore.getState().connectDemo();
+     27|     const s = useWorkspaceStore.getState();
+     28|     expect(s.connected).toBe(true);
+       |                         ^
+     29|     expect(s.workspace?.name).toBe("nexuss-sample");
+     30|     expect(s.workspace?.kind).toBe("in-memory");
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[57/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > workspace store lifecycle > connectLocal classifies browser-support failures
+AssertionError: expected 'unknown' to be 'unsupported-browser' // Object.is equality
+
+Expected: "unsupported-browser"
+Received: "unknown"
+
+ Γ¥» src/workspace/store.test.ts:58:25
+     56|     expect(s.connected).toBe(false);
+     57|     expect(s.status).toBe("error");
+     58|     expect(s.errorKind).toBe("unsupported-browser");
+       |                         ^
+     59|     expect(s.error).toMatch(/does not support folder access/i);
+     60|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[58/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > search > finds demo files and ranks by relevance
+AssertionError: expected 0 to be greater than 0
+ Γ¥» src/workspace/store.test.ts:77:36
+     75|     useWorkspaceStore.getState().search("login");
+     76|     const s = useWorkspaceStore.getState();
+     77|     expect(s.searchResults.length).toBeGreaterThan(0);
+       |                                    ^
+     78|     expect(s.searchResults[0].file.path).toBe("src/auth/login.ts");
+     79|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[59/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > buildContextFor > returns a token-minimized context for a relevant question
+AssertionError: expected null not to be null
+ Γ¥» src/workspace/store.test.ts:97:24
+     95|       "why does login.ts reject valid users?"
+     96|     );
+     97|     expect(result).not.toBeNull();
+       |                        ^
+     98|     expect(result!.includedFiles).toContain("src/auth/login.ts");
+     99|     expect(result!.estimatedTokens).toBeLessThanOrEqual(
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[60/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > buildContextFor > selects only relevant files, never the whole project
+AssertionError: expected null not to be null
+ Γ¥» src/workspace/store.test.ts:114:24
+    112|     await useWorkspaceStore.getState().connectDemo();
+    113|     const result = useWorkspaceStore.getState().buildContextFor("loginΓÇª
+    114|     expect(result).not.toBeNull();
+       |                        ^
+    115|     // The relevant auth files are selected...
+    116|     expect(result!.includedFiles).toContain("src/auth/login.ts");
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[61/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > buildContextFor > answers manifest questions with the workspace file list
+AssertionError: expected 'Workspace status (no folder connectedΓÇª' to contain 'src/auth/login.ts'
+
+- Expected
++ Received
+
+- src/auth/login.ts
++ Workspace status (no folder connected):
++
++ The user does not currently have a project folder connected to Path. If they are asking about files or their 
+project, tell them no folder is connected and to connect one in Path first. Never claim to have access to any files.
+
+ Γ¥» src/workspace/store.test.ts:139:33
+    137|     );
+    138|     expect(result).not.toBeNull();
+    139|     expect(result!.contextText).toContain("src/auth/login.ts");
+       |                                 ^
+    140|     expect(result!.contextText).toContain("Directories:");
+    141|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[62/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > records search results as resolvable 
+file references
+AssertionError: expected 0 to be greater than 0
+ Γ¥» src/workspace/store.test.ts:149:40
+    147|     useWorkspaceStore.getState().buildContextFor("find the python fileΓÇª
+    148|     const s = useWorkspaceStore.getState();
+    149|     expect(s.lastSearchResults.length).toBeGreaterThan(0);
+       |                                        ^
+    150|     expect(s.lastSearchResults).toContain("server/api.py");
+    151|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[63/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > resolves 'the first one' to the first 
+previous search result
+AssertionError: expected null not to be null
+ Γ¥» src/workspace/store.test.ts:159:24
+    157|       .getState()
+    158|       .buildContextFor("open the first one");
+    159|     expect(result).not.toBeNull();
+       |                        ^
+    160|     expect(result!.includedFiles).toEqual(["server/api.py"]);
+    161|     expect(useWorkspaceStore.getState().lastReferencedFile).toBe("servΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[64/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > resolves 'it' to the previously 
+referenced file
+AssertionError: expected null not to be null
+ Γ¥» src/workspace/store.test.ts:170:24
+    168|     s.buildContextFor("open the first one");
+    169|     const result = s.buildContextFor("what does it do?");
+    170|     expect(result).not.toBeNull();
+       |                        ^
+    171|     expect(result!.includedFiles).toEqual(["server/api.py"]);
+    172|     expect(result!.contextText).toContain("server/api.py");
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[65/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > resolves 'what is inside it?' to the 
+workspace manifest
+AssertionError: expected null not to be null
+ Γ¥» src/workspace/store.test.ts:180:24
+    178|       .getState()
+    179|       .buildContextFor("What is inside it?");
+    180|     expect(result).not.toBeNull();
+       |                        ^
+    181|     expect(result!.contextText).toContain("Directories:");
+    182|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[66/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > asks for clarification on an ambiguous 
+'that file'
+AssertionError: expected null not to be null
+ Γ¥» src/workspace/store.test.ts:188:24
+    186|     useWorkspaceStore.getState().buildContextFor("find the python fileΓÇª
+    187|     const result = useWorkspaceStore.getState().buildContextFor("open ΓÇª
+    188|     expect(result).not.toBeNull();
+       |                        ^
+    189|     expect(result!.contextText).toMatch(/which file/i);
+    190|     expect(useWorkspaceStore.getState().lastReferencedFile).toBeNull();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[67/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > resolves 'fix this code' to the 
+referenced workspace file
+AssertionError: expected null not to be null
+ Γ¥» src/workspace/store.test.ts:199:24
+    197|     s.buildContextFor("open the first one");
+    198|     const result = s.buildContextFor("fix this code");
+    199|     expect(result).not.toBeNull();
+       |                        ^
+    200|     expect(result!.includedFiles).toEqual(["server/api.py"]);
+    201|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[68/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > resolves 'what was the folder name?' to 
+the actual workspace name
+AssertionError: expected 'Workspace status (no folder connectedΓÇª' to contain 'nexuss-sample'
+
+- Expected
++ Received
+
+- nexuss-sample
++ Workspace status (no folder connected):
++
++ The user does not currently have a project folder connected to Path. If they are asking about files or their 
+project, tell them no folder is connected and to connect one in Path first. Never claim to have access to any files.
+
+ Γ¥» src/workspace/store.test.ts:209:33
+    207|       .buildContextFor("What was the folder name?");
+    208|     expect(result).not.toBeNull();
+    209|     expect(result!.contextText).toContain("nexuss-sample");
+       |                                 ^
+    210|   });
+    211|
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[69/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > keeps context within the file and token 
+limits
+TypeError: Cannot read properties of null (reading 'includedFiles')
+ Γ¥» src/workspace/store.test.ts:238:21
+    236|     const s = useWorkspaceStore.getState();
+    237|     const results = s.buildContextFor("find the python files");
+    238|     expect(results!.includedFiles.length).toBeLessThanOrEqual(20);
+       |                     ^
+    239|     expect(results!.estimatedTokens).toBeLessThanOrEqual(6000);
+    240|     const file = s.buildContextFor("open the first one");
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[70/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > conversation-aware workspace references > clears references when switching 
+workspaces
+AssertionError: expected 0 to be greater than 0
+ Γ¥» src/workspace/store.test.ts:248:67
+    246|     await useWorkspaceStore.getState().connectDemo();
+    247|     useWorkspaceStore.getState().buildContextFor("find the python fileΓÇª
+    248|     expect(useWorkspaceStore.getState().lastSearchResults.length).toBeΓÇª
+       |                                                                   ^
+    249|     await useWorkspaceStore.getState().connectDemo();
+    250|     const s = useWorkspaceStore.getState();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[71/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > safe file operations > create/write/delete/rename succeed and refresh the index
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ Γ¥» src/workspace/store.test.ts:272:24
+    270|       .getState()
+    271|       .applyOperation({ type: "create", path: "notes.md", content: "# ΓÇª
+    272|     expect(created.ok).toBe(true);
+       |                        ^
+    273|     expect(useWorkspaceStore.getState().index?.byPath.has("notes.md"))ΓÇª
+    274|
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[72/169]ΓÄ»
+
+ FAIL  src/workspace/store.test.ts > safe file operations > rejects path traversal and absolute paths
+AssertionError: expected 'No workspace connected.' to contain 'escapes'
+
+Expected: "escapes"
+Received: "No workspace connected."
+
+ Γ¥» src/workspace/store.test.ts:304:26
+    302|       .applyOperation({ type: "create", path: "../outside.txt", contenΓÇª
+    303|     expect(escape.ok).toBe(false);
+    304|     expect(escape.error).toContain("escapes");
+       |                          ^
+    305|
+    306|     const absolute = await useWorkspaceStore
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[73/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: staging from a model change block > stages 
+write/create proposals without writing anything
+AssertionError: expected [] to have a length of 2 but got +0
+
+- Expected
++ Received
+
+- 2
++ 0
+
+ Γ¥» src/workspace/agent/agentStore.test.ts:84:30
+     82|
+     83|     const s = useWorkspaceStore.getState();
+     84|     expect(s.pendingChanges).toHaveLength(2);
+       |                              ^
+     85|     expect(s.pendingChanges[0].kind).toBe("write");
+     86|     expect(s.pendingChanges[1].kind).toBe("create");
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[74/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: staging from a model change block > stages 
+write/create proposals without writing anything
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: staging from a model change block > records rejected 
+(unsafe) changes as errors and stages nothing
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: staging from a model change block > does nothing when 
+the workspace is not connected
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: approval flow > applies staged changes on approval 
+and refreshes the index
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: approval flow > rejects without touching the 
+filesystem
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: approval flow > returns an error when there is 
+nothing to apply
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: version/conflict protection > refuses to overwrite a 
+file that changed after it was read
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: version/conflict protection > refuses to create over 
+an existing file
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: version/conflict protection > refresh re-reads files 
+and recomputes diffs/hashes
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: lifecycle safety > clears staged changes on disconnect
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > stages a run 
+command for approval without executing anything
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > stages a 
+test request as a test command
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > executes the 
+pending command on run and stores the result
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > surfaces a 
+failed test result for the model to diagnose
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > reports a 
+missing runtime when staging a command
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > refuses to 
+stage a command the runtime cannot run
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > rejects a 
+staged command without running it
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > cancels a 
+running command through the runtime
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > clears 
+command state on disconnect
+ReferenceError: window is not defined
+ Γ¥» src/workspace/agent/agentStore.test.ts:21:3
+     19|
+     20| afterEach(async () => {
+     21|   (window as unknown as { nexussDesktop?: unknown }).nexussDesktop = uΓÇª
+       |   ^
+     22|   await useWorkspaceStore.getState().disconnect();
+     23| });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[75/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: staging from a model change block > records rejected 
+(unsafe) changes as errors and stages nothing
+AssertionError: expected undefined to be 'INVALID_INPUT' // Object.is equality
+
+- Expected:
+"INVALID_INPUT"
+
++ Received:
+undefined
+
+ Γ¥» src/workspace/agent/agentStore.test.ts:99:33
+     97|     const s = useWorkspaceStore.getState();
+     98|     expect(s.pendingChanges).toHaveLength(0);
+     99|     expect(s.changeError?.code).toBe("INVALID_INPUT");
+       |                                 ^
+    100|     expect(s.agentLog.some((e) => e.kind === "error")).toBe(true);
+    101|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[76/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: approval flow > applies staged changes on approval 
+and refreshes the index
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ Γ¥» src/workspace/agent/agentStore.test.ts:121:23
+    119|
+    120|     const result = await useWorkspaceStore.getState().approvePendingChΓÇª
+    121|     expect(result.ok).toBe(true);
+       |                       ^
+    122|     expect(await bridge().read("README.md")).toBe("# Approved readme\nΓÇª
+    123|     const s = useWorkspaceStore.getState();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[77/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: approval flow > rejects without touching the 
+filesystem
+TypeError: Cannot read properties of null (reading 'read')
+ Γ¥» src/workspace/agent/agentStore.test.ts:140:26
+    138|     const s = useWorkspaceStore.getState();
+    139|     expect(s.pendingChanges).toHaveLength(0);
+    140|     expect(await bridge().read("README.md")).toContain("# Nexuss SamplΓÇª
+       |                          ^
+    141|     expect(s.agentLog.some((e) => e.kind === "reject")).toBe(true);
+    142|   });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[78/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: version/conflict protection > refuses to overwrite a 
+file that changed after it was read
+TypeError: Cannot read properties of null (reading 'write')
+ Γ¥» src/workspace/agent/agentStore.test.ts:157:19
+    155|
+    156|     // Simulate an external edit after the change was staged.
+    157|     await bridge().write("src/auth/login.ts", "// edited elsewhere\n");
+       |                   ^
+    158|
+    159|     const result = await useWorkspaceStore.getState().approvePendingChΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[79/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: version/conflict protection > refuses to create over 
+an existing file
+TypeError: Cannot read properties of null (reading 'create')
+ Γ¥» src/workspace/agent/agentStore.test.ts:175:19
+    173|
+    174|     // Another process creates the file in the meantime.
+    175|     await bridge().create("src/conflict.ts", "externally created\n");
+       |                   ^
+    176|
+    177|     const result = await useWorkspaceStore.getState().approvePendingChΓÇª
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[80/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: version/conflict protection > refresh re-reads files 
+and recomputes diffs/hashes
+TypeError: Cannot read properties of undefined (reading 'originalHash')
+ Γ¥» src/workspace/agent/agentStore.test.ts:188:28
+    186|       .proposeChangeFromBlock([{ path: "README.md", content: "# RefresΓÇª
+    187|     const staged = useWorkspaceStore.getState().pendingChanges[0];
+    188|     const oldHash = staged.originalHash;
+       |                            ^
+    189|
+    190|     await bridge().write("README.md", "# Externally updated\n");
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[81/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: lifecycle safety > clears staged changes on disconnect
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ Γ¥» src/workspace/agent/agentStore.test.ts:209:57
+    207|       .getState()
+    208|       .proposeChangeFromBlock([{ path: "README.md", content: "x" }]);
+    209|     expect(useWorkspaceStore.getState().pendingChanges).toHaveLength(1ΓÇª
+       |                                                         ^
+    210|
+    211|     await useWorkspaceStore.getState().disconnect();
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[82/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > stages a run 
+command for approval without executing anything
+ReferenceError: window is not defined
+ Γ¥» connectWithRuntime src/workspace/agent/agentStore.test.ts:63:3
+     61|
+     62| async function connectWithRuntime(runtime: NativeRuntimeBridge): PromiΓÇª
+     63|   (window as unknown as { nexussDesktop: { runtime: NativeRuntimeBridgΓÇª
+       |   ^
+     64|     runtime
+     65|   };
+ Γ¥» src/workspace/agent/agentStore.test.ts:220:11
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[83/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > stages a 
+test request as a test command
+ReferenceError: window is not defined
+ Γ¥» connectWithRuntime src/workspace/agent/agentStore.test.ts:63:3
+     61|
+     62| async function connectWithRuntime(runtime: NativeRuntimeBridge): PromiΓÇª
+     63|   (window as unknown as { nexussDesktop: { runtime: NativeRuntimeBridgΓÇª
+       |   ^
+     64|     runtime
+     65|   };
+ Γ¥» src/workspace/agent/agentStore.test.ts:234:11
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[84/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > executes the 
+pending command on run and stores the result
+ReferenceError: window is not defined
+ Γ¥» connectWithRuntime src/workspace/agent/agentStore.test.ts:63:3
+     61|
+     62| async function connectWithRuntime(runtime: NativeRuntimeBridge): PromiΓÇª
+     63|   (window as unknown as { nexussDesktop: { runtime: NativeRuntimeBridgΓÇª
+       |   ^
+     64|     runtime
+     65|   };
+ Γ¥» src/workspace/agent/agentStore.test.ts:244:11
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[85/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > surfaces a 
+failed test result for the model to diagnose
+ReferenceError: window is not defined
+ Γ¥» connectWithRuntime src/workspace/agent/agentStore.test.ts:63:3
+     61|
+     62| async function connectWithRuntime(runtime: NativeRuntimeBridge): PromiΓÇª
+     63|   (window as unknown as { nexussDesktop: { runtime: NativeRuntimeBridgΓÇª
+       |   ^
+     64|     runtime
+     65|   };
+ Γ¥» src/workspace/agent/agentStore.test.ts:260:11
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[86/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > refuses to 
+stage a command the runtime cannot run
+ReferenceError: window is not defined
+ Γ¥» connectWithRuntime src/workspace/agent/agentStore.test.ts:63:3
+     61|
+     62| async function connectWithRuntime(runtime: NativeRuntimeBridge): PromiΓÇª
+     63|   (window as unknown as { nexussDesktop: { runtime: NativeRuntimeBridgΓÇª
+       |   ^
+     64|     runtime
+     65|   };
+ Γ¥» src/workspace/agent/agentStore.test.ts:285:11
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[87/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > rejects a 
+staged command without running it
+ReferenceError: window is not defined
+ Γ¥» connectWithRuntime src/workspace/agent/agentStore.test.ts:63:3
+     61|
+     62| async function connectWithRuntime(runtime: NativeRuntimeBridge): PromiΓÇª
+     63|   (window as unknown as { nexussDesktop: { runtime: NativeRuntimeBridgΓÇª
+       |   ^
+     64|     runtime
+     65|   };
+ Γ¥» src/workspace/agent/agentStore.test.ts:297:11
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[88/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > cancels a 
+running command through the runtime
+ReferenceError: window is not defined
+ Γ¥» connectWithRuntime src/workspace/agent/agentStore.test.ts:63:3
+     61|
+     62| async function connectWithRuntime(runtime: NativeRuntimeBridge): PromiΓÇª
+     63|   (window as unknown as { nexussDesktop: { runtime: NativeRuntimeBridgΓÇª
+       |   ^
+     64|     runtime
+     65|   };
+ Γ¥» src/workspace/agent/agentStore.test.ts:321:11
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[89/169]ΓÄ»
+
+ FAIL  src/workspace/agent/agentStore.test.ts > workspace agent: run/test command staging and execution > clears 
+command state on disconnect
+ReferenceError: window is not defined
+ Γ¥» connectWithRuntime src/workspace/agent/agentStore.test.ts:63:3
+     61|
+     62| async function connectWithRuntime(runtime: NativeRuntimeBridge): PromiΓÇª
+     63|   (window as unknown as { nexussDesktop: { runtime: NativeRuntimeBridgΓÇª
+       |   ^
+     64|     runtime
+     65|   };
+ Γ¥» src/workspace/agent/agentStore.test.ts:340:11
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[90/169]ΓÄ»
+
+
+ Test Files  35 failed | 19 passed (54)
+      Tests  126 failed | 265 passed (391)
+   Start at  18:49:28
+   Duration  30.07s (transform 5.33s, setup 0ms, import 8.81s, tests 40.97s, environment 6ms)
+

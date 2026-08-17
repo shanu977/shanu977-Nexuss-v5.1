@@ -398,6 +398,26 @@ def test_chat_attaches_workspace_context(client, fake_llm):
     assert msgs[-1] == {"role": "user", "content": "Fix the auth bug"}
 
 
+def test_chat_workspace_context_includes_agent_change_guidance(client, fake_llm):
+    """The workspace note tells the model it may propose edits via a fenced
+    workspace-change block (which the client shows as a diff and only applies
+    after approval), and that it must never claim to have modified files."""
+    headers = auth_headers(client)
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={
+            "message": "Change the endpoint to /v2",
+            "workspace_context": "### server/api.py\napp = FastAPI()\n",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    msgs = fake_llm["messages"]
+    note = msgs[-2]["content"]
+    assert "workspace-change" in note
+    assert "Never claim you edited files yourself" in note
+
+
 def test_chat_accepts_camelcase_workspace_context(client, fake_llm):
     """The frontend sends workspaceContext (camelCase); the schema alias must
     map it to workspace_context so the request is not rejected with a 422."""

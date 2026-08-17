@@ -64,3 +64,38 @@ export {
 } from "./context";
 export { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge } from "./bridge";
 export type { FileSource, NativeWorkspaceBridge, WorkspaceBridge } from "./bridge";
+export { ToolError } from "./agent/errors";
+export type { ToolErrorCode } from "./agent/errors";
+export {
+  createUnifiedDiff,
+  diffLines,
+  splitLines
+} from "./agent/diff";
+export {
+  assertValidPath,
+  toolProposeCreate,
+  toolProposeDelete,
+  toolProposeMove,
+  toolProposeUpsert,
+  toolProposeWrite,
+  toolRead,
+  toolRun,
+  toolSearch,
+  toolTest,
+  unwrapError
+} from "./agent/tools";
+export { extractChangeBlock, stripChangeBlock } from "./agent/parse";
+export { newProposalId } from "./agent/types";
+export type {
+  AgentFileRef,
+  AgentLogEntry,
+  CommandBridge,
+  CommandResult,
+  ParsedChangeBlock,
+  ParsedChangeOp,
+  ProposedChange,
+  ProposedChangeKind,
+  ReadToolResult,
+  ToolContext,
+  WorkspaceBridgeLike
+} from "./agent/types";

@@ -43,6 +43,8 @@ REQUIRED_COLUMNS: Dict[str, Dict[str, str]] = {
         "firebase_uid": "String (unique, indexed, nullable)",
         "photo_url": "String (nullable)",
         "provider": "String (default='local')",
+        "role": "String (default='user'; 'admin' grants admin access)",
+        "status": "String (default='active'; 'blocked' disables the account)",
         "created_at": "BigInteger",
         "updated_at": "BigInteger",
     },

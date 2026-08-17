@@ -46,6 +46,17 @@ class Settings(BaseSettings):
     # Secret key used for signing OTP email verification tickets
     otp_secret_key: str = Field(default="dev-otp-secret-key-change-in-prod", validation_alias="OTP_SECRET_KEY")
 
+    # Admin identity configuration (defaults for the single configured Admin).
+    # These may be overridden via environment variables ADMIN_EMAIL and ADMIN_NAME
+    # so the account can be located even when the email/name in the DB differs
+    # from the defaults (e.g. after a profile update).
+    admin_email: str = Field(
+        default="pillishanu5@gmail.com", validation_alias="ADMIN_EMAIL"
+    )
+    admin_name: str = Field(
+        default="shanmuk", validation_alias="ADMIN_NAME"
+    )
+
     # SMTP settings for delivering OTP verification emails. Credentials are
     # read from the environment and never hardcoded, logged, or exposed to the
     # client. When unset, delivery is disabled and /auth/otp/send returns a

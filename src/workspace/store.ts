@@ -5,8 +5,8 @@
 // the boundary: every operation path is validated before touching the bridge.
 
 import { create } from "zustand";
-import { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge } from "./bridge";
-import type { FileSource, WorkspaceBridge } from "./bridge";
+import { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge, detectNativeRuntime } from "./bridge";
+import type { FileSource, NativeRuntimeBridge, WorkspaceBridge } from "./bridge";
 import {
   DEFAULT_CONTEXT_BUDGET,
   buildAmbiguityContext,
@@ -20,10 +20,27 @@ import { buildManifest } from "./manifest";
 import type { WorkspaceManifest } from "./manifest";
 import { classifyWorkspaceIntent } from "./intent";
 import { resolveReference } from "./references";
-import { MAX_FILE_SIZE, buildIndex, isSupportedFile, updateIndex } from "./indexer";
+import { MAX_FILE_SIZE, buildIndex, contentHash, isSupportedFile, updateIndex } from "./indexer";
 import { assertInsideRoot, normalizeRelativePath } from "./path";
 import { searchIndex } from "./search";
 import { redactSecrets } from "./security";
+import {
+  toolProposeDelete,
+  toolProposeMove,
+  toolProposeUpsert,
+  toolRun,
+  toolTest,
+  unwrapError
+} from "./agent/tools";
+import type {
+  AgentLogEntry,
+  CommandResult,
+  ParsedChangeOp,
+  ParsedCommandBlock,
+  PendingCommand,
+  ProposedChange
+} from "./agent/types";
+import { AGENT_LOG_LIMIT, newCommandId } from "./agent/types";
 import type {
   ContextBudget,
   ContextResult,
@@ -102,6 +119,11 @@ function normalizePathSafe(path: string): string | null {
   }
 }
 
+/** Append entries to the agent log, keeping only the most recent ones. */
+function withLog(log: AgentLogEntry[], ...entries: AgentLogEntry[]): AgentLogEntry[] {
+  return [...log, ...entries].slice(-AGENT_LOG_LIMIT);
+}
+
 /** Read+redact every supported file once when (re)building the index. */
 async function loadWorkspaceFiles(bridge: WorkspaceBridge): Promise<WorkspaceFile[]> {
   const list: FileSource[] = await bridge.list();
@@ -167,7 +189,16 @@ async function initializeWorkspace(
     // A new workspace replaces the previous one: conversation references must
     // never survive a switch between different projects.
     lastSearchResults: [],
-    lastReferencedFile: null
+    lastReferencedFile: null,
+    // The native execution runtime is independent of the workspace bridge; it
+    // is detected once at connect time and tracks its own active workspace.
+    runtime: detectNativeRuntime(),
+    // Staged changes/commands never survive a workspace switch.
+    pendingChanges: [],
+    pendingCommand: null,
+    runningCommand: false,
+    lastCommandResult: null,
+    commandError: null
   });
 }
 
@@ -191,6 +222,22 @@ interface WorkspaceState {
   lastSearchResults: string[];
   /** The last file the user explicitly referenced ("the first one", "test.py"). */
   lastReferencedFile: string | null;
+  /** Staged, user-approved-before-apply agent changes (diffs shown in the UI). */
+  pendingChanges: ProposedChange[];
+  /** Native execution surface (window.nexussDesktop.runtime), when present. */
+  runtime: NativeRuntimeBridge | null;
+  /** A command staged for the user to approve before it runs. */
+  pendingCommand: PendingCommand | null;
+  /** True while an approved command is executing. */
+  runningCommand: boolean;
+  /** Structured result of the last executed command (shown in the panel). */
+  lastCommandResult: CommandResult | null;
+  /** Non-execution error from the last command attempt (policy/discovery). */
+  commandError: string | null;
+  /** Recent agent activity surfaced in the panel (reads, applies, errors). */
+  agentLog: AgentLogEntry[];
+  /** Last error from staging/applying a change, if any. */
+  changeError: { code: string; message: string } | null;
 
   openPanel: () => void;
   closePanel: () => void;
@@ -204,6 +251,26 @@ interface WorkspaceState {
   setContextBudget: (budget: Partial<ContextBudget>) => void;
   buildContextFor: (question: string) => ContextResult | null;
   applyOperation: (op: FileOperation) => Promise<OperationResult>;
+  /** Stage validated write/create proposals from a model change block. */
+  proposeChangeFromBlock: (changes: ParsedChangeOp[]) => Promise<void>;
+  /** Stage a run/test request from a model command block (user approves next). */
+  proposeCommandFromBlock: (block: ParsedCommandBlock) => Promise<void>;
+  /** Execute the approved pending command via the native runtime. */
+  runPendingCommand: () => Promise<void>;
+  /** Cancel a running command (terminates the native process). */
+  cancelPendingCommand: () => Promise<void>;
+  /** Discard a staged command without executing anything. */
+  rejectPendingCommand: () => void;
+  clearCommandError: () => void;
+  clearLastCommandResult: () => void;
+  /** Apply all pending changes after checking nothing changed since they were read. */
+  approvePendingChanges: () => Promise<OperationResult>;
+  /** Discard pending changes without touching the filesystem. */
+  rejectPendingChanges: () => void;
+  /** Re-read files and recompute diffs for stale pending changes. */
+  refreshPendingChanges: () => Promise<void>;
+  clearChangeError: () => void;
+  clearAgentLog: () => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
@@ -224,6 +291,14 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   contextBudget: DEFAULT_CONTEXT_BUDGET,
   lastSearchResults: [],
   lastReferencedFile: null,
+  pendingChanges: [],
+  runtime: null,
+  pendingCommand: null,
+  runningCommand: false,
+  lastCommandResult: null,
+  commandError: null,
+  agentLog: [],
+  changeError: null,
 
   openPanel: () => set({ panelOpen: true }),
 
@@ -289,7 +364,18 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       searchQuery: "",
       searchResults: [],
       lastSearchResults: [],
-      lastReferencedFile: null
+      lastReferencedFile: null,
+      // Staged changes never survive a disconnect: the user must re-review.
+      pendingChanges: [],
+      changeError: null,
+      // Execution context is invalidated on disconnect (STEP 22): the native
+      // runtime is told the workspace is gone and all pending command state
+      // is cleared.
+      runtime: null,
+      pendingCommand: null,
+      runningCommand: false,
+      lastCommandResult: null,
+      commandError: null
     });
   },
 
@@ -475,5 +561,316 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
-  }
+  },
+
+  // Workspace Agent: everything a change does is staged as a diff, validated
+  // against the workspace boundary, and only applied after the user approves.
+  // Writes/creates/deletes/renames all flow through applyOperation, which
+  // re-validates the path and refreshes the index on success.
+  proposeChangeFromBlock: async (changes) => {
+    const { connected } = get();
+    if (!connected) return;
+    const proposals: ProposedChange[] = [];
+    const errors: string[] = [];
+    for (const op of changes) {
+      try {
+        proposals.push(await toolProposeUpsert(get(), op.path, op.content));
+      } catch (e) {
+        const { message } = unwrapError(e);
+        errors.push(`${op.path}: ${message}`);
+      }
+    }
+    const log: AgentLogEntry[] = [];
+    if (proposals.length > 0) {
+      log.push({
+        kind: "propose",
+        message: `Staged ${proposals.length} change${proposals.length === 1 ? "" : "s"} for review.`,
+        at: Date.now()
+      });
+    }
+    if (errors.length > 0) {
+      log.push({ kind: "error", message: errors.join("; "), at: Date.now() });
+    }
+    set((s) => ({
+      pendingChanges: proposals.length > 0 ? proposals : s.pendingChanges,
+      changeError: errors.length > 0 ? { code: "INVALID_INPUT", message: errors.join("; ") } : null,
+      agentLog: withLog(s.agentLog, ...log)
+    }));
+  },
+
+  approvePendingChanges: async () => {
+    const { bridge, pendingChanges, agentLog } = get();
+    if (!bridge || pendingChanges.length === 0) {
+      return { ok: false, error: "Nothing to apply." };
+    }
+    const applied: string[] = [];
+    for (const change of pendingChanges) {
+      try {
+        const path = normalizeRelativePath(change.path);
+        // Version/conflict protection: never overwrite a file that changed
+        // after it was read, and never create over an existing file.
+        if (change.kind === "write") {
+          let current: string;
+          try {
+            current = await bridge.read(path);
+          } catch {
+            set({
+              changeError: { code: "FILE_NOT_FOUND", message: `"${change.path}" no longer exists.` }
+            });
+            return { ok: false, error: `"${change.path}" no longer exists.` };
+          }
+          if (change.originalHash && contentHash(current) !== change.originalHash) {
+            set({
+              changeError: {
+                code: "FILE_CHANGED",
+                message: `"${change.path}" changed after it was read. Reload the file before applying this change.`
+              }
+            });
+            return { ok: false, error: `"${change.path}" changed after it was read.` };
+          }
+          const r = await get().applyOperation({ type: "write", path, content: change.after });
+          if (!r.ok) throw new Error(r.error ?? "Write failed.");
+        } else if (change.kind === "create") {
+          let exists = false;
+          try {
+            await bridge.read(path);
+            exists = true;
+          } catch {
+            // File is still missing; safe to create.
+          }
+          if (exists) {
+            set({ changeError: { code: "FILE_EXISTS", message: `"${change.path}" already exists.` } });
+            return { ok: false, error: `"${change.path}" already exists.` };
+          }
+          const r = await get().applyOperation({ type: "create", path, content: change.after });
+          if (!r.ok) throw new Error(r.error ?? "Create failed.");
+        } else if (change.kind === "delete") {
+          let current: string;
+          try {
+            current = await bridge.read(path);
+          } catch {
+            set({
+              changeError: { code: "FILE_NOT_FOUND", message: `"${change.path}" no longer exists.` }
+            });
+            return { ok: false, error: `"${change.path}" no longer exists.` };
+          }
+          if (change.originalHash && contentHash(current) !== change.originalHash) {
+            set({
+              changeError: {
+                code: "FILE_CHANGED",
+                message: `"${change.path}" changed after it was read. Reload the file before applying this change.`
+              }
+            });
+            return { ok: false, error: `"${change.path}" changed after it was read.` };
+          }
+          const r = await get().applyOperation({ type: "delete", path });
+          if (!r.ok) throw new Error(r.error ?? "Delete failed.");
+        } else if (change.kind === "rename" || change.kind === "move") {
+          if (!change.toPath) throw new Error("Missing target path.");
+          const to = normalizeRelativePath(change.toPath);
+          const r = await get().applyOperation({ type: "rename", from: path, to });
+          if (!r.ok) throw new Error(r.error ?? "Rename failed.");
+        }
+        applied.push(change.path);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        set({
+          changeError: { code: "INVALID_INPUT", message },
+          agentLog: withLog(agentLog, { kind: "error", message, at: Date.now() })
+        });
+        return { ok: false, error: message };
+      }
+    }
+    set({
+      pendingChanges: [],
+      changeError: null,
+      agentLog: withLog(agentLog, {
+        kind: "apply",
+        message: `Applied ${applied.length} change${applied.length === 1 ? "" : "s"}: ${applied.join(", ")}`,
+        at: Date.now()
+      })
+    });
+    return { ok: true };
+  },
+
+  rejectPendingChanges: () => {
+    const { pendingChanges, agentLog } = get();
+    if (pendingChanges.length === 0) return;
+    set({
+      pendingChanges: [],
+      changeError: null,
+      agentLog: withLog(agentLog, {
+        kind: "reject",
+        message: `Discarded ${pendingChanges.length} proposed change${pendingChanges.length === 1 ? "" : "s"}.`,
+        at: Date.now()
+      })
+    });
+  },
+
+  refreshPendingChanges: async () => {
+    const { pendingChanges } = get();
+    if (pendingChanges.length === 0) return;
+    const refreshed: ProposedChange[] = [];
+    for (const change of pendingChanges) {
+      try {
+        if (change.kind === "write" || change.kind === "create") {
+          refreshed.push(await toolProposeUpsert(get(), change.path, change.after));
+        } else if (change.kind === "delete") {
+          refreshed.push(await toolProposeDelete(get(), change.path));
+        } else if (change.kind === "rename" || change.kind === "move") {
+          if (!change.toPath) continue;
+          refreshed.push(await toolProposeMove(get(), change.path, change.toPath, change.kind));
+        }
+      } catch {
+        // A file that moved or disappeared is simply dropped from the refresh.
+      }
+    }
+    set({ pendingChanges: refreshed, changeError: null });
+  },
+
+  clearChangeError: () => set({ changeError: null }),
+
+  clearAgentLog: () => set({ agentLog: [] }),
+
+  // --- Native command execution (run/test) ----------------------------------
+
+  proposeCommandFromBlock: async (block) => {
+    const { runtime, agentLog } = get();
+    if (!runtime) {
+      set({
+        commandError: "Command execution requires the Nexuss desktop runtime.",
+        agentLog: withLog(agentLog, {
+          kind: "error",
+          message: "Run/test requires the Nexuss desktop runtime.",
+          at: Date.now()
+        })
+      });
+      return;
+    }
+    const caps = runtime.capabilities();
+    if (block.run) {
+      if (!caps.run) {
+        set({
+          commandError: "Command execution is not available in this runtime.",
+          agentLog: withLog(agentLog, {
+            kind: "error",
+            message: "Run is not available in this runtime.",
+            at: Date.now()
+          })
+        });
+        return;
+      }
+      set({
+        pendingCommand: {
+          id: newCommandId(),
+          kind: "run",
+          command: block.run.command,
+          cwd: block.run.cwd ?? "",
+          plan: null,
+          createdAt: Date.now()
+        },
+        commandError: null,
+        lastCommandResult: null
+      });
+    } else if (block.test) {
+      if (!caps.test) {
+        set({
+          commandError: "Test execution is not available in this runtime.",
+          agentLog: withLog(agentLog, {
+            kind: "error",
+            message: "Test is not available in this runtime.",
+            at: Date.now()
+          })
+        });
+        return;
+      }
+      set({
+        pendingCommand: {
+          id: newCommandId(),
+          kind: "test",
+          command: "(auto-discovered)",
+          cwd: block.test.cwd ?? "",
+          plan: null,
+          createdAt: Date.now()
+        },
+        commandError: null,
+        lastCommandResult: null
+      });
+    }
+  },
+
+  runPendingCommand: async () => {
+    const { pendingCommand, runtime } = get();
+    if (!pendingCommand || !runtime) return;
+    if (get().runningCommand) return;
+    const { kind, command, cwd } = pendingCommand;
+    set({ runningCommand: true, commandError: null, lastCommandResult: null });
+    try {
+      const result =
+        kind === "run"
+          ? await toolRun(get(), command, { cwd: cwd || undefined })
+          : await toolTest(get(), { cwd: cwd || undefined });
+      set({
+        lastCommandResult: result,
+        pendingCommand: null,
+        runningCommand: false,
+        agentLog: withLog(get().agentLog, {
+          kind: kind === "run" ? "run" : "test",
+          message: result.success
+            ? `${command}: completed in ${(result.durationMs / 1000).toFixed(1)}s`
+            : `${command}: ${result.timedOut ? "timed out" : `exit ${result.exitCode ?? "n/a"}`}`,
+          at: Date.now()
+        })
+      });
+    } catch (e) {
+      const { message } = unwrapError(e);
+      set({
+        commandError: message,
+        runningCommand: false,
+        pendingCommand: null,
+        agentLog: withLog(get().agentLog, {
+          kind: "error",
+          message,
+          at: Date.now()
+        })
+      });
+    }
+  },
+
+  cancelPendingCommand: async () => {
+    const { runtime } = get();
+    if (!get().runningCommand) {
+      set({ pendingCommand: null });
+      return;
+    }
+    runtime?.cancel?.();
+    set({
+      runningCommand: false,
+      pendingCommand: null,
+      commandError: null,
+      agentLog: withLog(get().agentLog, {
+        kind: "reject",
+        message: "Command cancelled.",
+        at: Date.now()
+      })
+    });
+  },
+
+  rejectPendingCommand: () => {
+    const { pendingCommand, agentLog } = get();
+    if (!pendingCommand) return;
+    set({
+      pendingCommand: null,
+      commandError: null,
+      agentLog: withLog(agentLog, {
+        kind: "reject",
+        message: `Discarded pending ${pendingCommand.kind} command: ${pendingCommand.command}.`,
+        at: Date.now()
+      })
+    });
+  },
+
+  clearCommandError: () => set({ commandError: null }),
+
+  clearLastCommandResult: () => set({ lastCommandResult: null })
 }));

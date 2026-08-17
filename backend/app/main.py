@@ -12,7 +12,20 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .database import Base, engine, check_database, get_db
 from .middleware.rate_limit import RateLimitMiddleware
-from .routes import api_keys, auth, chat, conversations, settings as settings_router, sync
+from .routes import (
+    admin,
+    admin_analytics,
+    admin_feedback,
+    admin_security,
+    admin_settings,
+    admin_users,
+    api_keys,
+    auth,
+    chat,
+    conversations,
+    settings as settings_router,
+    sync,
+)
 from .services import firebase_service
 from .services.cleanup import cleanup_loop
 from .services.db_health import check_and_log
@@ -62,6 +75,12 @@ app.add_middleware(
 app.add_middleware(RateLimitMiddleware, max_requests=20, window_seconds=60, paths=("/chat",))
 
 app.include_router(auth.router)
+app.include_router(admin.router)
+app.include_router(admin_users.router)
+app.include_router(admin_analytics.router)
+app.include_router(admin_feedback.router)
+app.include_router(admin_settings.router)
+app.include_router(admin_security.router)
 app.include_router(sync.router)
 app.include_router(settings_router.router)
 app.include_router(api_keys.router)

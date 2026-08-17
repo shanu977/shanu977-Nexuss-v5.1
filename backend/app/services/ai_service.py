@@ -9,7 +9,7 @@ from ..schemas.settings import (
     VISION_MODELS,
 )
 from ..utils.reasoning import filter_reasoning
-from . import fallback_service, llm_service, prompt_service, settings_service
+from . import fallback_service, llm_service, prompt_service, settings_service, usage_service
 
 
 def _resolve_vision_model(provider: str, selected_model: str) -> str | None:
@@ -70,6 +70,10 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
         if turn.content.strip()
     ]
 
+    # Distinguish the two real request paths for analytics: a frame+question
+    # (screen analysis) vs a plain text chat.
+    request_type = "screen_share" if payload.image else "chat"
+
     fallback_models = None
     if payload.image:
         # A frame+question must never be sent to a text-only model. Route to a
@@ -96,14 +100,25 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
             messages, payload.workspace_context
         )
 
-    result = fallback_service.execute_with_fallback(
-        db,
-        user,
-        messages,
-        primary_provider=provider,
-        primary_model=primary_model,
-        fallback_models=fallback_models,
-    )
+    try:
+        result = fallback_service.execute_with_fallback(
+            db,
+            user,
+            messages,
+            primary_provider=provider,
+            primary_model=primary_model,
+            fallback_models=fallback_models,
+        )
+    except fallback_service.ProviderFailureError as exc:
+        # Every attempt failed: persist the usage metadata for the attempts
+        # that were made, then re-raise. Persistence is best-effort and never
+        # changes the error surfaced to the client.
+        usage_service.record_attempts(db, user, request_type, exc.attempts)
+        raise
+
+    # Best-effort analytics persistence (success path). record_attempts never
+    # raises, so a database problem cannot fail the chat request.
+    usage_service.record_attempts(db, user, request_type, result["attempts"])
 
     return ChatResponse(
         reply=filter_reasoning(result["reply"]),

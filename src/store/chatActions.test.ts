@@ -555,7 +555,7 @@ describe("Path workspace context flows into chat requests", () => {
     expect(req.workspaceContext).toBeTruthy();
     expect(req.workspaceContext).toContain("src/auth/login.ts");
     // The context is selected context, never the whole project.
-    expect(req.workspaceContext.length).toBeLessThan(20000);
+    expect(req.workspaceContext!.length).toBeLessThan(20000);
     expect(req.image).toBeUndefined();
   });
 
@@ -660,5 +660,173 @@ describe("conversation-aware workspace references flow into chat requests", () =
 
     const [req] = sendMock.mock.calls[0];
     expect(req.workspaceContext).toBeUndefined();
+  });
+});
+
+describe("sendMessageStream with a workspace-change block", () => {
+  function lastMessage(): Message {
+    const messages = useChatStore.getState().messages;
+    return messages[messages.length - 1];
+  }
+
+  beforeEach(async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.setState({ pendingChanges: [], agentLog: [], changeError: null });
+  });
+
+  it("stages a valid block as a pending change and strips it from the reply", async () => {
+    const chat = makeChat("chat-change-1", "Change it");
+    await seed(chat, []);
+    sendMock.mockResolvedValueOnce({
+      reply: [
+        "I'll change the endpoint.",
+        "```workspace-change",
+        JSON.stringify({ changes: [{ path: "server/api.py", content: "# updated\n" }] }),
+        "```"
+      ].join("\n"),
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    });
+
+    await useChatStore.getState().sendMessageStream("Change the api endpoint");
+
+    const msg = lastMessage();
+    expect(msg.content).toContain("I'll change the endpoint.");
+    expect(msg.content).not.toContain("workspace-change");
+    expect(msg.content).not.toContain("changes");
+
+    const s = useWorkspaceStore.getState();
+    expect(s.pendingChanges).toHaveLength(1);
+    expect(s.pendingChanges[0].path).toBe("server/api.py");
+    expect(s.pendingChanges[0].kind).toBe("write");
+    // Nothing written without approval.
+    const bridge = useWorkspaceStore.getState().bridge as unknown as {
+      read: (p: string) => Promise<string>;
+    };
+    expect(await bridge.read("server/api.py")).toContain("from fastapi import FastAPI");
+  });
+
+  it("never stages an escaping-path block and strips raw JSON from the reply", async () => {
+    const chat = makeChat("chat-change-2", "Escape");
+    await seed(chat, []);
+    sendMock.mockResolvedValueOnce({
+      reply: [
+        "```workspace-change",
+        JSON.stringify({ changes: [{ path: "../escape.ts", content: "x" }] }),
+        "```",
+        "I can't touch files outside the workspace."
+      ].join("\n"),
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    });
+
+    await useChatStore.getState().sendMessageStream("edit a file outside");
+
+    const msg = lastMessage();
+    expect(msg.content).toContain("I can't touch files outside the workspace.");
+    expect(msg.content).not.toContain("workspace-change");
+    expect(useWorkspaceStore.getState().pendingChanges).toHaveLength(0);
+  });
+
+  it("leaves normal code fences untouched and stages nothing", async () => {
+    const chat = makeChat("chat-change-3", "Snippet");
+    await seed(chat, []);
+    sendMock.mockResolvedValueOnce({
+      reply: "Here is the snippet:\n```ts\nconst x = 1;\n```",
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    });
+
+    await useChatStore.getState().sendMessageStream("show a snippet");
+
+    const msg = lastMessage();
+    expect(msg.content).toContain("```ts");
+    expect(msg.content).toContain("const x = 1;");
+    expect(useWorkspaceStore.getState().pendingChanges).toHaveLength(0);
+  });
+});
+
+describe("sendMessageStream with a workspace-command block", () => {
+  function lastMessage(): Message {
+    const messages = useChatStore.getState().messages;
+    return messages[messages.length - 1];
+  }
+
+  beforeEach(async () => {
+    // A desktop runtime must be present for a run/test request to be staged.
+    (window as unknown as {
+      nexussDesktop: { runtime: { run: () => Promise<unknown>; test: () => Promise<unknown>; capabilities: () => { run: boolean; test: boolean } } }
+    }).nexussDesktop = {
+      runtime: {
+        run: vi.fn(async () => ({})),
+        test: vi.fn(async () => ({})),
+        capabilities: () => ({ run: true, test: true })
+      }
+    };
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.setState({
+      pendingChanges: [],
+      agentLog: [],
+      changeError: null,
+      pendingCommand: null,
+      runningCommand: false,
+      lastCommandResult: null,
+      commandError: null
+    });
+  });
+
+  afterEach(() => {
+    (window as unknown as { nexussDesktop?: unknown }).nexussDesktop = undefined;
+  });
+
+  it("stages a run request and strips the fence from the reply", async () => {
+    const chat = makeChat("chat-cmd-1", "Run it");
+    await seed(chat, []);
+    sendMock.mockResolvedValueOnce({
+      reply: [
+        "I'll run the tests.",
+        "```workspace-command",
+        JSON.stringify({ run: { command: "npm test" } }),
+        "```"
+      ].join("\n"),
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    });
+
+    await useChatStore.getState().sendMessageStream("run the tests");
+
+    const msg = lastMessage();
+    expect(msg.content).toContain("I'll run the tests.");
+    expect(msg.content).not.toContain("workspace-command");
+    const s = useWorkspaceStore.getState();
+    expect(s.pendingCommand?.kind).toBe("run");
+    expect(s.pendingCommand?.command).toBe("npm test");
+  });
+
+  it("strips the fence even when the command cannot be staged", async () => {
+    const chat = makeChat("chat-cmd-2", "Run it");
+    await seed(chat, []);
+    sendMock.mockResolvedValueOnce({
+      reply: [
+        "```workspace-command",
+        JSON.stringify({ run: { command: "" } }),
+        "```",
+        "Nothing to run here."
+      ].join("\n"),
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    });
+
+    await useChatStore.getState().sendMessageStream("run something");
+
+    const msg = lastMessage();
+    expect(msg.content).toContain("Nothing to run here.");
+    expect(msg.content).not.toContain("workspace-command");
+    expect(useWorkspaceStore.getState().pendingCommand).toBeNull();
   });
 });

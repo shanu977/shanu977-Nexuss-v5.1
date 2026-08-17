@@ -6,18 +6,21 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint \"src/**/*.{ts,tsx}\"",
-    "lint:fix": "eslint --fix \"src/**/*.{ts,tsx}\"",
+    "lint": "eslint \"src/**/*.{ts,tsx}\" \"native/**/*.ts\"",
+    "lint:fix": "eslint --fix \"src/**/*.{ts,tsx}\" \"native/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "desktop:test": "vitest run --testTimeout 30000"
   },
   "dependencies": {
     "dexie": "^4.0.0",
     "firebase": "^10.14.0",
+    "lucide-react": "^1.31.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.1",
+    "recharts": "^3.10.1",
     "remark-gfm": "^4.0.1",
     "zustand": "^4.5.0"
   },
@@ -33,6 +36,7 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "autoprefixer": "^10.4.0",
+    "electron": "^37.10.3",
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.0.0",
     "eslint-plugin-react": "^7.35.0",
@@ -45,6 +49,6 @@
     "tailwindcss": "^3.4.0",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.0.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.10"
   }
 }

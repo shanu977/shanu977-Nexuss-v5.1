@@ -109,6 +109,17 @@ WORKSPACE_CONTEXT_TEMPLATE = (
     "workspace context is irrelevant to the question, ignore it.\n\n{context}"
 )
 
+# The client-side Workspace Agent turns a valid block into a diff the user must
+# approve. The model MUST NOT claim to have modified files: it only proposes.
+AGENT_CHANGE_GUIDANCE = (
+    "\n\nIf the user asks you to change code in this workspace, you may propose "
+    "the exact edits by ending your reply with a fenced code block tagged "
+    "`workspace-change` containing JSON like: "
+    '{"changes":[{"path":"src/example.py","content":"<full new file content>"}]}. '
+    "The client shows a diff and only applies it after the user approves. "
+    "Never claim you edited files yourself."
+)
+
 
 def attach_workspace_context(
     messages: List[Dict],
@@ -129,5 +140,5 @@ def attach_workspace_context(
     if estimate_tokens(content) > max_tokens:
         tail = text[-max(1, max_tokens * 4 - 400) :]
         content = WORKSPACE_CONTEXT_TEMPLATE.format(context=tail)
-    note = {"role": "system", "content": content}
+    note = {"role": "system", "content": content + AGENT_CHANGE_GUIDANCE}
     return messages[:-1] + [note, messages[-1]]

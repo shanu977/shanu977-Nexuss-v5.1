@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { useWorkspaceStore } from "@/workspace/store";
 import {
+  ArrowRightLeftIcon,
+  CheckIcon,
   ChevronDownIcon,
   FolderIcon,
+  PlusIcon,
   SearchIcon,
   XIcon,
   XCircleIcon
@@ -32,6 +35,22 @@ export default function WorkspacePanel() {
   const disconnect = useWorkspaceStore((s) => s.disconnect);
   const search = useWorkspaceStore((s) => s.search);
   const closePanel = useWorkspaceStore((s) => s.closePanel);
+  const pendingChanges = useWorkspaceStore((s) => s.pendingChanges);
+  const agentLog = useWorkspaceStore((s) => s.agentLog);
+  const changeError = useWorkspaceStore((s) => s.changeError);
+  const approvePendingChanges = useWorkspaceStore((s) => s.approvePendingChanges);
+  const rejectPendingChanges = useWorkspaceStore((s) => s.rejectPendingChanges);
+  const refreshPendingChanges = useWorkspaceStore((s) => s.refreshPendingChanges);
+  const clearChangeError = useWorkspaceStore((s) => s.clearChangeError);
+  const pendingCommand = useWorkspaceStore((s) => s.pendingCommand);
+  const runningCommand = useWorkspaceStore((s) => s.runningCommand);
+  const lastCommandResult = useWorkspaceStore((s) => s.lastCommandResult);
+  const commandError = useWorkspaceStore((s) => s.commandError);
+  const runPendingCommand = useWorkspaceStore((s) => s.runPendingCommand);
+  const cancelPendingCommand = useWorkspaceStore((s) => s.cancelPendingCommand);
+  const rejectPendingCommand = useWorkspaceStore((s) => s.rejectPendingCommand);
+  const clearCommandError = useWorkspaceStore((s) => s.clearCommandError);
+  const clearLastCommandResult = useWorkspaceStore((s) => s.clearLastCommandResult);
   const [query, setQuery] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
   const panelId = "workspace-details";
@@ -202,6 +221,222 @@ export default function WorkspacePanel() {
                   Your questions automatically pull in the most relevant files.
                 </p>
               )}
+
+              {/* Workspace Agent: staged changes are reviewed as diffs and only
+                  applied after explicit approval. Nothing is written on stage. */}
+              {pendingChanges.length > 0 ? (
+                <div className="mt-3 space-y-2">
+                  <p className="text-[10px] font-mono font-medium text-muted-foreground">
+                    Proposed changes — review before applying
+                  </p>
+                  {changeError && (
+                    <div
+                      role="alert"
+                      className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-[10px] font-mono text-destructive"
+                    >
+                      <span className="flex-1">{changeError.message}</span>
+                      <button
+                        type="button"
+                        onClick={clearChangeError}
+                        className="shrink-0 rounded bg-destructive/20 px-2 py-0.5 text-[10px] font-medium hover:bg-destructive/30 cursor-pointer"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    {pendingChanges.map((c) => (
+                      <div
+                        key={c.id}
+                        className="rounded-lg border border-border bg-muted/50 p-2.5"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          {c.kind === "delete" ? (
+                            <XCircleIcon className="h-3 w-3 shrink-0 text-destructive" />
+                          ) : c.kind === "rename" || c.kind === "move" ? (
+                            <ArrowRightLeftIcon className="h-3 w-3 shrink-0 text-primary" />
+                          ) : c.kind === "create" ? (
+                            <PlusIcon className="h-3 w-3 shrink-0 text-primary" />
+                          ) : (
+                            <CheckIcon className="h-3 w-3 shrink-0 text-primary" />
+                          )}
+                          <span className="min-w-0 flex-1 truncate text-[11px] font-mono text-foreground">
+                            {c.kind} {c.path}
+                            {c.toPath ? ` → ${c.toPath}` : ""}
+                          </span>
+                        </div>
+                        <pre className="mt-1.5 max-h-32 overflow-auto rounded-md bg-background/60 p-2 text-[10px] leading-relaxed text-foreground">
+                          {c.diff}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void approvePendingChanges()}
+                      className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-medium text-primary-foreground transition-colors hover:opacity-90 cursor-pointer"
+                    >
+                      <CheckIcon className="h-3.5 w-3.5" />
+                      Approve &amp; apply
+                    </button>
+                    <button
+                      type="button"
+                      onClick={rejectPendingChanges}
+                      className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-1.5 text-[11px] font-mono font-medium text-foreground transition-colors hover:bg-muted/70 cursor-pointer"
+                    >
+                      <XIcon className="h-3.5 w-3.5" />
+                      Reject
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void refreshPendingChanges()}
+                      className="rounded-lg border border-border px-3 py-1.5 text-[11px] font-mono text-foreground transition-colors hover:bg-muted/70 cursor-pointer"
+                    >
+                      Reload
+                    </button>
+                  </div>
+                </div>
+              ) : agentLog.length > 0 ? (
+                <div className="mt-3">
+                  <p className="mb-1.5 text-[10px] font-mono font-medium text-muted-foreground">
+                    Recent agent activity
+                  </p>
+                  <ul className="space-y-1">
+                    {agentLog
+                      .slice(-4)
+                      .reverse()
+                      .map((entry, i) => (
+                        <li
+                          key={i}
+                          className="truncate text-[10px] font-mono text-muted-foreground"
+                        >
+                          {entry.message}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {/* Run / test commands staged by the agent are executed only
+                  after the user runs them here, through the native runtime's
+                  validation layer. The browser never executes anything. */}
+              {pendingCommand || runningCommand || lastCommandResult || commandError ? (
+                <div className="mt-3 rounded-lg border border-border bg-muted/40 p-2.5">
+                  <p className="mb-1.5 text-[10px] font-mono font-medium text-muted-foreground">
+                    Command execution
+                  </p>
+                  {commandError && (
+                    <div
+                      role="alert"
+                      className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-[10px] font-mono text-destructive"
+                    >
+                      <span className="flex-1">{commandError}</span>
+                      <button
+                        type="button"
+                        onClick={clearCommandError}
+                        className="shrink-0 rounded bg-destructive/20 px-2 py-0.5 text-[10px] font-medium hover:bg-destructive/30 cursor-pointer"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+                  {lastCommandResult && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                        <span
+                          className={
+                            lastCommandResult.success
+                              ? "text-primary"
+                              : "text-destructive"
+                          }
+                        >
+                          {lastCommandResult.timedOut
+                            ? "Timed out"
+                            : lastCommandResult.killed
+                              ? "Killed"
+                              : lastCommandResult.success
+                                ? "OK"
+                                : `Exit ${lastCommandResult.exitCode ?? "n/a"}`}
+                        </span>
+                        <span className="truncate text-muted-foreground">
+                          {lastCommandResult.command} ({lastCommandResult.durationMs}ms)
+                        </span>
+                      </div>
+                      {lastCommandResult.outputTruncated && (
+                        <p className="text-[10px] font-mono text-muted-foreground">
+                          Output truncated to output limits.
+                        </p>
+                      )}
+                      {(lastCommandResult.stdout || lastCommandResult.stderr) && (
+                        <pre className="max-h-32 overflow-auto rounded-md bg-background/60 p-2 text-[10px] leading-relaxed text-foreground">
+                          {lastCommandResult.redacted ? "(secrets redacted)\n" : ""}
+                          {lastCommandResult.stdout}
+                          {lastCommandResult.stderr
+                            ? `\n--- stderr ---\n${lastCommandResult.stderr}`
+                            : ""}
+                        </pre>
+                      )}
+                      <button
+                        type="button"
+                        onClick={clearLastCommandResult}
+                        className="rounded border border-border px-2 py-0.5 text-[10px] font-mono text-foreground hover:bg-muted/70 cursor-pointer"
+                      >
+                        Clear result
+                      </button>
+                    </div>
+                  )}
+                  {pendingCommand && (
+                    <div className="space-y-1.5">
+                      <p className="truncate text-[11px] font-mono text-foreground">
+                        {pendingCommand.kind === "test"
+                          ? "Run the project's tests"
+                          : pendingCommand.command}
+                      </p>
+                      {pendingCommand.cwd && (
+                        <p className="truncate text-[10px] font-mono text-muted-foreground">
+                          cwd: {pendingCommand.cwd}
+                        </p>
+                      )}
+                      {pendingCommand.plan && (
+                        <p className="truncate text-[10px] font-mono text-muted-foreground">
+                          {pendingCommand.plan.command} ({pendingCommand.plan.source})
+                        </p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                        <button
+                          type="button"
+                          disabled={runningCommand}
+                          onClick={() => void runPendingCommand()}
+                          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-medium text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                        >
+                          <CheckIcon className="h-3.5 w-3.5" />
+                          {runningCommand ? "Running…" : "Run"}
+                        </button>
+                        {runningCommand ? (
+                          <button
+                            type="button"
+                            onClick={() => void cancelPendingCommand()}
+                            className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-1.5 text-[11px] font-mono font-medium text-foreground hover:bg-muted/70 cursor-pointer"
+                          >
+                            <XIcon className="h-3.5 w-3.5" />
+                            Cancel
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={rejectPendingCommand}
+                            className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-1.5 text-[11px] font-mono font-medium text-foreground hover:bg-muted/70 cursor-pointer"
+                          >
+                            <XIcon className="h-3.5 w-3.5" />
+                            Reject
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </div>
           )}
           </div>

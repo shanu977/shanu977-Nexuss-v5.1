@@ -25,6 +25,13 @@ import db from "@/lib/db/db";
 import { useUsageStore } from "@/store/usageStore";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useWorkspaceStore } from "@/workspace/store";
+import {
+  extractChangeBlock,
+  stripChangeBlock,
+  extractCommandBlock,
+  stripCommandBlock,
+  hasCommandFence
+} from "@/workspace/agent/parse";
 import Dexie from "dexie";
 
 interface ChatStore extends ChatState {
@@ -209,11 +216,62 @@ async function requestAssistant(
     }
 
     const filtered = filterReasoning(res.reply).trim();
+    // The model may attach a fenced `workspace-change` block proposing edits.
+    // It is always stripped from the transcript; a valid block is staged as a
+    // diff in the workspace panel for the user to approve. Nothing is ever
+    // written without approval, and the validated tool layer enforces the
+    // workspace boundary before staging.
+    const changeBlock = extractChangeBlock(filtered);
+    let display =
+      filtered.length > 0 ? stripChangeBlock(filtered) : EMPTY_REPLY_FALLBACK;
+    if (changeBlock) {
+      void useWorkspaceStore
+        .getState()
+        .proposeChangeFromBlock(changeBlock.changes)
+        .catch(() => {
+          // Staging is best-effort; the reply is still shown either way.
+        });
+    }
+    // The model may also attach a fenced `workspace-command` block proposing a
+    // run/test. It is always stripped from the transcript (even when its
+    // payload is invalid); a valid block is staged in the workspace panel for
+    // approval. A command is only ever executed after the user runs it, and
+    // only via the native runtime's validation layer.
+    const commandBlock = extractCommandBlock(display);
+    if (commandBlock || hasCommandFence(display)) {
+      display = stripCommandBlock(display) || EMPTY_REPLY_FALLBACK;
+      if (commandBlock) {
+        void useWorkspaceStore
+          .getState()
+          .proposeCommandFromBlock(commandBlock)
+          .catch(() => {
+            // Staging is best-effort; the reply is still shown either way.
+          });
+      }
+    }
+    // Feed the last command result into the NEXT request so the model can
+    // diagnose a failed run/test without needing a second prompt.
+    if (useWorkspaceStore.getState().lastCommandResult) {
+      const last = useWorkspaceStore.getState().lastCommandResult;
+      if (last) {
+        const resultText = [
+          `## Last command result (previous turn)`,
+          `Command: \`${last.command}\``,
+          `Cwd: \`${last.cwd || "(workspace root)"}\``,
+          `Exit: ${last.exitCode ?? "n/a"} (${last.timedOut ? "timed out" : last.killed ? "killed" : "completed"})`,
+          `Duration: ${last.durationMs}ms`,
+          ...(last.stdout ? [`\`\`\`\n${last.stdout}\n\`\`\``] : []),
+          ...(last.stderr ? [`Stderr:\n\`\`\`\n${last.stderr}\n\`\`\``] : [])
+        ].join("\n");
+        useWorkspaceStore.getState().clearLastCommandResult();
+        display = `${display}\n\n${resultText}`;
+      }
+    }
     const asstMsg: Message = {
       id: newId(),
       chatId: chat.id,
       role: "assistant",
-      content: filtered.length > 0 ? filtered : EMPTY_REPLY_FALLBACK,
+      content: display,
       timestamp: Date.now()
     };
     await db.messages.add(asstMsg);

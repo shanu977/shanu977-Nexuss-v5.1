@@ -1,0 +1,198 @@
+/* ─────────────────────────────────────────────────────────────
+   Nexuss Admin UI styles — ported from the Admin UI/UX design.
+
+   ISOLATION: every selector below is scoped to `.admin-scope` (the root
+   element rendered by the `/admin` layout). There are NO global resets and
+   no `html`/`body`/`button`/`input`/`table` rules here, so the Admin panel
+   can never leak styles into the main Nexuss chatbot UI. This file is only
+   imported by the admin layout, so it is only loaded on /admin routes.
+   ───────────────────────────────────────────────────────────── */
+
+.admin-scope {
+  --bg-app: #080a0b;
+  --bg-sidebar: #090b0c;
+  --bg-card: #111416;
+  --bg-card-hover: #15191b;
+  --bg-input: #0d1012;
+  --border-color: #25292b;
+  --border-subtle: #1b1e20;
+
+  --text-primary: #f5f5f5;
+  --text-secondary: #a1a7aa;
+  --text-muted: #6f767a;
+
+  --accent-primary: #22c55e;
+  --accent-primary-hover: #16a34a;
+  --accent-primary-light: rgba(34, 197, 94, 0.12);
+
+  --color-success: #22c55e;
+  --color-success-bg: rgba(34, 197, 94, 0.12);
+  --color-warning: #f59e0b;
+  --color-warning-bg: rgba(245, 158, 11, 0.12);
+  --color-danger: #ef4444;
+  --color-danger-bg: rgba(239, 68, 68, 0.12);
+  --color-info: #3b82f6;
+  --color-info-bg: rgba(59, 130, 246, 0.12);
+  --color-purple: #a855f7;
+  --color-purple-bg: rgba(168, 85, 247, 0.12);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.6);
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+
+  color-scheme: dark;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: inherit;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.admin-scope *,
+.admin-scope *::before,
+.admin-scope *::after {
+  box-sizing: border-box;
+}
+
+/* ── Panel / shared surfaces ───────────────────────────────── */
+
+.admin-glass-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.admin-glass-panel:hover {
+  border-color: #32373a;
+}
+
+.admin-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-success);
+  box-shadow: 0 0 8px var(--color-success);
+}
+
+/* ── Modal overlay ──────────────────────────────────────────── */
+
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: admin-fade-in 0.2s ease-out forwards;
+}
+
+/* ── Animations ─────────────────────────────────────────────── */
+
+@keyframes admin-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes admin-slide-up {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes admin-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.admin-animate-slide-up {
+  animation: admin-slide-up 0.2s ease-out forwards;
+}
+
+.admin-animate-fade-in {
+  animation: admin-fade-in 0.2s ease-out forwards;
+}
+
+.admin-skeleton {
+  animation: admin-pulse 1.5s infinite ease-in-out;
+}
+
+/* ── Admin scrollbars (scoped) ──────────────────────────────── */
+
+.admin-scope ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.admin-scope ::-webkit-scrollbar-track {
+  background: var(--bg-app);
+}
+.admin-scope ::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: var(--radius-full);
+}
+.admin-scope ::-webkit-scrollbar-thumb:hover {
+  background: #3a3f42;
+}
+
+/* ── Responsive helpers used by the layout ──────────────────── */
+
+.admin-desktop-sidebar {
+  display: none;
+}
+
+.admin-mobile-menu-btn {
+  display: flex;
+}
+
+@media (min-width: 769px) {
+  .admin-desktop-sidebar {
+    display: block;
+  }
+  .admin-mobile-menu-btn {
+    display: none !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .admin-desktop-sidebar {
+    display: none !important;
+  }
+  .admin-mobile-menu-btn {
+    display: flex !important;
+  }
+}
+
+/* Admin header date/time hidden on smaller screens */
+.admin-header-datetime {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .admin-header-datetime {
+    display: flex;
+  }
+}

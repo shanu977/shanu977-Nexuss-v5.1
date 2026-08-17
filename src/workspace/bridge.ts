@@ -9,6 +9,11 @@
 // Bridges only ever receive paths already validated as workspace-relative.
 
 import type { WorkspaceKind } from "./types";
+import type {
+  NativeRuntimeBridge
+} from "./agent/types";
+
+export type { NativeRuntimeBridge } from "./agent/types";
 
 export interface FileSource {
   path: string;
@@ -276,15 +281,35 @@ export class InMemoryBridge implements WorkspaceBridge {
 // Native desktop / local-agent bridge (future Nexuss desktop app). A native
 // shell exposes an object implementing the WorkspaceBridge surface on
 // window.nexussDesktop.workspace; the entire workspace engine then runs against
-// real local disk without any UI/store changes.
+// real local disk without any UI/store changes. When the desktop runtime hosts
+// the native execution layer, window.nexussDesktop.runtime exposes run/test.
+
 export interface NativeWorkspaceBridge extends WorkspaceBridge {
   readonly kind: "native";
 }
 
+export interface NexussDesktop {
+  workspace?: NativeWorkspaceBridge;
+  runtime?: NativeRuntimeBridge;
+}
+
 export function detectNativeBridge(): NativeWorkspaceBridge | null {
-  const win = window as unknown as {
-    nexussDesktop?: { workspace?: NativeWorkspaceBridge };
-  };
+  const win = window as unknown as { nexussDesktop?: NexussDesktop };
   const native = win.nexussDesktop?.workspace;
   return native && typeof native.list === "function" ? native : null;
+}
+
+export function detectNativeRuntime(): NativeRuntimeBridge | null {
+  const win = window as unknown as { nexussDesktop?: NexussDesktop };
+  const runtime = win.nexussDesktop?.runtime;
+  return runtime && typeof runtime.run === "function" ? runtime : null;
+}
+
+export function isRuntimeCapable(
+  runtime: NativeRuntimeBridge | null,
+  capability: "run" | "test"
+): boolean {
+  if (!runtime) return false;
+  const caps = runtime.capabilities();
+  return caps[capability] === true;
 }
