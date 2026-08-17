@@ -15,7 +15,11 @@ const STATUS_PATTERNS: RegExp[] = [
   /\b(see|access|read|open)\b.*\bmy\s+(folder|project|workspace|directory|repo)\b/i,
   /\b(folder|project|workspace|directory|repo)\b.*\b(connected|linked|shared|indexed)\b/i,
   /\b(what do you know|what have you got|do you have)\b.*\b(folder|project|workspace)\b/i,
-  /\bis\s+(my\s+)?(folder|project|workspace)\b.*\b(indexed|connected|shared|linked)\b/i
+  /\bis\s+(my\s+)?(folder|project|workspace)\b.*\b(indexed|connected|shared|linked)\b/i,
+  /\b(what|which)\s+(was|is|were)\s+the\s+(folder|project|directory|workspace)\s+name\b/i,
+  /\bwhat\s+folder\s+did\s+i\s+(connect|pick|open|choose)\b/i,
+  /\bwhat\s+is\s+my\s+(folder|project|workspace)\s+(name|called)\b/i,
+  /\bhow\s+many\s+(files|items)\b/i
 ];
 
 const SUMMARY_PATTERNS: RegExp[] = [
@@ -34,7 +38,8 @@ const MANIFEST_PATTERNS: RegExp[] = [
   /\bfile\s+(tree|list)\b/i,
   /\bwhat(?:'s| is) in\b.*\b(folder|project|workspace|directory|repo)\b/i,
   /\b(which|what) files\b.*\b(are there|do you have|do i have|exist)\b/i,
-  /\bwhat do you see\b.*\b(?:in|on)\b/i
+  /\bwhat do you see\b.*\b(?:in|on)\b/i,
+  /\bwhat\s+(folders|directories)\b.*\b(are\s+there|exist)\b/i
 ];
 
 export function classifyWorkspaceIntent(question: string): WorkspaceIntent {

@@ -16,6 +16,55 @@ export function tokenize(query: string): string[] {
   return query.toLowerCase().match(/[a-z0-9_]+/g)?.filter((t) => t.length > 1) ?? [];
 }
 
+/** Language name → file extensions, so "find the python files" finds *.py. */
+const LANGUAGE_EXTENSIONS: Record<string, string[]> = {
+  python: ["py"],
+  py: ["py"],
+  typescript: ["ts", "tsx"],
+  ts: ["ts", "tsx"],
+  javascript: ["js", "jsx", "mjs", "cjs"],
+  js: ["js", "jsx", "mjs", "cjs"],
+  jsx: ["jsx"],
+  tsx: ["tsx"],
+  go: ["go"],
+  rust: ["rs"],
+  java: ["java"],
+  cpp: ["cpp", "cc", "cxx", "hpp"],
+  c: ["c", "h"],
+  css: ["css"],
+  html: ["html", "htm"],
+  json: ["json"],
+  yaml: ["yaml", "yml"],
+  sql: ["sql"],
+  php: ["php"],
+  ruby: ["rb"],
+  kotlin: ["kt"],
+  swift: ["swift"],
+  dart: ["dart"],
+  scala: ["scala"],
+  shell: ["sh", "bash"],
+  bash: ["sh"],
+  markdown: ["md"],
+  graphql: ["graphql", "gql"]
+};
+
+/** Concept → filename substrings, so "find the configuration" finds config.*. */
+const NAME_KEYWORDS: Record<string, string[]> = {
+  config: ["config", "conf"],
+  configuration: ["config", "conf"],
+  database: ["db", "database", "sql"],
+  db: ["db", "database", "sql"],
+  frontend: ["frontend", "client", "ui"],
+  backend: ["backend", "server", "api"],
+  api: ["api"],
+  auth: ["auth", "login", "token", "credential", "session"],
+  authentication: ["auth", "login", "token", "credential", "session"],
+  tests: ["test", "spec"],
+  test: ["test", "spec"],
+  readme: ["readme"],
+  docker: ["docker", "dockerfile"]
+};
+
 /** Files whose filename (with extension) literally appears in the query. */
 export function findMentionedFiles(
   index: WorkspaceIndex,
@@ -63,6 +112,16 @@ export function searchIndex(
         score += 6;
         reasons.push("path match");
       }
+      const extensions = LANGUAGE_EXTENSIONS[tok];
+      if (extensions && extensions.some((ext) => file.name.toLowerCase().endsWith(`.${ext}`))) {
+        score += 20;
+        reasons.push("language match");
+      }
+      const keywords = NAME_KEYWORDS[tok];
+      if (keywords && keywords.some((k) => nameLower.includes(k))) {
+        score += 8;
+        reasons.push("filename keyword match");
+      }
     }
 
     if (file.symbols.some((s) => tokens.some((t) => s.toLowerCase().includes(t)))) {
@@ -76,8 +135,11 @@ export function searchIndex(
     }
 
     if (file.chunks.length > 0) {
-      const matched = tokens.filter((t) =>
-        file.chunks.some((c) => c.toLowerCase().includes(t))
+      // Content matching ignores 1-2 char tokens ("is", "the"): they match
+      // substrings inside unrelated words ("raise", "this") and make generic
+      // questions like "What is recursion?" retrieve random files.
+      const matched = tokens.filter(
+        (t) => t.length >= 3 && file.chunks.some((c) => c.toLowerCase().includes(t))
       );
       if (matched.length > 0) {
         score += Math.min(10 * matched.length, 40);

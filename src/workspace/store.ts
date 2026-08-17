@@ -9,13 +9,17 @@ import { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge } from "./br
 import type { FileSource, WorkspaceBridge } from "./bridge";
 import {
   DEFAULT_CONTEXT_BUDGET,
+  buildAmbiguityContext,
   buildContextText,
+  buildDisconnectedContext,
+  buildFileContext,
   buildManifestContext,
   buildStatusContext
 } from "./context";
 import { buildManifest } from "./manifest";
 import type { WorkspaceManifest } from "./manifest";
 import { classifyWorkspaceIntent } from "./intent";
+import { resolveReference } from "./references";
 import { MAX_FILE_SIZE, buildIndex, isSupportedFile, updateIndex } from "./indexer";
 import { assertInsideRoot, normalizeRelativePath } from "./path";
 import { searchIndex } from "./search";
@@ -159,7 +163,11 @@ async function initializeWorkspace(
     status: "connected",
     discoveredFiles: bridge.lastScan?.files ?? files.length,
     searchQuery: "",
-    searchResults: []
+    searchResults: [],
+    // A new workspace replaces the previous one: conversation references must
+    // never survive a switch between different projects.
+    lastSearchResults: [],
+    lastReferencedFile: null
   });
 }
 
@@ -179,6 +187,10 @@ interface WorkspaceState {
   searchResults: SearchHit[];
   searching: boolean;
   contextBudget: ContextBudget;
+  /** File paths from the last workspace result the user saw, in display order. */
+  lastSearchResults: string[];
+  /** The last file the user explicitly referenced ("the first one", "test.py"). */
+  lastReferencedFile: string | null;
 
   openPanel: () => void;
   closePanel: () => void;
@@ -210,6 +222,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   searchResults: [],
   searching: false,
   contextBudget: DEFAULT_CONTEXT_BUDGET,
+  lastSearchResults: [],
+  lastReferencedFile: null,
 
   openPanel: () => set({ panelOpen: true }),
 
@@ -273,7 +287,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       error: null,
       discoveredFiles: 0,
       searchQuery: "",
-      searchResults: []
+      searchResults: [],
+      lastSearchResults: [],
+      lastReferencedFile: null
     });
   },
 
@@ -322,25 +338,99 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   setContextBudget: (budget) =>
     set((s) => ({ contextBudget: { ...s.contextBudget, ...budget } })),
 
-  // Token-minimized context for the CURRENT question: the model only ever sees
-  // the most relevant files/sections, never the whole project. Questions about
-  // the workspace itself (status / manifest / summary) get a small dedicated
-  // context instead of keyword retrieval, which can never match them.
+  // Token-minimized context for the CURRENT question, conversation-aware: the
+  // model only ever sees the most relevant files/sections, never the whole
+  // project. Workspace questions get a small dedicated context (status /
+  // manifest / referenced file / retrieval). Conversation references ("the
+  // first one", "it", "this code") are resolved against lightweight metadata
+  // recorded from previous workspace results, and every resolution updates that
+  // metadata so follow-up references keep working. Without a connected
+  // workspace only explicit workspace questions get a "disconnected" note;
+  // everything else stays normal chat.
   buildContextFor: (question) => {
-    const { workspace, index, manifest, contextBudget } = get();
-    if (!workspace) return null;
+    const {
+      workspace,
+      index,
+      manifest,
+      contextBudget,
+      lastSearchResults,
+      lastReferencedFile
+    } = get();
+
+    if (!workspace) {
+      const intent = classifyWorkspaceIntent(question);
+      if (intent === "status" || intent === "manifest" || intent === "summary") {
+        return buildDisconnectedContext();
+      }
+      return null;
+    }
+
     const intent = classifyWorkspaceIntent(question);
     if (intent === "status") {
       return buildStatusContext(workspace, index);
     }
     if (intent === "manifest" || intent === "summary") {
-      if (manifest && manifest.files.length > 0) {
-        return buildManifestContext(workspace, manifest, contextBudget);
+      const result =
+        manifest && manifest.files.length > 0
+          ? buildManifestContext(workspace, manifest, contextBudget)
+          : buildStatusContext(workspace, index);
+      // The listed files become the current result set so follow-ups like
+      // "open the first one" can resolve against them.
+      if (result.includedFiles.length > 0) {
+        set({ lastSearchResults: result.includedFiles });
       }
-      return buildStatusContext(workspace, index);
+      return result;
     }
+
+    const ref = resolveReference(
+      question,
+      { lastSearchResults, lastReferencedFile },
+      index
+    );
+
+    if (ref.kind === "ambiguous") {
+      return buildAmbiguityContext(workspace, ref.candidates);
+    }
+
+    if (ref.kind === "workspace-deictic") {
+      const result =
+        manifest && manifest.files.length > 0
+          ? buildManifestContext(workspace, manifest, contextBudget)
+          : buildStatusContext(workspace, index);
+      if (result.includedFiles.length > 0) {
+        set({ lastSearchResults: result.includedFiles });
+      }
+      return result;
+    }
+
+    if (
+      ref.kind === "explicit-file" ||
+      ref.kind === "ordinal" ||
+      ref.kind === "last-referenced"
+    ) {
+      const path =
+        ref.kind === "explicit-file"
+          ? ref.path
+          : ref.kind === "ordinal"
+            ? lastSearchResults[ref.position - 1]
+            : lastReferencedFile;
+      if (path && index) {
+        const result = buildFileContext(index, path, question, contextBudget);
+        if (result) {
+          // This is the file the user explicitly picked; later "it"/"this"
+          // references resolve to it. The last result list is untouched so
+          // "second one" still resolves against the original search.
+          set({ lastReferencedFile: path });
+          return result;
+        }
+      }
+    }
+
     if (!index || index.files.length === 0 || !question.trim()) return null;
     const result = buildContextText(index, question, contextBudget);
+    if (result.contextText) {
+      set({ lastSearchResults: result.includedFiles });
+    }
     return result.contextText ? result : null;
   },
 

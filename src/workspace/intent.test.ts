@@ -9,6 +9,11 @@ describe("classifyWorkspaceIntent", () => {
     expect(classifyWorkspaceIntent("Did you get my folder?")).toBe("status");
     expect(classifyWorkspaceIntent("Is my workspace connected?")).toBe("status");
     expect(classifyWorkspaceIntent("Can you see the folder I shared?")).toBe("status");
+    expect(classifyWorkspaceIntent("What was the folder name?")).toBe("status");
+    expect(classifyWorkspaceIntent("What folder did I connect?")).toBe("status");
+    expect(classifyWorkspaceIntent("What is my project called?")).toBe("status");
+    expect(classifyWorkspaceIntent("How many files do you have?")).toBe("status");
+    expect(classifyWorkspaceIntent("Is my project connected?")).toBe("status");
   });
 
   it("classifies manifest questions", () => {
@@ -18,6 +23,8 @@ describe("classifyWorkspaceIntent", () => {
     expect(classifyWorkspaceIntent("What's in the folder?")).toBe("manifest");
     expect(classifyWorkspaceIntent("Which files do I have?")).toBe("manifest");
     expect(classifyWorkspaceIntent("What do you see in my repo?")).toBe("manifest");
+    expect(classifyWorkspaceIntent("What folders are there?")).toBe("manifest");
+    expect(classifyWorkspaceIntent("What directories exist?")).toBe("manifest");
   });
 
   it("classifies summary questions", () => {

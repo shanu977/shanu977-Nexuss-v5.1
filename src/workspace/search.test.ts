@@ -112,4 +112,24 @@ describe("searchIndex", () => {
     const index = makeIndex();
     expect(searchIndex(index, "the", { limit: 1 }).length).toBeLessThanOrEqual(1);
   });
+
+  it("finds files by programming language", () => {
+    const hits = searchIndex(makeIndex(), "find the python files");
+    const paths = hits.map((h) => h.file.path);
+    expect(paths[0]).toBe("server/api.py");
+    expect(paths).toContain("server/api.py");
+    expect(
+      hits.find((h) => h.file.path === "server/api.py")?.reasons
+    ).toContain("language match");
+  });
+
+  it("finds config files by concept keyword", () => {
+    const index = buildIndex("root", [
+      { path: "config.ts", size: 0, mtime: 1, content: "export const env = 1;\n" },
+      { path: "src/main.ts", size: 0, mtime: 1, content: "export const main = 1;\n" }
+    ]);
+    const hits = searchIndex(index, "find the configuration");
+    expect(hits[0].file.path).toBe("config.ts");
+    expect(hits[0].reasons).toContain("filename keyword match");
+  });
 });

@@ -599,11 +599,64 @@ describe("Path workspace context flows into chat requests", () => {
     expect(req.workspaceContext).toContain("Directories:");
   });
 
-  it("omits workspaceContext for a status question with no workspace", async () => {
+  it("reports a disconnected workspace for a status question", async () => {
     const chat = makeChat("chat-ws-status-off", "No workspace");
     await seed(chat, []);
 
     await useChatStore.getState().sendMessageStream("Can you see my folder?");
+
+    const [req] = sendMock.mock.calls[0];
+    expect(req.workspaceContext).toBeTruthy();
+    expect(req.workspaceContext).toMatch(/no folder/i);
+  });
+});
+
+describe("conversation-aware workspace references flow into chat requests", () => {
+  beforeEach(async () => {
+    await useWorkspaceStore.getState().disconnect();
+  });
+
+  afterEach(async () => {
+    await useWorkspaceStore.getState().disconnect();
+  });
+
+  it("resolves 'the first one' then 'it' across turns", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const chat = makeChat("chat-ref", "Reference chat");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("Find the python files.");
+    let [req] = sendMock.mock.calls[0];
+    expect(req.workspaceContext).toContain("server/api.py");
+
+    await useChatStore.getState().sendMessageStream("Open the first one.");
+    [req] = sendMock.mock.calls[1];
+    expect(req.workspaceContext).toContain("server/api.py");
+    expect(req.workspaceContext).toMatch(/Referenced file/);
+
+    await useChatStore.getState().sendMessageStream("What does it do?");
+    [req] = sendMock.mock.calls[2];
+    expect(req.workspaceContext).toContain("server/api.py");
+  });
+
+  it("answers 'what was the folder name?' with the actual folder name", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const chat = makeChat("chat-ref-name", "Folder name");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("What was the folder name?");
+
+    const [req] = sendMock.mock.calls[0];
+    expect(req.workspaceContext).toBeTruthy();
+    expect(req.workspaceContext).toContain("nexuss-sample");
+  });
+
+  it("keeps normal chat free of workspace context", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const chat = makeChat("chat-ref-normal", "Normal chat");
+    await seed(chat, []);
+
+    await useChatStore.getState().sendMessageStream("What is recursion?");
 
     const [req] = sendMock.mock.calls[0];
     expect(req.workspaceContext).toBeUndefined();

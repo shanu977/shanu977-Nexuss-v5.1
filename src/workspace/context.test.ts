@@ -4,7 +4,10 @@ import {
   WORKSPACE_CONTEXT_HEADER,
   WORKSPACE_MANIFEST_HEADER,
   WORKSPACE_STATUS_HEADER,
+  buildAmbiguityContext,
   buildContextText,
+  buildDisconnectedContext,
+  buildFileContext,
   buildManifestContext,
   buildStatusContext,
   estimateTokens
@@ -173,5 +176,63 @@ describe("buildManifestContext", () => {
     expect(result.estimatedTokens).toBeLessThanOrEqual(300);
     expect(result.truncated).toBe(true);
     expect(result.contextText).toContain("more files not listed");
+  });
+});
+
+describe("buildFileContext", () => {
+  it("returns the referenced file whole when it fits the budget", () => {
+    const index = makeIndex();
+    const result = buildFileContext(index, "src/auth/login.ts", "What does it do?");
+    expect(result).not.toBeNull();
+    expect(result!.includedFiles).toEqual(["src/auth/login.ts"]);
+    expect(result!.contextText).toContain("### src/auth/login.ts");
+    expect(result!.contextText).toContain("export async function login");
+    expect(result!.estimatedTokens).toBeLessThanOrEqual(
+      DEFAULT_CONTEXT_BUDGET.maxTokens
+    );
+  });
+
+  it("returns null for an unknown file", () => {
+    const result = buildFileContext(makeIndex(), "nope.ts", "question");
+    expect(result).toBeNull();
+  });
+
+  it("stays within the token budget for a large file", () => {
+    const index = buildIndex("root", [
+      {
+        path: "big.ts",
+        size: 0,
+        mtime: 1,
+        content: "export const big = '" + "x".repeat(5000) + "';"
+      }
+    ]);
+    const result = buildFileContext(index, "big.ts", "big", {
+      maxTokens: 200,
+      maxFiles: 20
+    });
+    expect(result).not.toBeNull();
+    expect(result!.estimatedTokens).toBeLessThanOrEqual(200);
+    expect(result!.truncated).toBe(true);
+  });
+});
+
+describe("buildAmbiguityContext", () => {
+  it("instructs the model to ask which file and lists candidates", () => {
+    const result = buildAmbiguityContext(
+      { name: "myapp", root: "myapp", kind: "in-memory" },
+      ["a.ts", "b.ts"]
+    );
+    expect(result.contextText).toMatch(/which file/i);
+    expect(result.contextText).toContain("a.ts");
+    expect(result.contextText).toContain("b.ts");
+    expect(result.includedFiles).toEqual(["a.ts", "b.ts"]);
+  });
+});
+
+describe("buildDisconnectedContext", () => {
+  it("reports that no folder is connected", () => {
+    const result = buildDisconnectedContext();
+    expect(result.contextText).toMatch(/no folder/i);
+    expect(result.includedFiles).toEqual([]);
   });
 });

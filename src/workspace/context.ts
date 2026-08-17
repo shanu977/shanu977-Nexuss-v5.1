@@ -25,6 +25,15 @@ export const WORKSPACE_STATUS_HEADER =
 export const WORKSPACE_MANIFEST_HEADER =
   "Files in the user's workspace (workspace manifest):";
 
+export const WORKSPACE_REFERENCE_HEADER =
+  "Referenced file from the user's connected workspace:";
+
+export const WORKSPACE_AMBIGUITY_HEADER =
+  "Workspace reference needs clarification:";
+
+export const WORKSPACE_DISCONNECTED_HEADER =
+  "Workspace status (no folder connected):";
+
 /** Rough CJK-aware token estimate, consistent with the backend estimate. */
 export function estimateTokens(text: string): number {
   if (!text) return 0;
@@ -44,7 +53,11 @@ function chunkScore(chunk: string, tokens: string[]): number {
 }
 
 /** For a file too big to fit whole, return only its most relevant chunks. */
-function pickRelevantChunks(file: IndexedFile, tokens: string[], maxTokens: number): string {
+export function pickRelevantChunks(
+  file: IndexedFile,
+  tokens: string[],
+  maxTokens: number
+): string {
   const scored = file.chunks
     .map((chunk, i) => ({ chunk, i, score: chunkScore(chunk, tokens) }))
     .filter((x) => x.score > 0)
@@ -200,5 +213,92 @@ export function buildManifestContext(
     includedFiles: manifest.files.slice(0, Math.min(count, budget.maxFiles)),
     estimatedTokens: estimateTokens(text),
     truncated
+  };
+}
+
+/**
+ * Context for a single explicitly-referenced workspace file (ordinal, filename,
+ * "it"/"this"): the file whole when it fits the budget, otherwise only its most
+ * relevant chunks. Never the whole workspace.
+ */
+export function buildFileContext(
+  index: WorkspaceIndex,
+  path: string,
+  question: string,
+  budget: ContextBudget = DEFAULT_CONTEXT_BUDGET
+): ContextResult | null {
+  const file = index.byPath.get(path);
+  if (!file) return null;
+  const full = file.chunks.join("\n");
+  if (!full) return null;
+  if (estimateTokens(full) <= budget.maxTokens) {
+    const text = `${WORKSPACE_REFERENCE_HEADER}\n\n### ${file.path}\n${full}`;
+    return {
+      contextText: text,
+      includedFiles: [path],
+      estimatedTokens: estimateTokens(text),
+      truncated: false
+    };
+  }
+  const partial = pickRelevantChunks(file, tokenize(question), budget.maxTokens);
+  if (!partial) {
+    // Nothing fit (e.g. the whole file is a single giant chunk): surface a
+    // leading slice of the file so the referenced file is still shown, within
+    // the token budget.
+    const head = full.slice(0, Math.max(1, budget.maxTokens * 4 - 80));
+    const text = `${WORKSPACE_REFERENCE_HEADER}\n\n### ${file.path}\n${head}`;
+    return {
+      contextText: text,
+      includedFiles: [path],
+      estimatedTokens: estimateTokens(text),
+      truncated: true
+    };
+  }
+  const text = `${WORKSPACE_REFERENCE_HEADER}\n\n### ${file.path}\n${partial}`;
+  return {
+    contextText: text,
+    includedFiles: [path],
+    estimatedTokens: estimateTokens(text),
+    truncated: true
+  };
+}
+
+/**
+ * Context for an unresolvable reference: instructs the model to ask a short
+ * clarification question instead of guessing. Candidates are relative paths.
+ */
+export function buildAmbiguityContext(
+  workspace: Workspace,
+  candidates: string[]
+): ContextResult {
+  const list = candidates.map((c) => `- ${c}`).join("\n");
+  const text =
+    `${WORKSPACE_AMBIGUITY_HEADER}\n\n` +
+    `The user referred to a file in their connected workspace "${workspace.name}" but the ` +
+    `reference is ambiguous. Do not pick one yourself — ask a short clarification question ` +
+    `listing which file they mean.\n\nCandidate files:\n${list}`;
+  return {
+    contextText: text,
+    includedFiles: candidates,
+    estimatedTokens: estimateTokens(text),
+    truncated: false
+  };
+}
+
+/**
+ * Context for workspace questions asked while NO folder is connected: the model
+ * must report the disconnected state and never claim access to any files.
+ */
+export function buildDisconnectedContext(): ContextResult {
+  const text =
+    `${WORKSPACE_DISCONNECTED_HEADER}\n\n` +
+    `The user does not currently have a project folder connected to Path. If they are asking ` +
+    `about files or their project, tell them no folder is connected and to connect one in Path ` +
+    `first. Never claim to have access to any files.`;
+  return {
+    contextText: text,
+    includedFiles: [],
+    estimatedTokens: estimateTokens(text),
+    truncated: false
   };
 }

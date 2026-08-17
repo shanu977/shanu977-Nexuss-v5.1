@@ -18,6 +18,8 @@ export { buildManifest } from "./manifest";
 export type { WorkspaceManifest } from "./manifest";
 export { classifyWorkspaceIntent } from "./intent";
 export type { WorkspaceIntent } from "./intent";
+export { resolveReference } from "./references";
+export type { ConversationRefs, ResolvedReference } from "./references";
 export {
   WorkspacePathError,
   assertInsideRoot,
@@ -45,13 +47,20 @@ export {
 export { findMentionedFiles, searchIndex, tokenize } from "./search";
 export {
   DEFAULT_CONTEXT_BUDGET,
+  WORKSPACE_AMBIGUITY_HEADER,
   WORKSPACE_CONTEXT_HEADER,
+  WORKSPACE_DISCONNECTED_HEADER,
   WORKSPACE_MANIFEST_HEADER,
+  WORKSPACE_REFERENCE_HEADER,
   WORKSPACE_STATUS_HEADER,
+  buildAmbiguityContext,
   buildContextText,
+  buildDisconnectedContext,
+  buildFileContext,
   buildManifestContext,
   buildStatusContext,
-  estimateTokens
+  estimateTokens,
+  pickRelevantChunks
 } from "./context";
 export { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge } from "./bridge";
 export type { FileSource, NativeWorkspaceBridge, WorkspaceBridge } from "./bridge";

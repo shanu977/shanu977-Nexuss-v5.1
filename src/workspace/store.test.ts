@@ -141,6 +141,127 @@ describe("buildContextFor", () => {
   });
 });
 
+describe("conversation-aware workspace references", () => {
+  it("records search results as resolvable file references", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.getState().buildContextFor("find the python files");
+    const s = useWorkspaceStore.getState();
+    expect(s.lastSearchResults.length).toBeGreaterThan(0);
+    expect(s.lastSearchResults).toContain("server/api.py");
+  });
+
+  it("resolves 'the first one' to the first previous search result", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.getState().buildContextFor("find the python files");
+    const result = useWorkspaceStore
+      .getState()
+      .buildContextFor("open the first one");
+    expect(result).not.toBeNull();
+    expect(result!.includedFiles).toEqual(["server/api.py"]);
+    expect(useWorkspaceStore.getState().lastReferencedFile).toBe("server/api.py");
+  });
+
+  it("resolves 'it' to the previously referenced file", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const s = useWorkspaceStore.getState();
+    s.buildContextFor("find the python files");
+    s.buildContextFor("open the first one");
+    const result = s.buildContextFor("what does it do?");
+    expect(result).not.toBeNull();
+    expect(result!.includedFiles).toEqual(["server/api.py"]);
+    expect(result!.contextText).toContain("server/api.py");
+  });
+
+  it("resolves 'what is inside it?' to the workspace manifest", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const result = useWorkspaceStore
+      .getState()
+      .buildContextFor("What is inside it?");
+    expect(result).not.toBeNull();
+    expect(result!.contextText).toContain("Directories:");
+  });
+
+  it("asks for clarification on an ambiguous 'that file'", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.getState().buildContextFor("find the python files");
+    const result = useWorkspaceStore.getState().buildContextFor("open that file");
+    expect(result).not.toBeNull();
+    expect(result!.contextText).toMatch(/which file/i);
+    expect(useWorkspaceStore.getState().lastReferencedFile).toBeNull();
+  });
+
+  it("resolves 'fix this code' to the referenced workspace file", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const s = useWorkspaceStore.getState();
+    s.buildContextFor("find the python files");
+    s.buildContextFor("open the first one");
+    const result = s.buildContextFor("fix this code");
+    expect(result).not.toBeNull();
+    expect(result!.includedFiles).toEqual(["server/api.py"]);
+  });
+
+  it("resolves 'what was the folder name?' to the actual workspace name", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const result = useWorkspaceStore
+      .getState()
+      .buildContextFor("What was the folder name?");
+    expect(result).not.toBeNull();
+    expect(result!.contextText).toContain("nexuss-sample");
+  });
+
+  it("reports disconnected state for workspace questions without a workspace", async () => {
+    const result = useWorkspaceStore
+      .getState()
+      .buildContextFor("Can you see my folder?");
+    expect(result).not.toBeNull();
+    expect(result!.contextText).toMatch(/no folder/i);
+  });
+
+  it("does not hallucinate files for 'List my files' without a workspace", async () => {
+    const result = useWorkspaceStore.getState().buildContextFor("List my files.");
+    expect(result).not.toBeNull();
+    expect(result!.contextText).toMatch(/no folder/i);
+    expect(result!.contextText).not.toMatch(/src\/auth/);
+  });
+
+  it("does not retrieve workspace files for normal chat", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    expect(
+      useWorkspaceStore.getState().buildContextFor("What is recursion?")
+    ).toBeNull();
+  });
+
+  it("keeps context within the file and token limits", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    const s = useWorkspaceStore.getState();
+    const results = s.buildContextFor("find the python files");
+    expect(results!.includedFiles.length).toBeLessThanOrEqual(20);
+    expect(results!.estimatedTokens).toBeLessThanOrEqual(6000);
+    const file = s.buildContextFor("open the first one");
+    expect(file!.includedFiles.length).toBeLessThanOrEqual(20);
+    expect(file!.estimatedTokens).toBeLessThanOrEqual(6000);
+  });
+
+  it("clears references when switching workspaces", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.getState().buildContextFor("find the python files");
+    expect(useWorkspaceStore.getState().lastSearchResults.length).toBeGreaterThan(0);
+    await useWorkspaceStore.getState().connectDemo();
+    const s = useWorkspaceStore.getState();
+    expect(s.lastSearchResults).toEqual([]);
+    expect(s.lastReferencedFile).toBeNull();
+  });
+
+  it("clears references when disconnecting", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.getState().buildContextFor("find the python files");
+    await useWorkspaceStore.getState().disconnect();
+    const s = useWorkspaceStore.getState();
+    expect(s.lastSearchResults).toEqual([]);
+    expect(s.lastReferencedFile).toBeNull();
+  });
+});
+
 describe("safe file operations", () => {
   it("create/write/delete/rename succeed and refresh the index", async () => {
     await useWorkspaceStore.getState().connectDemo();
