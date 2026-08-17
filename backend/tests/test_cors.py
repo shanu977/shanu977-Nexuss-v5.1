@@ -182,6 +182,22 @@ def test_railway_production_startup_with_plain_string_env(monkeypatch):
     assert s.cors_origins_list == ["https://shanu977-nexuss-v5-1.vercel.app"]
 
 
+def test_production_origin_receives_cors_headers_on_preflight(client):
+    """Verify that OPTIONS /chat from the production frontend origin
+    https://www.nexuss.in receives the correct Access-Control-Allow-Origin
+    header and credentials are allowed."""
+    resp = client.options(
+        "/chat",
+        headers={
+            "Origin": "https://www.nexuss.in",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert resp.headers.get("access-control-allow-origin") == "https://www.nexuss.in"
+    assert resp.headers.get("access-control-allow-credentials", "").lower() == "true"
+
+
 def test_production_requires_secrets_when_enabled():
     """If Railway runs with ENVIRONMENT=production but is missing a required
     secret, Settings refuses to start (this crashes the app into a Railway 502,

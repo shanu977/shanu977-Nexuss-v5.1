@@ -96,11 +96,11 @@ class Settings(BaseSettings):
     # CORS_ORIGINS env var: comma-separated values, or a JSON list for
     # backward compatibility. Whitespace, trailing slashes and duplicates are
     # normalized away when parsing.
-    cors_origins: str = Field(
+cors_origins: str = Field(
         default=(
-            "https://www.nexuss.in,https://shanu977-nexuss-v5-1.vercel.app"
+            "https://www.nexuss.in,https://nexuss.in,https://shanu977-nexuss-v5-1.vercel.app"
         ),
-    )
+)
 
     @field_validator("cors_origins", mode="before")
     @classmethod
