@@ -1,16 +1,25 @@
-"""Real email delivery for the OTP flow.
+"""Email delivery for the OTP flow.
 
-Uses the Python standard library (smtplib) so no new dependency is required.
-Credentials come exclusively from the backend settings (SMTP_* env vars) and
-are never hardcoded, logged, or returned by the API.
+Two delivery paths, selected by configuration:
+
+* Resend (HTTPS API) — used when ``RESEND_API_KEY`` is set. HTTPS egress is
+  available on every Railway plan, so this path works even where outbound SMTP
+  is blocked (free/Hobby plans block SMTP ports 25/465/587/2525).
+* SMTP (standard library smtplib) — fallback used when no Resend key is set.
+
+Credentials come exclusively from the backend settings (RESEND_* / SMTP_* env
+vars) and are never hardcoded, logged, or returned by the API.
 
 The plaintext OTP exists only transiently inside the outbound email message:
 it is never logged, never persisted, and never returned by any endpoint.
 """
 
+import json
 import logging
 import smtplib
 import socket
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
 from email.utils import formataddr
 
@@ -20,6 +29,7 @@ logger = logging.getLogger("uvicorn.error")
 
 OTP_EMAIL_SUBJECT = "Your password setup verification code"
 SMTP_SSL_PORT = 465
+RESEND_API_URL = "https://api.resend.com/emails"
 
 
 class EmailDeliveryError(Exception):
@@ -78,8 +88,60 @@ def build_otp_message(to_email: str, otp_code: str) -> EmailMessage:
     return _message(to_email, OTP_EMAIL_SUBJECT, body)
 
 
+def _deliver_resend(message: EmailMessage, to_email: str) -> None:
+    """Deliver `message` over HTTPS via the Resend API.
+
+    Raises EmailDeliveryError on any failure; the API key is never logged.
+    """
+    if not settings.resend_api_key or not settings.resend_from_email:
+        raise EmailDeliveryError("Email delivery is not configured.")
+
+    payload = {
+        "from": formataddr((settings.resend_from_name, settings.resend_from_email)),
+        "to": [to_email],
+        "subject": message["Subject"],
+        "text": message.get_content(),
+    }
+    req = urllib.request.Request(
+        RESEND_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": "Bearer %s" % settings.resend_api_key,
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status != 200:
+                raise EmailDeliveryError(
+                    "Email API returned status %s" % resp.status
+                )
+    except urllib.error.HTTPError as exc:
+        # Safe diagnostics only: status code and (shortened) provider message.
+        # The API key is sent in the Authorization header and never logged.
+        logger.warning(
+            "Email API delivery failed for %s: HTTP %s",
+            to_email,
+            exc.code,
+        )
+        raise EmailDeliveryError("Email delivery failed.") from exc
+    except (OSError, ValueError) as exc:
+        logger.warning("Email API delivery failed for %s: %s", to_email, exc)
+        raise EmailDeliveryError("Email delivery failed.") from exc
+
+
 def _deliver(message: EmailMessage, to_email: str) -> None:
-    """Send `message` over SMTP. Raises EmailDeliveryError on any failure."""
+    """Send `message`. Raises EmailDeliveryError on any failure.
+
+    Prefers Resend (HTTPS) when RESEND_API_KEY is set, then falls back to the
+    SMTP path. SMTP is disabled on Railway free/Hobby plans, so the HTTPS path
+    is the production delivery route.
+    """
+    if settings.resend_api_key:
+        _deliver_resend(message, to_email)
+        return
+
     if not settings.smtp_host or not settings.smtp_from_email:
         raise EmailDeliveryError("Email delivery is not configured.")
 

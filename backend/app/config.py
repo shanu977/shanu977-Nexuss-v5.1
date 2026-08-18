@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     smtp_from_email: str = Field(default="", validation_alias="SMTP_FROM_EMAIL")
     smtp_from_name: str = Field(default="", validation_alias="SMTP_FROM_NAME")
 
+    # Resend (HTTPS email API) settings. When RESEND_API_KEY is set, OTP emails
+    # are delivered over HTTPS via Resend instead of SMTP. HTTPS egress works on
+    # all Railway plans, whereas outbound SMTP (ports 25/465/587/2525) is blocked
+    # on free/Hobby plans. RESEND_FROM_EMAIL must be on a domain verified in the
+    # Resend dashboard (e.g. noreply@nexuss.in).
+    resend_api_key: str = Field(default="", validation_alias="RESEND_API_KEY")
+    resend_from_email: str = Field(default="", validation_alias="RESEND_FROM_EMAIL")
+    resend_from_name: str = Field(default="", validation_alias="RESEND_FROM_NAME")
+
     # Rate-limiter client identity. Default (false): X-Forwarded-For is trusted
     # ONLY when the socket peer is a private/internal address (i.e. behind a
     # proxy such as Railway's ingress), so a client reaching a public port

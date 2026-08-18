@@ -7,8 +7,11 @@ the mail server without leaking, and that a delivery failure is handled safely
 (no success reported, no valid OTP left behind, no secrets exposed).
 """
 
+import json
 import logging
 import smtplib
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -49,6 +52,84 @@ def test_send_otp_calls_email_sender_with_generated_code(client, mock_email_send
     res = client.post("/auth/otp/send", json={"email": EMAIL})
     assert res.status_code == 200
     assert mock_email_sender["emails"] == [{"to": EMAIL, "code": "555555"}]
+
+
+# ----------------------------------------------------- Resend (HTTPS) delivery
+
+
+@pytest.fixture
+def resend_settings(monkeypatch):
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test_123")
+    monkeypatch.setattr(
+        email_service.settings, "resend_from_email", "noreply@nexuss.in"
+    )
+    monkeypatch.setattr(email_service.settings, "resend_from_name", "Chatbot OTP")
+
+
+def test_resend_used_when_api_key_set(resend_settings, monkeypatch):
+    captured = {}
+
+    class FakeResp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        captured["method"] = req.get_method()
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.headers)
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    email_service.send_email(EMAIL, "Hello", "body text")
+    low_headers = {k.lower(): v for k, v in captured["headers"].items()}
+    assert captured["method"] == "POST"
+    assert captured["url"] == email_service.RESEND_API_URL
+    assert low_headers["authorization"] == "Bearer re_test_123"
+    assert captured["body"]["to"] == [EMAIL]
+    assert captured["body"]["from"] == "Chatbot OTP <noreply@nexuss.in>"
+    assert captured["body"]["subject"] == "Hello"
+    assert captured["body"]["text"] == "body text\n"
+
+
+def test_resend_failure_is_safe(resend_settings, monkeypatch):
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(
+            email_service.RESEND_API_URL, 403, "Forbidden", None, None
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+    with pytest.raises(email_service.EmailDeliveryError):
+        email_service.send_email("x@example.com", "s", "b")
+
+
+def test_resend_never_logs_api_key(resend_settings, monkeypatch, caplog):
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(
+            email_service.RESEND_API_URL, 401, "Unauthorized", None, None
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(email_service.EmailDeliveryError):
+            email_service.send_email("x@example.com", "s", "b")
+
+    assert "re_test_123" not in caplog.text
+
+
+def test_resend_rejects_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "")
+    monkeypatch.setattr(email_service.settings, "smtp_host", "")
+    with pytest.raises(email_service.EmailDeliveryError):
+        email_service.send_email("x@example.com", "s", "b")
 
 
 # ----------------------------------------------------- email content
