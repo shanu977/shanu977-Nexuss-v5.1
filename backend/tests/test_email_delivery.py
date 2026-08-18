@@ -109,7 +109,7 @@ def test_send_email_uses_smtp_credentials(monkeypatch, smtp_settings):
         def send_message(self, message):
             self.sent = message
 
-    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setattr(email_service, "_IPv4SMTP", FakeSMTP)
     FakeSMTP.instances.clear()
 
     email_service.send_email("bob@example.com", "Hello", "body")
@@ -157,7 +157,7 @@ def test_send_email_ssl_port_uses_smtp_ssl(monkeypatch, smtp_settings):
         def send_message(self, message):
             pass
 
-    monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTPSSL)
+    monkeypatch.setattr(email_service, "_IPv4SMTP_SSL", FakeSMTPSSL)
     FakeSMTPSSL.instances.clear()
 
     email_service.send_email("bob@example.com", "s", "b")
@@ -206,7 +206,7 @@ def test_smtp_failure_never_logs_credentials(monkeypatch, smtp_settings, caplog)
     def _raise(*args, **kwargs):
         raise smtplib.SMTPAuthenticationError(535, b"authentication failed")
 
-    monkeypatch.setattr(smtplib, "SMTP", _raise)
+    monkeypatch.setattr(email_service, "_IPv4SMTP", _raise)
 
     with caplog.at_level(logging.WARNING):
         with pytest.raises(email_service.EmailDeliveryError):

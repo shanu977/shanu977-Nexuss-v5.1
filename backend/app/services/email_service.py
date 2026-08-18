@@ -10,6 +10,7 @@ it is never logged, never persisted, and never returned by any endpoint.
 
 import logging
 import smtplib
+import socket
 from email.message import EmailMessage
 from email.utils import formataddr
 
@@ -23,6 +24,39 @@ SMTP_SSL_PORT = 465
 
 class EmailDeliveryError(Exception):
     """Raised when an email cannot be delivered. Never carries secrets."""
+
+
+class _IPv4SMTP(smtplib.SMTP):
+    """smtplib.SMTP that connects over IPv4 only.
+
+    smtp.gmail.com advertises AAAA (IPv6) records ahead of its A records.
+    In container runtimes without an IPv6 route (Railway, Docker, Render),
+    socket.create_connection tries the first (IPv6) address and raises
+    ``[Errno 101] Network is unreachable`` immediately instead of falling
+    back to IPv4. Resolving the host to an IPv4 address before connecting
+    avoids that, while the hostname is still used for EHLO and STARTTLS
+    server-name validation, so certificate checks are unchanged.
+    """
+
+    def _get_socket(self, host, port, timeout):
+        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        if not infos:
+            raise OSError("No IPv4 address available for %s" % host)
+        return socket.create_connection(
+            infos[0][4], timeout, self.source_address
+        )
+
+
+class _IPv4SMTP_SSL(smtplib.SMTP_SSL):
+    """smtplib.SMTP_SSL variant with the same IPv4-only connection rule."""
+
+    def _get_socket(self, host, port, timeout):
+        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        if not infos:
+            raise OSError("No IPv4 address available for %s" % host)
+        return socket.create_connection(
+            infos[0][4], timeout, self.source_address
+        )
 
 
 def _message(to_email: str, subject: str, body: str) -> EmailMessage:
@@ -51,9 +85,9 @@ def _deliver(message: EmailMessage, to_email: str) -> None:
 
     try:
         if settings.smtp_port == SMTP_SSL_PORT:
-            server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=15)
+            server = _IPv4SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=15)
         else:
-            server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15)
+            server = _IPv4SMTP(settings.smtp_host, settings.smtp_port, timeout=15)
         with server:
             server.ehlo()
             if settings.smtp_port != SMTP_SSL_PORT:
