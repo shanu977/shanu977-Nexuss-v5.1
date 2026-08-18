@@ -95,6 +95,7 @@ export default function ChatComposer({
             rows={Math.min(4, Math.max(1, Math.ceil(text.length / 80)))}
             disabled={blocked}
             aria-label="Message input"
+            style={{ outline: "none" }}
           />
         </div>
 
