@@ -12,7 +12,7 @@ export default function SidebarNavigation({ onNewChat }: SidebarNavigationProps)
       <button
         type="button"
         onClick={onNewChat}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-semibold text-primary-foreground shadow-xs transition-all hover:opacity-90 active:scale-[0.99] cursor-pointer"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-muted px-3.5 py-2.5 text-xs font-semibold text-foreground transition-all hover:bg-accent active:scale-[0.99] cursor-pointer"
       >
         <PlusIcon className="h-3.5 w-3.5" />
         <span>New chat</span>

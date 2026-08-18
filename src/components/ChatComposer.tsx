@@ -129,7 +129,7 @@ export default function ChatComposer({
             <button
               type="button"
               onClick={onStop}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-all hover:opacity-90 active:scale-95 cursor-pointer"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-foreground text-background transition-all hover:opacity-90 active:scale-95 cursor-pointer"
               title="Stop generating"
               aria-label="Stop generating"
             >
@@ -139,7 +139,7 @@ export default function ChatComposer({
             <button
               type="submit"
               disabled={!text.trim()}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-foreground text-background transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
               title="Send message"
               aria-label="Send message"
             >

@@ -1,8 +1,6 @@
 "use client";
 
 import { useChatStore } from "@/store";
-import { PROVIDER_LABELS } from "@/utils/providerLabels";
-import { getModelLabel, type ProviderType } from "@/types/providers";
 import { PanelLeftIcon } from "@/components/icons";
 
 interface ChatHeaderProps {
@@ -15,8 +13,6 @@ export default function ChatHeader({
   onToggleSidebar
 }: ChatHeaderProps) {
   const currentChat = useChatStore((s) => s.currentChat);
-  const provider = useChatStore((s) => s.provider);
-  const model = useChatStore((s) => s.model);
 
   return (
     <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3">
@@ -42,19 +38,6 @@ export default function ChatHeader({
               {currentChat?.title || "New conversation"}
             </span>
           </div>
-        </div>
-      </div>
-
-      {/* Right side status & active model pill */}
-      <div className="flex shrink-0 items-center gap-3">
-        <div className="hidden items-center gap-1.5 rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[11px] font-mono text-muted-foreground sm:flex">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Online</span>
-        </div>
-        <div className="flex min-w-0 items-center rounded-lg border border-border bg-muted/60 px-2.5 py-1 text-[11px] font-mono font-medium text-foreground">
-          <span className="max-w-[35vw] truncate sm:max-w-none">
-            {PROVIDER_LABELS[provider]} • {getModelLabel(provider as ProviderType, model)}
-          </span>
         </div>
       </div>
     </header>
