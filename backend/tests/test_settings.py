@@ -9,7 +9,7 @@ def test_settings_default_and_update(client):
     assert body["theme"] == "light"
     assert body["language"] == "en"
     assert body["provider"] == "groq"
-    assert body["model"] == "llama-3.3-70b-versatile"
+    assert body["model"] == "openai/gpt-oss-120b"
 
     # Adding settings again must not create duplicates
     get2 = client.get("/settings", headers=headers)
@@ -28,15 +28,15 @@ def test_settings_default_and_update(client):
 def test_settings_saves_model_choice(client):
     headers = auth_headers(client)
     put = client.put(
-        "/settings", headers=headers, json={"provider": "groq", "model": "llama-3.1-8b-instant"}
+        "/settings", headers=headers, json={"provider": "groq", "model": "openai/gpt-oss-20b"}
     )
     assert put.status_code == 200
-    assert put.json()["model"] == "llama-3.1-8b-instant"
+    assert put.json()["model"] == "openai/gpt-oss-20b"
 
     # Persists on a fresh read.
     get = client.get("/settings", headers=headers)
     assert get.status_code == 200
-    assert get.json()["model"] == "llama-3.1-8b-instant"
+    assert get.json()["model"] == "openai/gpt-oss-20b"
 
 
 def test_settings_rejects_model_not_supported_by_provider(client):
@@ -53,10 +53,8 @@ def test_settings_rejects_model_not_supported_by_provider(client):
 
 def test_settings_accepts_each_providers_new_models(client):
     headers = auth_headers(client)
-    # Groq's expanded lineup
+    # Groq's current lineup
     for model in [
-        "llama-3.1-8b-instant",
-        "llama-3.3-70b-versatile",
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
         "qwen/qwen3.6-27b",
@@ -103,6 +101,8 @@ def test_settings_rejects_removed_models(client):
     headers = auth_headers(client)
     # Models removed from the lineup must no longer be accepted.
     removed = [
+        ("groq", "llama-3.3-70b-versatile"),
+        ("groq", "llama-3.1-8b-instant"),
         ("gemini", "gemini-2.5-flash"),
         ("openrouter", "deepseek/deepseek-chat-v3"),
         ("openrouter", "qwen/qwen3"),
@@ -117,6 +117,46 @@ def test_settings_rejects_removed_models(client):
 def test_settings_requires_auth_headers(client):
     assert client.get("/settings").status_code == 401
     assert client.put("/settings", json={"theme": "dark"}).status_code == 401
+
+
+def test_settings_upgrades_retired_groq_model_on_read(client):
+    """A persisted selection that Groq retired is transparently upgraded to the
+    supported replacement on the next read, so existing chats keep working."""
+    from app.models import User, UserSettings
+    from tests.conftest_helpers import TestingSessionLocal
+
+    headers = auth_headers(client)
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            User(
+                id="test-uid-1",
+                firebase_uid="test-uid-1",
+                email="test@example.com",
+                name="Test User",
+                provider="firebase",
+                created_at=0,
+                updated_at=0,
+            )
+        )
+        db.add(
+            UserSettings(
+                user_id="test-uid-1",
+                theme="light",
+                language="en",
+                provider="groq",
+                model="llama-3.3-70b-versatile",
+                updated_at=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    get = client.get("/settings", headers=headers)
+    assert get.status_code == 200
+    assert get.json()["provider"] == "groq"
+    assert get.json()["model"] == "openai/gpt-oss-120b"
 
 
 def test_settings_rejects_unknown_fields(client):

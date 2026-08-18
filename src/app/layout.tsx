@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
@@ -10,6 +10,20 @@ export const metadata: Metadata = {
     template: "%s · Chatbot"
   },
   description: "Local AI chat app"
+};
+
+// Mobile-first viewport: no user scaling lock, safe-area insets are exposed
+// (viewport-fit=cover) and Chrome for Android resizes the layout viewport with
+// the software keyboard so the composer is never hidden behind it.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#171717" }
+  ]
 };
 
 export default function RootLayout({

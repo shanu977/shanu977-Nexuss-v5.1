@@ -7,6 +7,7 @@ from ..schemas.chat import ChatRequest, ChatResponse, FallbackAttempt
 from ..schemas.settings import (
     ALLOWED_MODELS,
     ALLOWED_PROVIDERS,
+    DEPRECATED_MODEL_REPLACEMENTS,
     VISION_CAPABLE_MODELS,
     VISION_MODELS,
 )
@@ -52,6 +53,10 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
         raise llm_service.UnsupportedProviderError()
 
     model = payload.model or settings.model
+    # A retired model id (e.g. a Groq model decommissioned by the provider)
+    # cannot be honored; upgrade it to the supported replacement so stored or
+    # stale explicit selections keep working instead of failing with a 404.
+    model = DEPRECATED_MODEL_REPLACEMENTS.get(model, model)
     if model not in ALLOWED_MODELS.get(provider, set()):
         if payload.model:
             # An explicitly selected model must never be silently swapped.
@@ -154,6 +159,10 @@ def handle_chat_stream(db: Session, user: User, payload: ChatRequest) -> Iterato
         raise llm_service.UnsupportedProviderError()
 
     model = payload.model or settings.model
+    # A retired model id (e.g. a Groq model decommissioned by the provider)
+    # cannot be honored; upgrade it to the supported replacement so stored or
+    # stale explicit selections keep working instead of failing with a 404.
+    model = DEPRECATED_MODEL_REPLACEMENTS.get(model, model)
     if model not in ALLOWED_MODELS.get(provider, set()):
         if payload.model:
             raise llm_service.BadRequestError(

@@ -4,10 +4,14 @@ ALLOWED_PROVIDERS = ("groq", "gemini", "openrouter")
 
 # Models the UI exposes per provider. The backend validates the combination
 # server-side so a request can never mix a provider with another's model.
+#
+# NOTE: Groq decommissioned llama-3.1-8b-instant and llama-3.3-70b-versatile
+# on 2026-08-16 (see console.groq.com/docs/deprecations). Requests for those
+# IDs now return 404. They are removed from ALLOWED_MODELS so they can no
+# longer be selected or served; persisted selections are upgraded to the
+# replacement via DEPRECATED_MODEL_REPLACEMENTS.
 ALLOWED_MODELS = {
     "groq": {
-        "llama-3.1-8b-instant",
-        "llama-3.3-70b-versatile",
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
         "qwen/qwen3.6-27b",
@@ -31,6 +35,15 @@ ALLOWED_MODELS = {
         "liquid/lfm2.5-1.2b-instruct:free",
         "openrouter/free",
     },
+}
+
+# Models Groq retired (requests now return 404) mapped to the replacements
+# Groq recommends (see console.groq.com/docs/deprecations). Applied when
+# resolving the model for a request and when reading persisted settings, so
+# existing stored selections keep working without manual re-selection.
+DEPRECATED_MODEL_REPLACEMENTS = {
+    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
 }
 
 # Server-side vision models used by the screen-share feature. When a user

@@ -51,8 +51,10 @@ export default function ChatHeader({
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
           <span>Online</span>
         </div>
-        <div className="rounded-lg border border-border bg-muted/60 px-2.5 py-1 text-[11px] font-mono font-medium text-foreground">
-          {PROVIDER_LABELS[provider]} • {getModelLabel(provider as ProviderType, model)}
+        <div className="flex min-w-0 items-center rounded-lg border border-border bg-muted/60 px-2.5 py-1 text-[11px] font-mono font-medium text-foreground">
+          <span className="max-w-[35vw] truncate sm:max-w-none">
+            {PROVIDER_LABELS[provider]} • {getModelLabel(provider as ProviderType, model)}
+          </span>
         </div>
       </div>
     </header>

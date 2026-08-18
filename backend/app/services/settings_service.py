@@ -3,12 +3,24 @@ from sqlalchemy.orm import Session
 
 from ..models import User, UserSettings
 from ..models.models import utc_now_ms
+from ..schemas.settings import DEPRECATED_MODEL_REPLACEMENTS
 
 DEFAULT_MODELS = {
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
     "gemini": "gemini-3.6-flash",
     "openrouter": "openai/gpt-oss-120b:free",
 }
+
+
+def _upgrade_deprecated_model(settings: UserSettings) -> bool:
+    """Replace a retired Groq model id stored in a user's settings with the
+    supported replacement. Returns True when the row was upgraded."""
+    replacement = DEPRECATED_MODEL_REPLACEMENTS.get(settings.model)
+    if replacement is None:
+        return False
+    settings.model = replacement
+    settings.updated_at = utc_now_ms()
+    return True
 
 
 def get_or_create_settings(db: Session, user: User) -> UserSettings:
@@ -24,6 +36,13 @@ def get_or_create_settings(db: Session, user: User) -> UserSettings:
             updated_at=utc_now_ms(),
         )
         db.add(settings)
+        db.commit()
+        db.refresh(settings)
+        return settings
+
+    # Lazy migration: upgrade any retired model id persisted before the
+    # provider removed it, so existing selections keep working automatically.
+    if _upgrade_deprecated_model(settings):
         db.commit()
         db.refresh(settings)
     return settings

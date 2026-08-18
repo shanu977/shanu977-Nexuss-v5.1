@@ -112,7 +112,7 @@ class UserSettings(Base):
     theme = Column(String, nullable=False, default="light")
     language = Column(String, nullable=False, default="en")
     provider = Column(String, nullable=False, default="groq")
-    model = Column(String, nullable=False, default="llama-3.3-70b-versatile")
+    model = Column(String, nullable=False, default="openai/gpt-oss-120b")
     updated_at = Column(BigInteger, nullable=False, default=utc_now_ms)
 
     user = relationship("User", back_populates="settings")

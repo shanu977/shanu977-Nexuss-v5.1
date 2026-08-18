@@ -90,7 +90,7 @@ class Settings(BaseSettings):
 
     # AI provider (server-side, dev). Never commit a real key.
     groq_api_key: str = Field(default="gsk_dev_default_key", validation_alias="GROQ_API_KEY")
-    ai_model: str = "llama-3.3-70b-versatile"
+    ai_model: str = "openai/gpt-oss-120b"
     groq_base_url: str = "https://api.groq.com/openai/v1"
     ai_max_tokens: int = 1024
     # Seconds a provider is skipped after a rate limit (used when the provider

@@ -461,7 +461,8 @@ function MessageContent({ content, isAssistant }: MessageContentProps) {
           remarkPlugins={[remarkGfm]}
           components={{
             code: CodeBlock,
-            pre: PreBlock
+            pre: PreBlock,
+            table: TableBlock
           }}
         >
           {content}
@@ -469,7 +470,18 @@ function MessageContent({ content, isAssistant }: MessageContentProps) {
       </div>
     );
   }
-  return <p className="whitespace-pre-wrap leading-relaxed">{content}</p>;
+  return <p className="whitespace-pre-wrap break-words leading-relaxed">{content}</p>;
+}
+
+function TableBlock(props: any) {
+  const { node, ...tableProps } = props;
+  // The `node` object is react-markdown plumbing and must never reach the DOM.
+  void node;
+  return (
+    <div className="my-3 overflow-x-auto rounded-lg border border-border">
+      <table {...tableProps} className="w-full text-left text-xs" />
+    </div>
+  );
 }
 
 function CodeBlock({ node, ...props }: any) {

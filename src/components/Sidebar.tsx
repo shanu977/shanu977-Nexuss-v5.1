@@ -101,6 +101,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
 
       {/* Sidebar Container with Smooth Slide Animation */}
       <aside
+        aria-hidden={!isOpen}
         className={`fixed inset-y-0 left-0 z-50 flex flex-col border-border bg-card text-card-foreground transition-all duration-300 ease-in-out lg:static lg:z-auto shrink-0 shadow-lg lg:shadow-none overflow-hidden ${
           isOpen
             ? "w-72 max-w-[85vw] border-r opacity-100 translate-x-0"

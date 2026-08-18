@@ -1,7 +1,7 @@
 export const PROVIDERS = {
   groq: {
     name: "Groq",
-    model: "llama-3.3-70b-versatile",
+    model: "openai/gpt-oss-120b",
     icon: "groq"
   },
   gemini: {
@@ -31,8 +31,6 @@ export interface ProviderModelOption {
 // backend/app/schemas/settings.py.
 export const PROVIDER_MODEL_OPTIONS: Record<ProviderType, readonly ProviderModelOption[]> = {
   groq: [
-    { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant", badge: "FREE" },
-    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile", badge: "FREE" },
     { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B", badge: "FREE" },
     { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B", badge: "FREE" },
     { id: "qwen/qwen3.6-27b", label: "Qwen 3.6 27B", badge: "FREE" },
@@ -59,7 +57,7 @@ export const PROVIDER_MODEL_OPTIONS: Record<ProviderType, readonly ProviderModel
 };
 
 export const DEFAULT_PROVIDER_MODELS: Record<ProviderType, string> = {
-  groq: "llama-3.3-70b-versatile",
+  groq: "openai/gpt-oss-120b",
   gemini: "gemini-3.6-flash",
   openrouter: "openai/gpt-oss-120b:free"
 };

@@ -97,7 +97,7 @@ def test_chat_stream_is_sse_with_chunks_then_usage(client, fake_stream):
     usage = events[-1]
     assert usage["usage"] == {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
     assert usage["provider"] == "groq"
-    assert usage["model"] == "llama-3.3-70b-versatile"
+    assert usage["model"] == "openai/gpt-oss-120b"
     assert usage["fallback_used"] is None
     assert [a["provider"] for a in usage["attempts"]] == ["groq"]
 

@@ -94,7 +94,7 @@ def test_chat_persists_successful_usage(client, fake_llm):
     rec = records[0]
     assert rec.status == "success"
     assert rec.provider == "groq"
-    assert rec.model == "llama-3.3-70b-versatile"
+    assert rec.model == "openai/gpt-oss-120b"
     assert rec.request_type == "chat"
     assert rec.attempt == 1
     assert rec.input_tokens == 10

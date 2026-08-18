@@ -28,7 +28,7 @@ function MainApp() {
 
   return (
     <Hydrate>
-      <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <div className="flex h-screen supports-[height:100dvh]:h-dvh overflow-hidden bg-background text-foreground">
         <Sidebar
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}

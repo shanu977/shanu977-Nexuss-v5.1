@@ -86,7 +86,7 @@ export default function ScreenSharePanel({ screenShare }: ScreenSharePanelProps)
                 autoPlay
                 playsInline
                 aria-label="Live screen share preview"
-                className="aspect-video w-full object-contain"
+                className="aspect-video w-full max-h-[40vh] object-contain lg:max-h-none"
               />
               {isStarting && (
                 <div className="flex items-center justify-center gap-2 bg-card py-3 text-[11px] font-mono text-muted-foreground">

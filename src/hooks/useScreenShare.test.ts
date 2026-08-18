@@ -172,6 +172,34 @@ describe("useScreenShare", () => {
     expect(result.current.error).toMatch(/not supported/i);
   });
 
+  it("reports support truthfully instead of faking it", () => {
+    const { result } = renderHook(() => useScreenShare());
+    expect(result.current.supported).toBe(true);
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {}
+    });
+    const unsupported = renderHook(() => useScreenShare());
+    expect(unsupported.result.current.supported).toBe(false);
+  });
+
+  it("explains the unsupported case in plain user-facing language", async () => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {}
+    });
+    const { result } = renderHook(() => useScreenShare());
+
+    await act(async () => {
+      await result.current.startSharing();
+    });
+
+    expect(result.current.supported).toBe(false);
+    expect(result.current.error).toMatch(/not supported by this browser\/device/i);
+    expect(result.current.error).toMatch(/desktop browser/i);
+  });
+
   it("changes screen by picking a new source and replacing the stream", async () => {
     const first = makeStream("VS Code");
     const second = makeStream("Chrome");

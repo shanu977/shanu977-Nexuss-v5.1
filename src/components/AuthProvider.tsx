@@ -14,7 +14,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
 
   if (!initialized) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-gray-900 text-white">
+      <div className="flex h-dvh w-dvh items-center justify-center bg-gray-900 text-white">
         <div className="flex flex-col items-center gap-4">
           <Spinner className="h-8 w-8 text-blue-500" />
           <p className="text-sm font-medium text-gray-400">Initializing session...</p>

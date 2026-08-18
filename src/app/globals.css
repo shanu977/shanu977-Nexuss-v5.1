@@ -130,6 +130,24 @@
   .animate-fade-in-up {
     animation: fade-in-up 220ms ease-out both;
   }
+
+  /* Safe-area insets (notched phones, home indicator, rounded corners).
+     Only meaningful with viewport-fit=cover. */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .pl-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+
+  .pr-safe {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
 }
 
 @keyframes message-in {
@@ -167,6 +185,41 @@
 :where(a, button, input, select, textarea, [role="button"]):focus-visible {
   outline: 2px solid hsl(var(--ring) / 0.7);
   outline-offset: 2px;
+}
+
+/* Chat markdown must never force the page to scroll horizontally on narrow
+   screens: break long unbroken strings, scale images, and keep tables inside a
+   locally scrollable container (the table itself sits in an overflow-x-auto
+   wrapper rendered by MessageList). */
+.prose {
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.prose img {
+  max-width: 100%;
+  height: auto;
+}
+
+.prose pre {
+  max-width: 100%;
+}
+
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.prose th,
+.prose td {
+  padding: 0.375rem 0.625rem;
+  border: 1px solid hsl(var(--border));
+  text-align: left;
+}
+
+.prose th {
+  background: hsl(var(--muted) / 0.6);
+  font-weight: 600;
 }
 
 ::-webkit-scrollbar {

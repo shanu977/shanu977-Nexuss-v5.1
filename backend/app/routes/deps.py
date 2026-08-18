@@ -132,7 +132,7 @@ def get_current_user(
             theme="light",
             language="en",
             provider="groq",
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             updated_at=utc_now_ms(),
         )
         db.add(settings)

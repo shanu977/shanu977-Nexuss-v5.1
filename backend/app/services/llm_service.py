@@ -37,7 +37,7 @@ PROVIDER_ENDPOINTS = {
 # Server-side default models per provider (used only when a user has not yet
 # chosen a model). Keys must match PROVIDER_ENDPOINTS.
 PROVIDER_DEFAULT_MODELS = {
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
     "gemini": "gemini-3.6-flash",
     "openrouter": "openai/gpt-oss-120b:free",
 }
@@ -180,7 +180,7 @@ def get_api_key() -> str:
 
 
 def get_model() -> str:
-    return settings.ai_model.strip() or "llama-3.3-70b-versatile"
+    return settings.ai_model.strip() or "openai/gpt-oss-120b"
 
 
 def resolve_endpoint(provider: str) -> str:

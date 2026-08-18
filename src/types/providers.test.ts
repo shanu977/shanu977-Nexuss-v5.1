@@ -81,7 +81,7 @@ describe("provider model catalog", () => {
   });
 
   it("getModelLabel falls back to the raw id for unknown models", () => {
-    expect(getModelLabel("groq", "llama-3.3-70b-versatile")).toContain("Llama");
+    expect(getModelLabel("groq", "openai/gpt-oss-120b")).toContain("GPT-OSS");
     expect(getModelLabel("groq", "not-a-real-model")).toBe("not-a-real-model");
   });
 });

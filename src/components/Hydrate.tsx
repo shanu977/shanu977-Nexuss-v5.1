@@ -22,7 +22,7 @@ export default function Hydrate({ children }: { children: React.ReactNode }) {
 
   if (!ready) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3">
+      <div className="flex h-dvh flex-col items-center justify-center gap-3">
         <Spinner className="h-8 w-8 text-primary" />
         <p className="text-sm text-muted-foreground">Loading your chats...</p>
       </div>

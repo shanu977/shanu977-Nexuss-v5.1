@@ -59,10 +59,8 @@ export default function AdminRootLayout({ children }: { children: ReactNode }) {
   if (access === "checking") {
     return (
       <div
-        className="admin-scope"
+        className="admin-scope admin-viewport"
         style={{
-          height: "100vh",
-          width: "100vw",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -82,10 +80,8 @@ export default function AdminRootLayout({ children }: { children: ReactNode }) {
   if (access === "denied") {
     return (
       <div
-        className="admin-scope"
+        className="admin-scope admin-viewport"
         style={{
-          height: "100vh",
-          width: "100vw",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",

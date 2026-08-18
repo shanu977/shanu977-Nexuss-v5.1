@@ -5,6 +5,13 @@ export interface UseScreenShare {
   isActive: boolean;
   /** True while the native screen/window selector is open. */
   isStarting: boolean;
+  /**
+   * Whether the current browser/device can actually capture the screen (the
+   * native getDisplayMedia API exists, which browsers only expose in secure
+   * contexts). On browsers/devices without it (e.g. iOS Safari) we never fake
+   * support — the UI surfaces a clear explanation instead.
+   */
+  supported: boolean;
   /** User-friendly error message (cancelled, denied, unsupported, ...). */
   error: string | null;
   clearError: () => void;
@@ -44,6 +51,16 @@ export function useScreenShare(): UseScreenShare {
   const [error, setError] = useState<string | null>(null);
   const [selectedSourceName, setSelectedSourceName] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  // Computed once. `getDisplayMedia` is only ever exposed in secure contexts,
+  // so its mere presence is the honest capability signal: browsers/devices
+  // without it (e.g. iOS Safari) cannot capture the screen, and we never fake
+  // support.
+  const [supported] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      typeof navigator !== "undefined" &&
+      !!navigator.mediaDevices?.getDisplayMedia
+  );
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -118,7 +135,9 @@ export function useScreenShare(): UseScreenShare {
       typeof navigator === "undefined" ||
       !navigator.mediaDevices?.getDisplayMedia
     ) {
-      setError("Screen sharing is not supported in this browser.");
+      setError(
+        "Screen sharing is not supported by this browser/device. Please use a supported desktop browser for screen sharing."
+      );
       return null;
     }
     try {
@@ -215,6 +234,7 @@ export function useScreenShare(): UseScreenShare {
   return {
     isActive,
     isStarting,
+    supported,
     error,
     selectedSourceName,
     isExpanded,

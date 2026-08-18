@@ -66,7 +66,7 @@ function streamOf(
       type: "usage",
       usage: opts.usage ?? { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
       provider: opts.provider ?? "groq",
-      model: opts.model ?? "llama-3.3-70b-versatile",
+      model: opts.model ?? "openai/gpt-oss-120b",
       fallback_used: opts.fallback_used ?? null,
       attempts: opts.attempts ?? []
     } as ChatStreamEvent;
@@ -109,7 +109,7 @@ beforeEach(async () => {
     chats: [],
     messages: [],
     provider: "groq",
-    model: "llama-3.3-70b-versatile",
+    model: "openai/gpt-oss-120b",
     loading: false,
     error: null,
     isStreaming: false,
@@ -194,7 +194,7 @@ describe("local chat persistence", () => {
 
     const cs = useChatStore.getState();
     expect(cs.provider).toBe("groq");
-    expect(cs.model).toBe("llama-3.3-70b-versatile");
+    expect(cs.model).toBe("openai/gpt-oss-120b");
   });
 });
 
@@ -377,7 +377,7 @@ describe("sendMessageStream", () => {
         message: "Hello there",
         history: [],
         provider: "groq",
-        model: "llama-3.3-70b-versatile"
+        model: "openai/gpt-oss-120b"
       })
     );
 
@@ -475,7 +475,7 @@ describe("provider/model selection", () => {
     useChatStore.getState().setModel("gemini-3.6-flash");
     const cs = useChatStore.getState();
     expect(cs.provider).toBe("groq");
-    expect(cs.model).toBe("llama-3.3-70b-versatile");
+    expect(cs.model).toBe("openai/gpt-oss-120b");
   });
 
   it("sendMessageStream sends the exact selected model to the backend", async () => {
@@ -501,7 +501,7 @@ describe("fallback usage tracking", () => {
     const attempts: FallbackAttempt[] = [
       {
         provider: "groq",
-        model: "llama-3.3-70b-versatile",
+        model: "openai/gpt-oss-120b",
         attempt: 1,
         status: "failed",
         http_status: 429,
@@ -565,7 +565,7 @@ describe("fallback usage tracking", () => {
     const failedAttempts: FallbackAttempt[] = [
       {
         provider: "groq",
-        model: "llama-3.3-70b-versatile",
+        model: "openai/gpt-oss-120b",
         attempt: 1,
         status: "failed",
         http_status: 429,
@@ -618,7 +618,7 @@ describe("fallback usage tracking", () => {
     const fallbackAttempts: FallbackAttempt[] = [
       {
         provider: "groq",
-        model: "llama-3.3-70b-versatile",
+        model: "openai/gpt-oss-120b",
         attempt: 1,
         status: "failed",
         http_status: 429,

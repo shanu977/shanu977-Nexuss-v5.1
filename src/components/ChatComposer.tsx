@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Spinner from "@/components/Spinner";
 import { useChatStore } from "@/store";
+import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { PROVIDER_LABELS } from "@/utils/providerLabels";
 import {
   getModelLabel,
@@ -49,6 +50,10 @@ export default function ChatComposer({
 
   const blocked = !!loading || !!disabled;
 
+  // Space reserved at the bottom of the composer for the on-screen keyboard
+  // (iOS Safari) plus the home-indicator safe area on notched devices.
+  const keyboardInset = useKeyboardInset();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const content = text.trim();
@@ -65,7 +70,17 @@ export default function ChatComposer({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="shrink-0 bg-background p-3 sm:p-4">
+    <form
+      onSubmit={handleSubmit}
+      className="shrink-0 bg-background p-3 sm:p-4"
+      style={
+        keyboardInset > 0
+          ? {
+              paddingBottom: `calc(${keyboardInset}px + env(safe-area-inset-bottom, 0px))`
+            }
+          : undefined
+      }
+    >
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
         {/* Floating Composer Container */}
         <div className="flex flex-col rounded-3xl border border-border bg-card p-2.5 shadow-lg transition-all duration-150">
@@ -106,7 +121,7 @@ export default function ChatComposer({
             <button
               type="submit"
               disabled={blocked || !text.trim()}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
               title="Send message"
               aria-label="Send message"
             >
@@ -174,7 +189,7 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
         aria-expanded={open}
         aria-label="Add attachment"
         title="Add attachment"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
       >
         <PlusIcon className="h-4 w-4" />
       </button>
@@ -191,7 +206,7 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
             type="button"
             role="menuitem"
             onClick={handleOpenWorkspace}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs text-foreground transition-colors hover:bg-muted cursor-pointer"
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs text-foreground transition-colors hover:bg-muted cursor-pointer"
           >
             <FolderIcon className="h-4 w-4 shrink-0 text-primary" />
             <span className="min-w-0 flex-1">Path</span>
@@ -200,7 +215,7 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
             type="button"
             role="menuitem"
             onClick={handleShareScreen}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs text-foreground transition-colors hover:bg-muted cursor-pointer"
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs text-foreground transition-colors hover:bg-muted cursor-pointer"
           >
             <MonitorIcon className="h-4 w-4 shrink-0 text-primary" />
             Share Screen

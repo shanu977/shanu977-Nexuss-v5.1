@@ -78,7 +78,7 @@ def test_primary_succeeds_without_fallback(client, fake_llm, mock_test_key):
 
     assert data["reply"] == "Hello from the AI!"
     assert data["provider"] == "groq"
-    assert data["model"] == "llama-3.3-70b-versatile"
+    assert data["model"] == "openai/gpt-oss-120b"
     assert data["fallback_used"] is None
 
     attempts = data["attempts"]
@@ -376,7 +376,7 @@ def test_saved_provider_and_model_never_change_after_fallback(client, fake_llm, 
     put = client.put(
         "/settings",
         headers=headers,
-        json={"provider": "groq", "model": "llama-3.3-70b-versatile"},
+        json={"provider": "groq", "model": "qwen/qwen3.6-27b"},
     )
     assert put.status_code == 200
 
@@ -387,10 +387,10 @@ def test_saved_provider_and_model_never_change_after_fallback(client, fake_llm, 
     assert resp.json()["provider"] == "openrouter"
 
     # Saved settings are untouched: the response records the actual provider,
-    # but the persisted selection is still Groq + llama-3.3-70b-versatile.
+    # but the persisted selection is still Groq + qwen/qwen3.6-27b.
     get = client.get("/settings", headers=headers)
     assert get.json()["provider"] == "groq"
-    assert get.json()["model"] == "llama-3.3-70b-versatile"
+    assert get.json()["model"] == "qwen/qwen3.6-27b"
 
 
 # --------------------------------------------------------------- usage detail

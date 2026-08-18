@@ -153,4 +153,37 @@ describe("MessageList streaming", () => {
     expect(screen.getByText("Nexuss is thinking...")).toBeInTheDocument();
     expect(container.querySelector(".animate-pulse")).not.toBeNull();
   });
+
+  it("wraps markdown tables in a locally scrollable container", () => {
+    const asstMsg = makeMessage(
+      "a1",
+      "c1",
+      "assistant",
+      "| A | B |\n|---|---|\n| 1 | 2 |"
+    );
+
+    const { container } = renderList({
+      messages: [asstMsg],
+      isStreaming: false,
+      streamingMessageId: null
+    });
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    // The <table> must live inside an overflow-x-auto wrapper so wide tables
+    // scroll inside the message instead of forcing the page to scroll
+    // horizontally on narrow/mobile viewports.
+    const table = container.querySelector("table");
+    const wrapper = table?.closest(".overflow-x-auto");
+    expect(wrapper).not.toBeNull();
+  });
+
+  it("breaks long user-message words so they never overflow the viewport", () => {
+    const longWord = `https://example.com/${"a".repeat(200)}`;
+    const userMsg = makeMessage("u1", "c1", "user", longWord);
+
+    const { container } = renderList({ messages: [userMsg] });
+
+    // The plain user bubble carries the responsive word-break utility.
+    expect(container.querySelector("p.break-words")).not.toBeNull();
+  });
 });

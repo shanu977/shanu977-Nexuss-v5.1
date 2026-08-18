@@ -47,7 +47,7 @@ def test_chat_returns_reply(client, fake_llm):
     assert data["reply"] == "Hello from the AI!"
     # The response echoes the exact provider/model used, matching the indicator.
     assert data["provider"] == "groq"
-    assert data["model"] == "llama-3.3-70b-versatile"
+    assert data["model"] == "openai/gpt-oss-120b"
 
     # Context sent to the LLM: system + new user message.
     assert fake_llm["messages"][-1] == {"role": "user", "content": "Hi there"}
@@ -198,6 +198,20 @@ def test_chat_rejects_unsupported_provider_override(client, fake_llm):
     headers = auth_headers(client)
     resp = client.post("/chat", headers=headers, json={"message": "hi", "provider": "bogus"})
     assert resp.status_code == 400
+
+
+def test_chat_upgrades_retired_groq_model_override(client, fake_llm):
+    """An explicit selection of a Groq model the provider retired is upgraded
+    to the supported replacement instead of failing with a 404."""
+    headers = auth_headers(client)
+    resp = client.post(
+        "/chat",
+        headers=headers,
+        json={"message": "hi", "provider": "groq", "model": "llama-3.3-70b-versatile"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["provider"] == "groq"
+    assert resp.json()["model"] == "openai/gpt-oss-120b"
 
 
 # ------------------------------------------------------ screen-share analysis

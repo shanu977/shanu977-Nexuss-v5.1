@@ -8,7 +8,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div style={{ display: "flex", height: "100vh", width: "100%", overflow: "hidden", backgroundColor: "var(--bg-app)" }}>
+    <div className="admin-viewport" style={{ display: "flex", width: "100%", overflow: "hidden", backgroundColor: "var(--bg-app)" }}>
       <div className="admin-desktop-sidebar" style={{ height: "100%" }}>
         <AdminSidebar />
       </div>

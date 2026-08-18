@@ -54,6 +54,15 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Full-viewport shells (checking/denied screens and the app frame). Uses
+   100vh as a fallback and 100dvh where supported so mobile browser chrome
+   never leaves dead space or clips the footer. */
+.admin-scope .admin-viewport {
+  height: 100vh;
+  height: 100dvh;
+  width: 100vw;
+}
+
 .admin-scope *,
 .admin-scope *::before,
 .admin-scope *::after {
