@@ -82,8 +82,9 @@ export default function ChatComposer({
       }
     >
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-        {/* Floating Composer Container */}
-        <div className="flex flex-col rounded-3xl border border-border bg-card p-2.5 shadow-lg transition-all duration-150">
+        {/* Typing box — borderless with a soft, subtle shadow. ONLY this area
+            gets elevation; the controls bar below stays flat and unchanged. */}
+        <div className="flex flex-col rounded-3xl bg-card p-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_6px_20px_rgba(0,0,0,0.05)] transition-all duration-150 focus-within:shadow-[0_1px_2px_rgba(0,0,0,0.06),0_6px_24px_rgba(0,0,0,0.08)]">
           <textarea
             ref={textareaRef}
             value={text}
@@ -95,43 +96,43 @@ export default function ChatComposer({
             disabled={blocked}
             aria-label="Message input"
           />
+        </div>
 
-          {/* Composer Footer Bar */}
-          <div className="mt-1 flex items-center justify-between gap-2 border-t border-border/80 px-2 pt-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <AttachMenu
-                onStartScreenShare={onStartScreenShare}
-                onOpenWorkspace={onOpenWorkspace}
+        {/* Composer Controls Bar — unchanged, no shadow/border */}
+        <div className="flex items-center justify-between gap-2 px-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <AttachMenu
+              onStartScreenShare={onStartScreenShare}
+              onOpenWorkspace={onOpenWorkspace}
+            />
+            <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+              <ModelSelector
+                provider={provider}
+                model={model}
+                disabled={blocked}
               />
-              <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-                <ModelSelector
-                  provider={provider}
-                  model={model}
-                  disabled={blocked}
-                />
-                {fallbackNotice && (
-                  <span className="truncate text-[10px] font-mono text-amber-500 font-medium">
-                    {fallbackNotice}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Send Button */}
-            <button
-              type="submit"
-              disabled={blocked || !text.trim()}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
-              title="Send message"
-              aria-label="Send message"
-            >
-              {loading ? (
-                <Spinner className="h-4 w-4" />
-              ) : (
-                <SendIcon className="h-4 w-4" />
+              {fallbackNotice && (
+                <span className="truncate text-[10px] font-mono text-amber-500 font-medium">
+                  {fallbackNotice}
+                </span>
               )}
-            </button>
+            </div>
           </div>
+
+          {/* Send Button */}
+          <button
+            type="submit"
+            disabled={blocked || !text.trim()}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
+            title="Send message"
+            aria-label="Send message"
+          >
+            {loading ? (
+              <Spinner className="h-4 w-4" />
+            ) : (
+              <SendIcon className="h-4 w-4" />
+            )}
+          </button>
         </div>
 
         {/* Shortcuts notice */}
