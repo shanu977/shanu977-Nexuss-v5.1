@@ -168,7 +168,7 @@ export default function MessageList({
     return (
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col items-center justify-center px-6 py-12 text-center">
         {/* Emblem */}
-        <div className="relative mb-6 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-card shadow-md">
+        <div className="relative mb-6 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-card">
           <img
             src="/nexuss-logo.png"
             alt="NEXUSS Logo"
@@ -188,7 +188,7 @@ export default function MessageList({
             <button
               key={item.title}
               onClick={() => void onSendSuggestion?.(item.prompt)}
-              className="flex flex-col justify-between rounded-xl border border-border bg-card p-3.5 text-left shadow-xs transition-all duration-150 hover:bg-muted/70 hover:border-ring/30 group cursor-pointer"
+              className="flex flex-col justify-between rounded-xl border border-border bg-card p-3.5 text-left transition-all duration-150 hover:bg-muted/70 hover:border-ring/30 group cursor-pointer"
             >
               <div className="mb-1.5 flex items-center gap-2">
                 <span className="text-sm">{item.icon}</span>
@@ -230,10 +230,10 @@ export default function MessageList({
 
         {loading && !isStreaming && (
           <div className="flex items-center gap-3 self-start max-w-[90%]">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card border border-border shadow-xs">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card border border-border">
               <img src="/nexuss-logo.png" alt="NEXUSS" className="w-4 h-4 object-contain" />
             </div>
-            <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3 shadow-xs">
+            <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3">
               <ThinkingIndicator />
             </div>
           </div>
@@ -271,14 +271,14 @@ const MessageItem = memo(function MessageItem(props: MessageActionProps) {
       }`}
     >
       {isAssistant && (
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card border border-border shadow-xs mt-1">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card border border-border mt-1">
           <img src="/nexuss-logo.png" alt="NEXUSS" className="w-4 h-4 object-contain" />
         </div>
       )}
 
       <div className="flex min-w-0 max-w-[85%] flex-col">
         {isEditing && !isAssistant ? (
-          <div className="rounded-2xl rounded-tr-sm border border-border bg-card p-3 shadow-xs">
+          <div className="rounded-2xl rounded-tr-sm border border-border bg-card p-3">
             <textarea
               value={draft}
               onChange={(e) => onDraftChange(e.target.value)}
@@ -322,7 +322,7 @@ const MessageItem = memo(function MessageItem(props: MessageActionProps) {
             className={
               isAssistant
                 ? "text-xs leading-relaxed text-foreground"
-                : "rounded-2xl rounded-tr-sm border border-border bg-secondary px-4 py-3 text-xs leading-relaxed text-secondary-foreground shadow-xs"
+                : "rounded-2xl rounded-tr-sm border border-border bg-secondary px-4 py-3 text-xs leading-relaxed text-secondary-foreground"
             }
           >
             {/* While waiting for the first content chunk the streaming assistant
@@ -507,7 +507,7 @@ function PreBlock({ children }: any) {
     <div className="relative group my-3">
       <button
         onClick={handleCopy}
-        className="absolute right-2.5 top-2.5 rounded bg-background border border-border px-2 py-1 text-[10px] font-mono text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 cursor-pointer shadow-xs"
+        className="absolute right-2.5 top-2.5 rounded bg-background border border-border px-2 py-1 text-[10px] font-mono text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 cursor-pointer"
       >
         {copied ? "✓ Copied" : "Copy"}
       </button>

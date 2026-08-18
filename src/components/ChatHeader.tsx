@@ -19,13 +19,13 @@ export default function ChatHeader({
   const model = useChatStore((s) => s.model);
 
   return (
-    <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3 shadow-xs">
+    <header className="flex shrink-0 items-center justify-between border-b border-border bg-card px-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
         {/* Sidebar Toggle Button */}
         <button
           type="button"
           onClick={onToggleSidebar}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer shadow-2xs"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
           title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
           aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
         >

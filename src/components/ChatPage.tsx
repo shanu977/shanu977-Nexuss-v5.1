@@ -55,7 +55,7 @@ export default function ChatPage({
   const openWorkspacePanel = () => useWorkspaceStore.getState().openPanel();
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-background text-foreground font-sans transition-colors duration-200 w-full">
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-background text-foreground font-sans transition-colors duration-200 w-full dark:bg-[#0f0f0f]">
       <ChatHeader
         sidebarOpen={sidebarOpen}
         onToggleSidebar={handleSidebarToggle}

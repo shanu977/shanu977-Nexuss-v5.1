@@ -72,7 +72,7 @@ export default function ChatComposer({
   return (
     <form
       onSubmit={handleSubmit}
-      className="shrink-0 bg-background p-3 sm:p-4"
+      className="shrink-0 bg-background p-3 sm:p-4 dark:bg-[#0f0f0f]"
       style={
         keyboardInset > 0
           ? {
@@ -82,9 +82,9 @@ export default function ChatComposer({
       }
     >
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-        {/* Typing box — borderless with a soft, subtle shadow. ONLY this area
-            gets elevation; the controls bar below stays flat and unchanged. */}
-        <div className="flex flex-col rounded-3xl bg-card p-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_6px_20px_rgba(0,0,0,0.05)] transition-all duration-150 focus-within:shadow-[0_1px_2px_rgba(0,0,0,0.06),0_6px_24px_rgba(0,0,0,0.08)]">
+        {/* Typing box — borderless and flat, no shadow. ONLY this area gets
+            the card background; the controls bar below stays flat. */}
+        <div className="flex flex-col rounded-3xl bg-card p-2.5 transition-all duration-150">
           <textarea
             ref={textareaRef}
             value={text}
@@ -124,7 +124,7 @@ export default function ChatComposer({
           <button
             type="submit"
             disabled={blocked || !text.trim()}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
             title="Send message"
             aria-label="Send message"
           >
@@ -138,7 +138,6 @@ export default function ChatComposer({
 
         {/* Shortcuts notice */}
         <p className="text-center text-[10px] font-mono text-muted-foreground opacity-80">
-          Enter to send • Shift+Enter for newline
         </p>
       </div>
     </form>
