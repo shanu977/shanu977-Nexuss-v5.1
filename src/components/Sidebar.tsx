@@ -8,8 +8,13 @@ import DeleteModal from "@/components/DeleteModal";
 import Settings from "@/components/Settings";
 import SidebarNavigation from "@/components/SidebarNavigation";
 import RecentChats from "@/components/RecentChats";
-import UserMenu from "@/components/UserMenu";
-import { SearchIcon, PanelLeftIcon } from "@/components/icons";
+import UserProfile from "@/components/UserProfile";
+import {
+  SearchIcon,
+  PanelLeftIcon,
+  SettingsIcon,
+  LogOutIcon
+} from "@/components/icons";
 import { Chat } from "@/types";
 
 interface SidebarProps {
@@ -162,14 +167,30 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           onNewChat={() => void handleNewChat()}
         />
 
-        {/* Footer: Settings + User Menu */}
+        {/* Footer: permanent Settings/Log out actions + user profile */}
         <div className="border-t border-border p-2.5 shrink-0">
-          <UserMenu
-            email={userEmail}
-            avatarChar={avatarChar}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onSignOut={() => void signOut()}
-          />
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
+              title="Settings"
+            >
+              <SettingsIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span>Settings</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 cursor-pointer"
+              title="Log out"
+            >
+              <LogOutIcon className="h-4 w-4 shrink-0" />
+              <span>Log out</span>
+            </button>
+          </div>
+          <div className="mx-1 my-2 h-px bg-border" />
+          <UserProfile email={userEmail} avatarChar={avatarChar} />
         </div>
       </aside>
 
