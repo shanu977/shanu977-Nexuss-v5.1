@@ -7,7 +7,6 @@ import RenameModal from "@/components/RenameModal";
 import DeleteModal from "@/components/DeleteModal";
 import Settings from "@/components/Settings";
 import SidebarNavigation from "@/components/SidebarNavigation";
-import PinnedList from "@/components/PinnedList";
 import RecentChats from "@/components/RecentChats";
 import UserMenu from "@/components/UserMenu";
 import { SearchIcon, PanelLeftIcon } from "@/components/icons";
@@ -151,13 +150,6 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         <SidebarNavigation onNewChat={() => void handleNewChat()} />
 
         <div className="mx-3 mt-3 h-px shrink-0 bg-border" />
-
-        {/* Pinned (empty until a pinning feature exists) */}
-        <PinnedList
-          chats={[]}
-          currentChatId={currentChat?.id ?? null}
-          onSelect={handleSelectChat}
-        />
 
         {/* Recent conversations (scrolls independently) */}
         <RecentChats

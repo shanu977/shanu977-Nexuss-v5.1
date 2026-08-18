@@ -74,43 +74,6 @@ export function ChatIcon({ className }: IconProps) {
   );
 }
 
-export function ImageIcon({ className }: IconProps) {
-  return (
-    <Icon className={className}>
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <circle cx="8.5" cy="8.5" r="1.5" />
-      <path d="m21 15-5-5L5 21" />
-    </Icon>
-  );
-}
-
-export function LibraryIcon({ className }: IconProps) {
-  return (
-    <Icon className={className}>
-      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-    </Icon>
-  );
-}
-
-export function ClockIcon({ className }: IconProps) {
-  return (
-    <Icon className={className}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 3" />
-    </Icon>
-  );
-}
-
-export function PuzzleIcon({ className }: IconProps) {
-  return (
-    <Icon className={className}>
-      <path d="M19.5 12.5 21 14a2 2 0 0 1 0 2.8l-4.2 4.2a2 2 0 0 1-2.8 0l-1.5-1.5a.9.9 0 0 0-1.5.5 2 2 0 0 1-4 0V20" />
-      <path d="M3 10.5V8a2 2 0 0 1 2-2h2.5a2 2 0 0 0 2-2V2" />
-      <path d="M9 2h2a2 2 0 0 1 2 2v1.5a2 2 0 0 0 2 2H17a2 2 0 0 1 2 2v.5" />
-    </Icon>
-  );
-}
-
 export function FolderIcon({ className }: IconProps) {
   return (
     <Icon className={className}>
@@ -151,15 +114,6 @@ export function ChevronDownIcon({ className }: IconProps) {
   return (
     <Icon className={className}>
       <path d="m6 9 6 6 6-6" />
-    </Icon>
-  );
-}
-
-export function PinIcon({ className }: IconProps) {
-  return (
-    <Icon className={className}>
-      <path d="M12 17v5" />
-      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
     </Icon>
   );
 }

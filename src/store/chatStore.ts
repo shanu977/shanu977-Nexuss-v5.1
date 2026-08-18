@@ -156,6 +156,23 @@ async function requestAssistant(
     fallbackNotice: null
   });
 
+  // Create the streaming assistant message immediately (empty content) so the
+  // UI can show the thinking indicator in place while waiting for the first
+  // visible content chunk. It is updated in place as chunks arrive and only
+  // persisted once with the final filtered text.
+  useChatStore.setState((s) => ({
+    messages: [
+      ...s.messages,
+      {
+        id: asstId,
+        chatId: chat.id,
+        role: "assistant" as const,
+        content: "",
+        timestamp: Date.now()
+      }
+    ]
+  }));
+
   let usageEvent: ChatStreamUsageEvent | null = null;
   let errorEvent: ChatStreamErrorEvent | null = null;
   let display = "";
@@ -182,30 +199,16 @@ async function requestAssistant(
     // without the user approving it first (the validated tool layer enforces
     // the workspace boundary).
     const reasoner = new ReasoningFilter();
-    let assistantAdded = false;
 
-    const appendOrUpdate = () => {
-      if (!assistantAdded) {
-        assistantAdded = true;
-        useChatStore.setState((s) => ({
-          messages: [
-            ...s.messages,
-            {
-              id: asstId,
-              chatId: chat.id,
-              role: "assistant" as const,
-              content: display,
-              timestamp: Date.now()
-            }
-          ]
-        }));
-      } else {
-        useChatStore.setState((s) => ({
-          messages: s.messages.map((m) =>
-            m.id === asstId ? { ...m, content: display } : m
-          )
-        }));
-      }
+    // Incremental in-place update: only the streaming message object is
+    // replaced (its content grows); every other message keeps its identity so
+    // memoized MessageItems do not re-render on every token.
+    const updateMessage = () => {
+      useChatStore.setState((s) => ({
+        messages: s.messages.map((m) =>
+          m.id === asstId ? { ...m, content: display } : m
+        )
+      }));
     };
 
     for await (const event of events) {
@@ -213,7 +216,7 @@ async function requestAssistant(
         const visible = reasoner.push(event.content);
         if (!visible) continue;
         display += visible;
-        appendOrUpdate();
+        updateMessage();
       } else if (event.type === "usage") {
         usageEvent = event;
         if (event.fallback_used) {
@@ -229,7 +232,7 @@ async function requestAssistant(
     const tail = reasoner.flush();
     if (tail) {
       display += tail;
-      appendOrUpdate();
+      updateMessage();
     }
 
     // Record usage for EVERY attempted request (primary + fallbacks). The
@@ -407,6 +410,16 @@ async function requestAssistant(
     }
     useChatStore.setState({ error: getErrorMessage(e) });
   } finally {
+    // If the stream produced no visible content at all (the request itself
+    // threw before any chunk), drop the empty placeholder so no blank
+    // assistant bubble lingers next to the error.
+    const settled = useChatStore.getState();
+    const asst = settled.messages.find((m) => m.id === asstId);
+    if (asst && asst.content.trim() === "") {
+      useChatStore.setState((s) => ({
+        messages: s.messages.filter((m) => m.id !== asstId)
+      }));
+    }
     useChatStore.setState({
       loading: false,
       isStreaming: false,
@@ -664,13 +677,11 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
         timestamp: Date.now()
       };
 
-      // Persist the user's message locally and show it immediately. Chat
-      // history lives in IndexedDB; the backend only receives the last 99
-      // prior turns for context and never stores anything.
-      await db.messages.add(userMsg);
+      // Show the user's message immediately; persistence runs right after so a
+      // reload mid-request still keeps history intact. Chat history lives in
+      // IndexedDB; the backend only receives the last 99 prior turns for
+      // context and never stores anything.
       const updatedAt = Date.now();
-      await db.chats.update(currentChat.id, { updatedAt });
-      // Clear any previous fallback notice before the new request.
       set((state) => ({
         messages: [...state.messages, userMsg],
         loading: true,
@@ -685,6 +696,8 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
           c.id === currentChat!.id ? { ...c, updatedAt } : c
         )
       }));
+      await db.messages.add(userMsg);
+      await db.chats.update(currentChat.id, { updatedAt });
 
       const history = get()
         .messages.filter(

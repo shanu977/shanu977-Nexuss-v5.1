@@ -136,4 +136,21 @@ describe("MessageList streaming", () => {
 
     expect(screen.getByText("Nexuss is thinking...")).toBeInTheDocument();
   });
+
+  it("shows the thinking indicator inside the streaming assistant message until the first chunk", () => {
+    const userMsg = makeMessage("u1", "c1", "user", "Explain hooks");
+    const asstMsg = makeMessage("a1", "c1", "assistant", "");
+
+    const { container } = renderList({
+      messages: [userMsg, asstMsg],
+      loading: true,
+      isStreaming: true,
+      streamingMessageId: "a1"
+    });
+
+    // The empty streaming message shows the thinking indicator in place; no
+    // blinking cursor yet because no content has arrived.
+    expect(screen.getByText("Nexuss is thinking...")).toBeInTheDocument();
+    expect(container.querySelector(".animate-pulse")).not.toBeNull();
+  });
 });

@@ -128,8 +128,13 @@ describe("chat streaming", () => {
     const asstId = useChatStore.getState().streamingMessageId!;
     expect(useChatStore.getState().isStreaming).toBe(true);
 
-    // Before the first chunk there is no assistant message yet.
-    expect(useChatStore.getState().messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+    // The streaming assistant message is created immediately with empty
+    // content; the first visible chunk fills it in place.
+    const assistantMsgs = useChatStore
+      .getState()
+      .messages.filter((m) => m.role === "assistant");
+    expect(assistantMsgs).toHaveLength(1);
+    expect(assistantMsgs[0].content).toBe("");
 
     step.next();
     await vi.waitFor(() => expect(lastMessage().content).toBe("Hello"));
@@ -174,12 +179,16 @@ describe("chat streaming", () => {
       expect(useChatStore.getState().streamingMessageId).not.toBeNull()
     );
     step.next();
-    // The first two chunks are still inside the reasoning block: no assistant
-    // message has been added yet.
+    // The first two chunks are still inside the reasoning block: the streaming
+    // assistant message exists but stays empty (no visible content yet).
     step.next();
-    await vi.waitFor(() =>
-      expect(useChatStore.getState().messages.filter((m) => m.role === "assistant")).toHaveLength(0)
-    );
+    await vi.waitFor(() => {
+      const assistants = useChatStore
+        .getState()
+        .messages.filter((m) => m.role === "assistant");
+      expect(assistants).toHaveLength(1);
+      expect(assistants[0].content).toBe("");
+    });
     step.next();
     await vi.waitFor(() => expect(lastMessage().content).toBe("The fix is to install pandas."));
     step.next();

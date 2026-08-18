@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -50,11 +50,11 @@ interface MessageActionProps {
   busy: boolean;
   disabled: boolean;
   onDraftChange: (value: string) => void;
-  onStartEdit: () => void;
+  onStartEdit: (message: Message) => void;
   onCancelEdit: () => void;
-  onSaveEdit: () => void;
-  onCopy: () => void;
-  onRegenerate: () => void;
+  onSaveEdit: (message: Message) => void;
+  onCopy: (message: Message) => void;
+  onRegenerate: (message: Message) => void;
 }
 
 export default function MessageList({
@@ -81,7 +81,14 @@ export default function MessageList({
 
   const copyTimer = useRef<number | null>(null);
 
-  const handleCopy = async (msg: Message) => {
+  // The edit draft is read through a ref so `saveEdit` keeps a stable identity
+  // while the user types, which lets memoized message rows stay memoized.
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  const handleCopy = useCallback(async (msg: Message) => {
     try {
       await navigator.clipboard.writeText(msg.content);
     } catch {
@@ -104,50 +111,56 @@ export default function MessageList({
     copyTimer.current = window.setTimeout(() => {
       setCopiedId((id) => (id === msg.id ? null : id));
     }, 2000);
-  };
+  }, []);
 
-  const startEdit = (msg: Message) => {
+  const startEdit = useCallback((msg: Message) => {
     setEditingId(msg.id);
     setDraft(msg.content);
-  };
+  }, []);
 
-  const cancelEdit = () => {
+  const cancelEdit = useCallback(() => {
     setEditingId(null);
     setDraft("");
-  };
+  }, []);
 
-  const saveEdit = async (msg: Message) => {
-    const content = draft.trim();
-    if (!content) return;
-    setBusyId(msg.id);
-    try {
-      // While screen sharing is active, attach exactly one fresh frame taken
-      // at send time so the edited question is answered with the current screen.
-      const image =
-        screenShareActive && captureScreenFrame
-          ? (captureScreenFrame() ?? undefined)
-          : undefined;
-      await editMessageAndRegenerate(msg.id, content, image);
-    } finally {
-      setBusyId(null);
-    }
-    setEditingId(null);
-    setDraft("");
-  };
+  const saveEdit = useCallback(
+    async (msg: Message) => {
+      const content = draftRef.current.trim();
+      if (!content) return;
+      setBusyId(msg.id);
+      try {
+        // While screen sharing is active, attach exactly one fresh frame taken
+        // at send time so the edited question is answered with the current screen.
+        const image =
+          screenShareActive && captureScreenFrame
+            ? (captureScreenFrame() ?? undefined)
+            : undefined;
+        await editMessageAndRegenerate(msg.id, content, image);
+      } finally {
+        setBusyId(null);
+      }
+      setEditingId(null);
+      setDraft("");
+    },
+    [screenShareActive, captureScreenFrame, editMessageAndRegenerate]
+  );
 
-  const handleRegenerate = async (msg: Message) => {
-    setBusyId(msg.id);
-    try {
-      // Same rule as edit/send: one fresh frame per regenerate while sharing.
-      const image =
-        screenShareActive && captureScreenFrame
-          ? (captureScreenFrame() ?? undefined)
-          : undefined;
-      await regenerateResponse(msg.id, image);
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const handleRegenerate = useCallback(
+    async (msg: Message) => {
+      setBusyId(msg.id);
+      try {
+        // Same rule as edit/send: one fresh frame per regenerate while sharing.
+        const image =
+          screenShareActive && captureScreenFrame
+            ? (captureScreenFrame() ?? undefined)
+            : undefined;
+        await regenerateResponse(msg.id, image);
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [screenShareActive, captureScreenFrame, regenerateResponse]
+  );
 
   const blocked = loading || isStreaming;
 
@@ -207,11 +220,11 @@ export default function MessageList({
             busy={busyId === msg.id}
             disabled={blocked}
             onDraftChange={setDraft}
-            onStartEdit={() => startEdit(msg)}
+            onStartEdit={startEdit}
             onCancelEdit={cancelEdit}
-            onSaveEdit={() => void saveEdit(msg)}
-            onCopy={() => void handleCopy(msg)}
-            onRegenerate={() => void handleRegenerate(msg)}
+            onSaveEdit={saveEdit}
+            onCopy={handleCopy}
+            onRegenerate={handleRegenerate}
           />
         ))}
 
@@ -221,12 +234,7 @@ export default function MessageList({
               <img src="/nexuss-logo.png" alt="NEXUSS" className="w-4 h-4 object-contain" />
             </div>
             <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3 shadow-xs">
-              <div className="flex items-center gap-1">
-                <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
-                <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:150ms]" />
-                <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:300ms]" />
-              </div>
-              <span className="text-xs font-mono text-muted-foreground">Nexuss is thinking...</span>
+              <ThinkingIndicator />
             </div>
           </div>
         )}
@@ -237,7 +245,7 @@ export default function MessageList({
   );
 }
 
-function MessageItem(props: MessageActionProps) {
+const MessageItem = memo(function MessageItem(props: MessageActionProps) {
   const {
     message,
     streaming,
@@ -277,7 +285,7 @@ function MessageItem(props: MessageActionProps) {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
-                  onSaveEdit();
+                  onSaveEdit(message);
                 }
                 if (e.key === "Escape") {
                   onCancelEdit();
@@ -300,7 +308,7 @@ function MessageItem(props: MessageActionProps) {
               </button>
               <button
                 type="button"
-                onClick={onSaveEdit}
+                onClick={() => onSaveEdit(message)}
                 disabled={busy || !draft.trim()}
                 className="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer"
                 title="Send edited message (Enter)"
@@ -317,9 +325,18 @@ function MessageItem(props: MessageActionProps) {
                 : "rounded-2xl rounded-tr-sm border border-border bg-secondary px-4 py-3 text-xs leading-relaxed text-secondary-foreground shadow-xs"
             }
           >
-            <MessageContent content={message.content} isAssistant={isAssistant} />
-            {/* Blinking cursor on the assistant message while it is streaming. */}
-            {streaming && (
+            {/* While waiting for the first content chunk the streaming assistant
+                message shows the thinking indicator in place; the first visible
+                chunk replaces it with the actual text. */}
+            {streaming && message.content.trim() === "" ? (
+              <div className="flex items-center gap-2 px-4 py-3">
+                <ThinkingIndicator />
+              </div>
+            ) : (
+              <MessageContent content={message.content} isAssistant={isAssistant} />
+            )}
+            {/* Blinking cursor on the assistant message while content is streaming. */}
+            {streaming && message.content.trim() !== "" && (
               <span
                 aria-hidden="true"
                 className="ml-0.5 inline-block h-3 w-1 animate-pulse rounded-sm bg-primary align-middle"
@@ -342,7 +359,7 @@ function MessageItem(props: MessageActionProps) {
             }`}
           >
             <ActionButton
-              onClick={onCopy}
+              onClick={() => onCopy(message)}
               disabled={actionsDisabled}
               label={copied ? "Copied" : "Copy message"}
               title={copied ? "Copied" : "Copy message"}
@@ -361,7 +378,7 @@ function MessageItem(props: MessageActionProps) {
 
             {isAssistant ? (
               <ActionButton
-                onClick={onRegenerate}
+                onClick={() => onRegenerate(message)}
                 disabled={actionsDisabled}
                 label="Regenerate response"
                 title="Regenerate response"
@@ -373,7 +390,7 @@ function MessageItem(props: MessageActionProps) {
               </ActionButton>
             ) : (
               <ActionButton
-                onClick={onStartEdit}
+                onClick={() => onStartEdit(message)}
                 disabled={actionsDisabled}
                 label="Edit message"
                 title="Edit message"
@@ -387,6 +404,19 @@ function MessageItem(props: MessageActionProps) {
           </div>
         )}
       </div>
+    </div>
+  );
+});
+
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
+        <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
+        <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:150ms]" />
+        <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:300ms]" />
+      </div>
+      <span className="text-xs font-mono text-muted-foreground">Nexuss is thinking...</span>
     </div>
   );
 }
