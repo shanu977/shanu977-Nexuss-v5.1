@@ -455,7 +455,7 @@ def test_map_error_categories():
 
 def test_retry_after_flows_through_real_complete(monkeypatch):
     class _FakeClient:
-        def post(self, url, json, headers):
+        def post(self, url, json, headers, **kwargs):
             return _FakeResp(429, {"retry-after": "3"})
 
     monkeypatch.setattr(llm_service, "get_api_key", lambda: "test-key")
@@ -463,3 +463,66 @@ def test_retry_after_flows_through_real_complete(monkeypatch):
     with pytest.raises(llm_service.RateLimitError) as excinfo:
         llm_service.complete([{"role": "user", "content": "hi"}])
     assert excinfo.value.retry_after == 3.0
+
+
+# ------------------------------------------------------------------ timeouts
+
+
+def test_each_attempt_is_capped_by_provider_timeout(client, fake_llm, mock_test_key):
+    _save_key(client, "openrouter")
+    _save_key(client, "gemini")
+    fake_llm["script"]("groq", ("raise_status", 429))
+    fake_llm["script"]("openrouter", ("raise_status", 429))
+    headers = auth_headers(client)
+
+    resp = client.post("/chat", headers=headers, json={"message": "Hi"})
+    assert resp.status_code == 200, resp.text
+
+    calls = fake_llm["calls"]
+    assert len(calls) >= 2
+    for call in calls:
+        # Every attempt carries a per-attempt timeout capped by the provider cap.
+        assert "timeout" in call
+        assert (
+            call["timeout"]
+            <= llm_service.PROVIDER_TIMEOUT_SECONDS[call["provider"]]
+        )
+        assert call["timeout"] > 0
+
+
+def test_chain_deadline_stops_fallbacks(client, mock_test_key, monkeypatch):
+    import time as _time
+
+    from app.services import fallback_service
+    from app.config import settings
+
+    _save_key(client, "openrouter")
+    _save_key(client, "gemini")
+
+    calls = []
+
+    def _slow(messages, **kwargs):
+        calls.append(kwargs["provider"])
+        _time.sleep(0.2)
+        raise llm_service.ProviderUnavailableError(
+            "simulated slow provider", category="network"
+        )
+
+    monkeypatch.setattr(llm_service, "complete", _slow)
+    # Tiny total chain budget + tiny minimum window: the primary attempt burns
+    # the whole budget, so the chain must stop instead of trying a fallback.
+    monkeypatch.setattr(settings, "ai_total_deadline_seconds", 0.05)
+    monkeypatch.setattr(fallback_service, "MIN_ATTEMPT_WINDOW_SECONDS", 0.01)
+
+    headers = auth_headers(client)
+    started = _time.perf_counter()
+    resp = client.post("/chat", headers=headers, json={"message": "Hi"})
+    elapsed = _time.perf_counter() - started
+
+    assert resp.status_code == 502
+    body = resp.json()
+    assert body["detail"]
+    # Only the primary was attempted; the deadline stopped the chain promptly.
+    assert [c for c in calls] == ["groq"]
+    assert [a["provider"] for a in body["attempts"]] == ["groq"]
+    assert elapsed < 1.0

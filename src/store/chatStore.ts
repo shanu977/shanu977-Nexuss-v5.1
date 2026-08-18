@@ -542,6 +542,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const text = content.trim();
     if (!text) return;
 
+    const current = get();
+    if (current.loading || current.isStreaming) return;
+
     // The entire flow is wrapped so any failure (local DB, network, provider)
     // surfaces as a user-visible error instead of failing silently.
     try {
@@ -626,6 +629,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const currentChat = get().currentChat;
     if (!currentChat || currentChat.userId !== uid) return;
 
+    const current = get();
+    if (current.loading || current.isStreaming) return;
+
     const messages = get().messages;
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return;
@@ -693,6 +699,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     if (!uid) return;
     const currentChat = get().currentChat;
     if (!currentChat || currentChat.userId !== uid) return;
+
+    const current = get();
+    if (current.loading || current.isStreaming) return;
 
     const messages = get().messages;
     const idx = messages.findIndex((m) => m.id === messageId);

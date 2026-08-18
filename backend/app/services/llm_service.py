@@ -9,6 +9,22 @@ from ..config import settings
 
 GROQ_TIMEOUT_SECONDS = 60.0
 
+# Per-provider cap for a SINGLE provider attempt (seconds). These bound the
+# request the backend makes to each provider, so one hung provider cannot stall
+# the chain. The fallback chain additionally caps the TOTAL across all
+# sequential attempts via `ai_total_deadline_seconds`, so a request can never
+# accumulate unbounded sequential waits.
+PROVIDER_TIMEOUT_SECONDS = {
+    "groq": 60.0,
+    "gemini": 60.0,
+    "openrouter": 60.0,
+}
+
+
+def provider_timeout(provider: str) -> float:
+    """Per-attempt timeout cap for a provider (seconds)."""
+    return PROVIDER_TIMEOUT_SECONDS.get(provider, GROQ_TIMEOUT_SECONDS)
+
 # OpenAI-compatible chat completion endpoints per provider. User-selected
 # models are validated server-side before a request is ever sent.
 PROVIDER_ENDPOINTS = {
@@ -250,6 +266,7 @@ def complete(
     provider: str = "groq",
     model: str | None = None,
     api_key: str | None = None,
+    timeout: float | None = None,
 ) -> tuple[str, UsageInfo]:
     """Send a chat completion request to the selected provider.
 
@@ -263,6 +280,9 @@ def complete(
     - model: user-selected model id; falls back to a provider default when absent
     - api_key: the user's key for the provider; falls back to the server Groq
       key for groq when absent. Never logged.
+    - timeout: hard per-attempt ceiling in seconds. When None, the provider's
+      own cap (``PROVIDER_TIMEOUT_SECONDS``) applies. The fallback engine passes
+      the remaining chain budget so a single attempt can never exceed it.
 
     Returns (reply_text, usage_info) where usage_info contains token counts.
     """
@@ -291,8 +311,12 @@ def complete(
     }
     url = resolve_endpoint(provider)
 
+    request_kwargs: Dict = {"json": payload, "headers": headers}
+    if timeout is not None:
+        request_kwargs["timeout"] = timeout
+
     try:
-        resp = _get_client().post(url, json=payload, headers=headers)
+        resp = _get_client().post(url, **request_kwargs)
     except httpx.TimeoutException:
         raise ProviderUnavailableError(
             "The AI provider timed out. Please try again.", category="network"

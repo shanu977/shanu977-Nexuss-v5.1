@@ -41,6 +41,11 @@ _TEMPORARY_CATEGORIES = {
     "network",
 }
 
+# A provider attempt needs a meaningful window to be worth starting. Once less
+# than this much of the total chain budget remains, the chain stops instead of
+# launching an attempt that is almost certain to be cut off by its own timeout.
+MIN_ATTEMPT_WINDOW_SECONDS = 15.0
+
 
 class ProviderFailureError(Exception):
     """Error with an HTTP status and optional attempt log for the API layer.
@@ -274,7 +279,38 @@ def execute_with_fallback(
     attempts: List[dict] = []
     last_error: Optional[llm_service.AIProviderError] = None
 
+    # Hard wall-clock budget for the whole chain (auth/DB/prompt time is NOT
+    # included; the chain itself is what was stacking unbounded waits). Each
+    # attempt is capped by the remaining budget so a failed provider can never
+    # push the total past this deadline. Must stay under the client's request
+    # timeout so a slow-but-successful reply is still delivered.
+    deadline = time.monotonic() + float(settings.ai_total_deadline_seconds)
+
     for index, (provider, model, key) in enumerate(candidates, start=1):
+        remaining = deadline - time.monotonic()
+        if remaining < MIN_ATTEMPT_WINDOW_SECONDS:
+            # Not enough budget left for a meaningful attempt: stop the chain
+            # instead of stacking another sequential provider wait.
+            logger.warning(
+                "[AI] Chain deadline (%.0fs) reached after %d attempt(s); "
+                "stopping before %s/%s",
+                settings.ai_total_deadline_seconds,
+                len(attempts),
+                provider,
+                model,
+            )
+            if last_error is not None:
+                raise ProviderFailureError(
+                    status_code=_temporary_status(last_error),
+                    message=str(last_error),
+                    attempts=attempts,
+                )
+            raise ProviderFailureError(
+                status_code=502,
+                message="AI providers are taking too long. Please try again later.",
+                attempts=attempts,
+            )
+
         # "Primary" means the user's selected provider, not merely index 1: the
         # primary may have been skipped during cooldown, in which case the
         # first executed candidate is really a fallback.
@@ -285,7 +321,11 @@ def execute_with_fallback(
         started = time.perf_counter()
         try:
             reply, usage = llm_service.complete(
-                messages, provider=provider, model=model, api_key=key
+                messages,
+                provider=provider,
+                model=model,
+                api_key=key,
+                timeout=min(remaining, llm_service.provider_timeout(provider)),
             )
         except llm_service.AIProviderError as exc:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -311,7 +351,12 @@ def execute_with_fallback(
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         attempts.append(_attempt_success(provider, model, index, usage, elapsed_ms))
-        logger.info("[AI] Success: %s/%s", provider.capitalize(), model)
+        logger.info(
+            "[AI] Success: %s/%s in %dms",
+            provider.capitalize(),
+            model,
+            elapsed_ms,
+        )
 
         notice = None
         if not is_primary:

@@ -520,6 +520,60 @@ describe("long conversations must keep working (20+ messages in one chat)", () =
   });
 });
 
+describe("concurrent sends are prevented", () => {
+  type Reply = { reply: string; provider: string; model: string };
+
+  it("ignores a second send while a request is already in flight", async () => {
+    const chat = makeChat("chat-guard", "Guard chat");
+    await seed(chat, []);
+
+    let resolveSend: ((value: Reply) => void) | undefined;
+    sendMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSend = resolve;
+      })
+    );
+
+    const first = useChatStore.getState().sendMessageStream("First");
+    await Promise.resolve();
+    await useChatStore.getState().sendMessageStream("Second");
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+
+    resolveSend!({ reply: "ok", provider: "groq", model: "llama-3.3-70b-versatile" });
+    await first;
+
+    const cs = useChatStore.getState();
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(cs.messages).toHaveLength(2); // 1 user + 1 assistant, no duplicate
+  });
+
+  it("ignores a regenerate while a request is already in flight", async () => {
+    const chat = makeChat("chat-guard-r", "Guard chat");
+    const userMsg = makeMessage("g1", "chat-guard-r", "user", "q");
+    const asstMsg = makeMessage("g2", "chat-guard-r", "assistant", "a");
+    await seed(chat, [userMsg, asstMsg]);
+
+    let resolveSend: ((value: Reply) => void) | undefined;
+    sendMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSend = resolve;
+      })
+    );
+
+    const first = useChatStore.getState().sendMessageStream("Next");
+    await Promise.resolve();
+    await useChatStore.getState().regenerateResponse("g2");
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+
+    resolveSend!({ reply: "ok", provider: "groq", model: "llama-3.3-70b-versatile" });
+    await first;
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Path workspace context flows into chat requests", () => {
   beforeEach(async () => {
     await useWorkspaceStore.getState().disconnect();

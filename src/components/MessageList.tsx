@@ -1,12 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Component, type ReactNode, useEffect, useRef, useState } from "react";
+import { AdMeshRecommendations } from "admesh-ui-sdk";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Message } from "@/types";
 import { useChatStore } from "@/store";
+import { isAdMeshProviderMounted } from "@/lib/admesh";
+
+interface AdMeshContext {
+  messageId: string;
+  query: string;
+}
+
+function assistantAdMeshContext(
+  messages: Message[],
+  index: number
+): AdMeshContext | null {
+  const msg = messages[index];
+  if (!msg || msg.role !== "assistant") return null;
+  for (let i = index - 1; i >= 0; i--) {
+    const prev = messages[i];
+    if (prev.role === "user" && prev.chatId === msg.chatId) {
+      const query = prev.content.trim();
+      if (query) return { messageId: prev.id, query };
+    }
+  }
+  return null;
+}
 
 interface MessageListProps {
   messages: Message[];
@@ -43,6 +66,7 @@ const SUGGESTIONS = [
 
 interface MessageActionProps {
   message: Message;
+  adMesh: AdMeshContext | null;
   isEditing: boolean;
   draft: string;
   copied: boolean;
@@ -195,10 +219,11 @@ export default function MessageList({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-6">
-        {messages.map((msg) => (
+        {messages.map((msg, i) => (
           <MessageItem
             key={msg.id}
             message={msg}
+            adMesh={assistantAdMeshContext(messages, i)}
             isEditing={editingId === msg.id}
             draft={editingId === msg.id ? draft : msg.content}
             copied={copiedId === msg.id}
@@ -251,9 +276,42 @@ export default function MessageList({
   );
 }
 
+function SponsoredRecommendation({ messageId, query }: AdMeshContext) {
+  const [shown, setShown] = useState(false);
+  if (!isAdMeshProviderMounted()) return null;
+  return (
+    <AdMeshErrorBoundary>
+      <div className={shown ? "mt-3 w-full border-t border-border/70 pt-3" : "w-full"}>
+        <AdMeshRecommendations
+          messageId={messageId}
+          query={query}
+          onRecommendationsShown={() => setShown(true)}
+        />
+      </div>
+    </AdMeshErrorBoundary>
+  );
+}
+
+class AdMeshErrorBoundary extends Component<
+  { children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  render() {
+    if (this.state.failed) return null;
+    return this.props.children;
+  }
+}
+
 function MessageItem(props: MessageActionProps) {
   const {
     message,
+    adMesh,
     isEditing,
     draft,
     copied,
@@ -391,6 +449,13 @@ function MessageItem(props: MessageActionProps) {
               </ActionButton>
             )}
           </div>
+        )}
+
+        {isAssistant && adMesh && (
+          <SponsoredRecommendation
+            messageId={adMesh.messageId}
+            query={adMesh.query}
+          />
         )}
       </div>
     </div>

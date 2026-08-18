@@ -548,7 +548,7 @@ class _FakeClient:
     def __init__(self, resp):
         self._resp = resp
 
-    def post(self, url, json, headers):
+    def post(self, url, json, headers, **kwargs):
         return self._resp
 
 

@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     # Seconds a provider is skipped after a rate limit (used when the provider
     # does not return a Retry-After / reset hint).
     ai_fallback_cooldown_seconds: int = 30
+    # Hard wall-clock budget for the ENTIRE provider fallback chain (seconds).
+    # Each candidate attempt is capped by the remaining budget, so a request can
+    # never hang across multiple sequential provider waits. Keep this under the
+    # client's request timeout so a slow-but-successful reply is still delivered
+    # instead of the client aborting first (which wastes the AI call).
+    ai_total_deadline_seconds: float = 90.0
 
     # Browser origins allowed to call this backend (CORS). Kept as a plain
     # string so Pydantic Settings never attempts to JSON-decode the variable

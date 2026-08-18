@@ -13,6 +13,7 @@
     "desktop:test": "vitest run --testTimeout 30000"
   },
   "dependencies": {
+    "admesh-ui-sdk": "^1.0.44",
     "dexie": "^4.0.0",
     "firebase": "^10.14.0",
     "lucide-react": "^1.31.0",
