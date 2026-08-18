@@ -25,7 +25,7 @@ export default function ChatPage({
     messages,
     loading,
     isStreaming,
-    streamingMessage,
+    streamingMessageId,
     error,
     sendMessageStream,
     clearError
@@ -81,7 +81,7 @@ export default function ChatPage({
           messages={messages}
           loading={loading}
           isStreaming={isStreaming}
-          streamingMessage={streamingMessage}
+          streamingMessageId={streamingMessageId}
           onSendSuggestion={handleSend}
           screenShareActive={screenShareActive}
           captureScreenFrame={captureFrame}

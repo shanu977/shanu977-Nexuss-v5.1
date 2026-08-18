@@ -17,7 +17,7 @@ expiring. The same provider/model is never attempted twice in one request.
 import logging
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -52,6 +52,11 @@ class ProviderFailureError(Exception):
 
     `attempts` (a list of dicts) is included in the response body so the client
     can record usage for every attempted provider/model, including failures.
+
+    `partial` marks a failure that happened AFTER the provider already produced
+    content: the client should keep whatever text it received and treat the
+    answer as interrupted rather than retrying the whole request (a fallback
+    reply would be disjoint from the partial text).
     """
 
     def __init__(
@@ -59,11 +64,13 @@ class ProviderFailureError(Exception):
         status_code: int,
         message: str,
         attempts: Optional[List[dict]] = None,
+        partial: bool = False,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.message = message
         self.attempts = attempts or []
+        self.partial = partial
 
 
 class ProviderCooldown:
@@ -374,6 +381,163 @@ def execute_with_fallback(
         }
 
     # Every candidate exhausted without a success.
+    if last_error is not None:
+        raise ProviderFailureError(
+            status_code=_temporary_status(last_error),
+            message=str(last_error),
+            attempts=attempts,
+        )
+    raise ProviderFailureError(
+        status_code=502,
+        message="All AI providers failed. Please try again later.",
+        attempts=attempts,
+    )
+
+
+def stream_with_fallback(
+    db: Session,
+    user: User,
+    messages: List[Dict],
+    primary_provider: str,
+    primary_model: str,
+    fallback_models: Optional[Dict[str, str]] = None,
+) -> Iterator[Dict]:
+    """Streaming counterpart to ``execute_with_fallback``.
+
+    Yields event dicts consumed by the SSE layer:
+      - ``{"type": "chunk", "content": <delta>}`` for each content delta
+      - ``{"type": "usage", "usage": {...}, "provider": ..., "model": ...,
+           "fallback_used": ..., "attempts": [...]}`` once the answer completes
+
+    Fallback semantics differ from the batch path in exactly one place: once a
+    provider has yielded content, a later failure is surfaced (with ``partial``
+    set) instead of falling back, because a disjoint fallback reply cannot be
+    merged with the text already sent to the client. Failures BEFORE any content
+    follow the normal chain (rate limits, overloads, 5xx, network → next
+    candidate). The same wall-clock chain deadline applies: a healthy stream
+    keeps flowing until it finishes, but the whole request can never exceed
+    ``ai_total_deadline_seconds``.
+    """
+    candidates = _build_chain(
+        db, user, primary_provider, primary_model, fallback_models=fallback_models
+    )
+    if not candidates:
+        raise ProviderFailureError(
+            status_code=503,
+            message=(
+                "The selected provider is temporarily unavailable and no "
+                "fallback provider is configured. Please try again later."
+            ),
+        )
+
+    attempts: List[dict] = []
+    last_error: Optional[llm_service.AIProviderError] = None
+
+    deadline = time.monotonic() + float(settings.ai_total_deadline_seconds)
+
+    for index, (provider, model, key) in enumerate(candidates, start=1):
+        remaining = deadline - time.monotonic()
+        if remaining < MIN_ATTEMPT_WINDOW_SECONDS:
+            logger.warning(
+                "[AI] Chain deadline (%.0fs) reached after %d attempt(s); "
+                "stopping before %s/%s",
+                settings.ai_total_deadline_seconds,
+                len(attempts),
+                provider,
+                model,
+            )
+            if last_error is not None:
+                raise ProviderFailureError(
+                    status_code=_temporary_status(last_error),
+                    message=str(last_error),
+                    attempts=attempts,
+                )
+            raise ProviderFailureError(
+                status_code=502,
+                message="AI providers are taking too long. Please try again later.",
+                attempts=attempts,
+            )
+
+        is_primary = provider == primary_provider
+        label = "Primary" if is_primary else "Fallback"
+        logger.info("[AI] %s (stream): %s/%s", label, provider.capitalize(), model)
+
+        started = time.perf_counter()
+        yielded_any = False
+        try:
+            for delta, usage in llm_service.complete_stream(
+                messages,
+                provider=provider,
+                model=model,
+                api_key=key,
+                timeout=min(remaining, llm_service.provider_timeout(provider)),
+            ):
+                if delta is not None:
+                    if time.monotonic() > deadline:
+                        raise llm_service.ProviderUnavailableError(
+                            "AI providers are taking too long. Please try again "
+                            "later.",
+                            category="network",
+                        )
+                    yielded_any = True
+                    yield {"type": "chunk", "content": delta}
+                elif usage is not None:
+                    elapsed_ms = int((time.perf_counter() - started) * 1000)
+                    attempts.append(
+                        _attempt_success(provider, model, index, usage, elapsed_ms)
+                    )
+                    logger.info(
+                        "[AI] Success (stream): %s/%s in %dms",
+                        provider.capitalize(),
+                        model,
+                        elapsed_ms,
+                    )
+                    notice = None
+                    if not is_primary:
+                        notice = (
+                            f"{primary_provider.capitalize()} was temporarily "
+                            f"unavailable. Response generated using "
+                            f"{provider.capitalize()}."
+                        )
+                    yield {
+                        "type": "usage",
+                        "usage": usage.to_dict(),
+                        "provider": provider,
+                        "model": model,
+                        "fallback_used": notice,
+                        "attempts": list(attempts),
+                    }
+                    return
+        except llm_service.AIProviderError as exc:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            attempts.append(_attempt_failed(provider, model, index, exc, elapsed_ms))
+            _log_failure(provider, exc)
+
+            if exc.category == "rate_limit":
+                cooldown.mark(provider, getattr(exc, "retry_after", None))
+
+            if yielded_any:
+                # The provider died after producing content. Keep the partial
+                # answer; a fallback reply would not join it coherently.
+                raise ProviderFailureError(
+                    status_code=_temporary_status(exc),
+                    message=str(exc),
+                    attempts=attempts,
+                    partial=True,
+                )
+
+            if exc.category not in _TEMPORARY_CATEGORIES:
+                if is_primary:
+                    raise ProviderFailureError(
+                        status_code=_permanent_status(exc),
+                        message=str(exc),
+                        attempts=attempts,
+                    )
+                last_error = exc
+                continue
+            last_error = exc
+            continue
+
     if last_error is not None:
         raise ProviderFailureError(
             status_code=_temporary_status(last_error),

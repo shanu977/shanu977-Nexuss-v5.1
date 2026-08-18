@@ -1,3 +1,5 @@
+from typing import Iterator
+
 from sqlalchemy.orm import Session
 
 from ..models import User
@@ -8,7 +10,7 @@ from ..schemas.settings import (
     VISION_CAPABLE_MODELS,
     VISION_MODELS,
 )
-from ..utils.reasoning import filter_reasoning
+from ..utils.reasoning import ReasoningFilter, filter_reasoning
 from . import fallback_service, llm_service, prompt_service, settings_service, usage_service
 
 
@@ -128,3 +130,105 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
         fallback_used=result["fallback_used"],
         attempts=[FallbackAttempt(**attempt) for attempt in result["attempts"]],
     )
+
+
+def handle_chat_stream(db: Session, user: User, payload: ChatRequest) -> Iterator[dict]:
+    """Answer a single message as a stream of event dicts (SSE).
+
+    Validation and prompt building run immediately (mirroring ``handle_chat``),
+    so request-level errors surface as normal HTTP errors before any bytes are
+    sent. The returned generator then yields:
+      - ``{"type": "chunk", "content": <delta>}`` per filtered content delta
+      - ``{"type": "usage", ...}`` when the answer completes
+      - ``{"type": "error", ...}`` when a provider fails (carrying the attempt
+        log and a ``partial`` flag when content was already sent)
+
+    Reasoning markers are stripped chunk-by-chunk (defense-in-depth; the
+    frontend applies the same filter). A trailing reasoning marker that is
+    split across chunk boundaries is flushed just before completion so held-back
+    answer text is never lost.
+    """
+    settings = settings_service.get_or_create_settings(db, user)
+    provider = payload.provider or settings.provider or "groq"
+    if provider not in ALLOWED_PROVIDERS:
+        raise llm_service.UnsupportedProviderError()
+
+    model = payload.model or settings.model
+    if model not in ALLOWED_MODELS.get(provider, set()):
+        if payload.model:
+            raise llm_service.BadRequestError(
+                f"Model '{model}' is not supported by provider '{provider}'. "
+                "Select a valid model for this provider in Settings."
+            )
+        model = settings_service.DEFAULT_MODELS.get(
+            provider, settings_service.DEFAULT_MODELS["groq"]
+        )
+
+    history = [
+        {"role": turn.role, "content": turn.content}
+        for turn in payload.history
+        if turn.content.strip()
+    ]
+
+    request_type = "screen_share" if payload.image else "chat"
+
+    fallback_models = None
+    if payload.image:
+        primary_model = _resolve_vision_model(provider, model)
+        if primary_model is None:
+            raise llm_service.BadRequestError(
+                f"Provider '{provider}' has no vision-capable model configured "
+                "for screen analysis. Select a different provider or model."
+            )
+        messages = prompt_service.build_vision_messages(
+            history, payload.message, payload.image
+        )
+        fallback_models = VISION_MODELS
+    else:
+        primary_model = model
+        messages = prompt_service.build_messages(history, payload.message)
+
+    if payload.workspace_context:
+        messages = prompt_service.attach_workspace_context(
+            messages, payload.workspace_context
+        )
+
+    reasoning = ReasoningFilter()
+
+    def gen() -> Iterator[dict]:
+        try:
+            for event in fallback_service.stream_with_fallback(
+                db,
+                user,
+                messages,
+                primary_provider=provider,
+                primary_model=primary_model,
+                fallback_models=fallback_models,
+            ):
+                if event["type"] == "chunk":
+                    visible = reasoning.push(event["content"])
+                    if visible:
+                        yield {"type": "chunk", "content": visible}
+                elif event["type"] == "usage":
+                    tail = reasoning.flush()
+                    if tail:
+                        yield {"type": "chunk", "content": tail}
+                    yield event
+        except fallback_service.ProviderFailureError as exc:
+            # Release any answer text the reasoning filter was still holding
+            # (e.g. a marker split right before a mid-stream failure), then
+            # surface the failure with the attempt log. Best-effort usage
+            # recording for the attempts that were made.
+            usage_service.record_attempts(db, user, request_type, exc.attempts)
+            tail = reasoning.flush()
+            if tail:
+                yield {"type": "chunk", "content": tail}
+            yield {
+                "type": "error",
+                "status": exc.status_code,
+                "message": exc.message,
+                "attempts": exc.attempts,
+                "partial": exc.partial,
+            }
+
+    return gen()

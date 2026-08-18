@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/store/useAuthStore", () => mocks.authStoreMock);
 
 vi.mock("@/services/chat", () => ({
-  chatService: { send: vi.fn() }
+  chatService: { sendStream: vi.fn() }
 }));
 
 vi.mock("@/services/settings", () => ({
@@ -56,7 +56,7 @@ beforeEach(async () => {
     loading: false,
     error: null,
     isStreaming: false,
-    streamingMessage: "",
+    streamingMessageId: null,
     theme: "light"
   });
 });

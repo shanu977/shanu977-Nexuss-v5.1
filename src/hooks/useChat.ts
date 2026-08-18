@@ -5,7 +5,7 @@ export function useChat() {
   const messages = useChatStore((s) => s.messages);
   const loading = useChatStore((s) => s.loading);
   const isStreaming = useChatStore((s) => s.isStreaming);
-  const streamingMessage = useChatStore((s) => s.streamingMessage);
+  const streamingMessageId = useChatStore((s) => s.streamingMessageId);
   const error = useChatStore((s) => s.error);
   const sendMessageStream = useChatStore((s) => s.sendMessageStream);
   const editMessageAndRegenerate = useChatStore((s) => s.editMessageAndRegenerate);
@@ -24,7 +24,7 @@ export function useChat() {
     messages,
     loading,
     isStreaming,
-    streamingMessage,
+    streamingMessageId,
     error,
     theme,
     setTheme,

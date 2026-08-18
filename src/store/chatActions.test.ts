@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
 import { Chat, Message } from "@/types/chats";
-import { chatService } from "@/services/chat";
+import { chatService, ChatStreamEvent } from "@/services/chat";
 import db from "@/lib/db/db";
 import { useWorkspaceStore } from "@/workspace/store";
 
@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/store/useAuthStore", () => mocks.authStoreMock);
 
 vi.mock("@/services/chat", () => ({
-  chatService: { send: vi.fn() }
+  chatService: { sendStream: vi.fn() }
 }));
 
 vi.mock("@/services/settings", () => ({
@@ -32,7 +32,45 @@ vi.mock("@/services/settings", () => ({
 
 const UID = "user-a";
 const setMockUser = mocks.setMockUser;
-const sendMock = vi.mocked(chatService.send);
+const sendStreamMock = vi.mocked(chatService.sendStream);
+
+// A completed stream: one chunk carrying the full reply, then the usage event.
+function streamOf(
+  reply: string,
+  opts: { provider?: string; model?: string } = {}
+): AsyncGenerator<ChatStreamEvent> {
+  async function* gen() {
+    yield { type: "chunk", content: reply } as ChatStreamEvent;
+    yield {
+      type: "usage",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      provider: opts.provider ?? "groq",
+      model: opts.model ?? "llama-3.3-70b-versatile",
+      fallback_used: null,
+      attempts: []
+    } as ChatStreamEvent;
+  }
+  return gen();
+}
+
+// A stream that stays pending until the test calls `release()`, mirroring a
+// real in-flight request for the duplicate-send guard tests.
+function gatedStream(onGate: (release: () => void) => void): AsyncGenerator<ChatStreamEvent> {
+  const gate = new Promise<void>((resolve) => onGate(() => resolve()));
+  async function* gen() {
+    await gate;
+    yield { type: "chunk", content: "ok" } as ChatStreamEvent;
+    yield {
+      type: "usage",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      fallback_used: null,
+      attempts: []
+    } as ChatStreamEvent;
+  }
+  return gen();
+}
 
 function makeChat(id: string, title: string): Chat {
   return { id, userId: UID, title, provider: "groq", createdAt: 1, updatedAt: 1 };
@@ -60,7 +98,7 @@ async function seed(chat: Chat, messages: Message[]) {
     loading: false,
     error: null,
     isStreaming: false,
-    streamingMessage: ""
+    streamingMessageId: null
   });
 }
 
@@ -80,15 +118,11 @@ beforeEach(async () => {
     loading: false,
     error: null,
     isStreaming: false,
-    streamingMessage: "",
+    streamingMessageId: null,
     theme: "light"
   });
-  sendMock.mockReset();
-  sendMock.mockResolvedValue({
-    reply: "edited assistant reply",
-    provider: "groq",
-    model: "llama-3.3-70b-versatile"
-  });
+  sendStreamMock.mockReset();
+  sendStreamMock.mockReturnValue(streamOf("edited assistant reply"));
 });
 
 describe("editMessageAndRegenerate", () => {
@@ -119,8 +153,8 @@ describe("editMessageAndRegenerate", () => {
     ]);
 
     // Request carries the edited text with only prior context as history.
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [req] = sendMock.mock.calls[0];
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.message).toBe("Explain React hooks with examples");
     expect(req.history).toEqual([]);
   });
@@ -139,8 +173,8 @@ describe("editMessageAndRegenerate", () => {
         "data:image/jpeg;base64,FRAME"
       );
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [req] = sendMock.mock.calls[0];
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.message).toBe("Explain hooks with examples");
     expect(req.image).toBe("data:image/jpeg;base64,FRAME");
   });
@@ -174,7 +208,7 @@ describe("editMessageAndRegenerate", () => {
     await useChatStore.getState().editMessageAndRegenerate("m2", "nope");
 
     expect(useChatStore.getState().messages).toHaveLength(2);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(sendStreamMock).not.toHaveBeenCalled();
   });
 
   it("does nothing for a chat owned by another user", async () => {
@@ -198,7 +232,7 @@ describe("editMessageAndRegenerate", () => {
 
     const stored = await db.messages.get("m1");
     expect(stored?.content).toBe("their message");
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(sendStreamMock).not.toHaveBeenCalled();
   });
 });
 
@@ -224,8 +258,8 @@ describe("regenerateResponse", () => {
 
     // The user message being re-answered is the request message; history is
     // everything before it.
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [req] = sendMock.mock.calls[0];
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.message).toBe("And a follow up");
     expect(req.history).toEqual([
       { role: "user", content: "Explain hooks" },
@@ -251,7 +285,7 @@ describe("regenerateResponse", () => {
     await useChatStore.getState().regenerateResponse("m1");
 
     expect(useChatStore.getState().messages).toHaveLength(2);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(sendStreamMock).not.toHaveBeenCalled();
   });
 
   it("sends a fresh screen frame with the regenerated question when sharing is active", async () => {
@@ -265,8 +299,8 @@ describe("regenerateResponse", () => {
       .getState()
       .regenerateResponse("m2", "data:image/jpeg;base64,FRAME2");
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [req] = sendMock.mock.calls[0];
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.message).toBe("Explain hooks");
     expect(req.image).toBe("data:image/jpeg;base64,FRAME2");
   });
@@ -278,7 +312,7 @@ describe("regenerateResponse", () => {
     await useChatStore.getState().regenerateResponse("m2");
 
     expect(useChatStore.getState().messages).toHaveLength(1);
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(sendStreamMock).not.toHaveBeenCalled();
   });
 });
 
@@ -291,8 +325,8 @@ describe("sendMessageStream with a screen frame", () => {
       .getState()
       .sendMessageStream("What is this error?", "data:image/jpeg;base64,FRAME");
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [req] = sendMock.mock.calls[0];
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.message).toBe("What is this error?");
     expect(req.image).toBe("data:image/jpeg;base64,FRAME");
 
@@ -319,8 +353,8 @@ describe("sendMessageStream with a screen frame", () => {
       .getState()
       .sendMessageStream("Q3", "data:image/jpeg;base64,FRAME3");
 
-    expect(sendMock).toHaveBeenCalledTimes(3);
-    const frames = sendMock.mock.calls.map(([req]) => req.image);
+    expect(sendStreamMock).toHaveBeenCalledTimes(3);
+    const frames = sendStreamMock.mock.calls.map(([req]) => req.image);
     expect(frames).toEqual([
       "data:image/jpeg;base64,FRAME1",
       "data:image/jpeg;base64,FRAME2",
@@ -330,7 +364,7 @@ describe("sendMessageStream with a screen frame", () => {
     // Screen-share requests do not change the user's selected model/provider
     // (the backend answers with a server-side vision model), so the dropdown
     // stays valid for every subsequent question.
-    const reqs = sendMock.mock.calls.map(([req]) => [req.provider, req.model]);
+    const reqs = sendStreamMock.mock.calls.map(([req]) => [req.provider, req.model]);
     expect(new Set(reqs.map((r) => r.join(":"))).size).toBe(1);
   });
 
@@ -340,8 +374,8 @@ describe("sendMessageStream with a screen frame", () => {
 
     await useChatStore.getState().sendMessageStream("Hello");
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [req] = sendMock.mock.calls[0];
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.message).toBe("Hello");
     expect(req.image).toBeUndefined();
   });
@@ -357,11 +391,7 @@ describe("reasoning is filtered out of every assistant reply", () => {
   ].join("\n");
 
   beforeEach(() => {
-    sendMock.mockResolvedValue({
-      reply: reasoningReply,
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    });
+    sendStreamMock.mockReturnValue(streamOf(reasoningReply));
   });
 
   it("stores a filtered reply for a normal send", async () => {
@@ -412,11 +442,7 @@ describe("reasoning-only reply must not poison the next request (production 422)
   const reasoningOnly = " thinking\nThis is internal reasoning with no answer produced.";
 
   beforeEach(() => {
-    sendMock.mockResolvedValue({
-      reply: reasoningOnly,
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    });
+    sendStreamMock.mockReturnValue(streamOf(reasoningOnly));
   });
 
   it("stores a non-empty assistant message and never sends an empty history turn", async () => {
@@ -435,7 +461,7 @@ describe("reasoning-only reply must not poison the next request (production 422)
 
     await useChatStore.getState().sendMessageStream("second question");
 
-    const [req] = sendMock.mock.calls[1];
+    const [req] = sendStreamMock.mock.calls[1];
     // A prior empty assistant turn would be rejected by the backend schema
     // (ChatTurn.content has min_length=1), producing the production 422.
     for (const turn of req.history) {
@@ -454,7 +480,7 @@ describe("reasoning-only reply must not poison the next request (production 422)
 
     await useChatStore.getState().sendMessageStream("q3");
 
-    const [req] = sendMock.mock.calls[0];
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.history.some((t: { content: string }) => t.content === "")).toBe(false);
     expect(req.history).toHaveLength(3);
   });
@@ -462,11 +488,7 @@ describe("reasoning-only reply must not poison the next request (production 422)
 
 describe("long conversations must keep working (20+ messages in one chat)", () => {
   beforeEach(() => {
-    sendMock.mockResolvedValue({
-      reply: "A concise reply.",
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    });
+    sendStreamMock.mockReturnValue(streamOf("A concise reply."));
   });
 
   it("sends 20 sequential messages with no duplicates and valid history", async () => {
@@ -480,11 +502,11 @@ describe("long conversations must keep working (20+ messages in one chat)", () =
     const cs = useChatStore.getState();
     expect(cs.messages).toHaveLength(40); // 20 user + 20 assistant, none duplicated
     expect(new Set(cs.messages.map((m) => m.id)).size).toBe(40);
-    expect(sendMock).toHaveBeenCalledTimes(20);
+    expect(sendStreamMock).toHaveBeenCalledTimes(20);
 
     // History grows linearly (2 prior turns per previous message), stays under
     // the backend's 100-turn cap, and never contains an empty or stray turn.
-    sendMock.mock.calls.forEach(([req], i) => {
+    sendStreamMock.mock.calls.forEach(([req], i) => {
       expect(req.history).toHaveLength(2 * i);
       expect(req.history.length).toBeLessThanOrEqual(99);
       for (const turn of req.history) {
@@ -504,7 +526,7 @@ describe("long conversations must keep working (20+ messages in one chat)", () =
     }
 
     // Every request carries exactly its own frame; no frame ever accumulates.
-    sendMock.mock.calls.forEach(([req], i) => {
+    sendStreamMock.mock.calls.forEach(([req], i) => {
       expect(req.image).toBe(`data:image/jpeg;base64,FRAME${i + 1}`);
     });
     // Frames never leak into the persisted user messages or into history.
@@ -512,7 +534,7 @@ describe("long conversations must keep working (20+ messages in one chat)", () =
     for (const m of cs.messages) {
       expect(m.content.startsWith("data:image/")).toBe(false);
     }
-    sendMock.mock.calls.forEach(([req]) => {
+    sendStreamMock.mock.calls.forEach(([req]) => {
       for (const turn of req.history) {
         expect(turn.content.startsWith("data:image/")).toBe(false);
       }
@@ -521,30 +543,26 @@ describe("long conversations must keep working (20+ messages in one chat)", () =
 });
 
 describe("concurrent sends are prevented", () => {
-  type Reply = { reply: string; provider: string; model: string };
-
   it("ignores a second send while a request is already in flight", async () => {
     const chat = makeChat("chat-guard", "Guard chat");
     await seed(chat, []);
 
-    let resolveSend: ((value: Reply) => void) | undefined;
-    sendMock.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveSend = resolve;
-      })
-    );
+    let releaseSend: (() => void) | undefined;
+    sendStreamMock.mockReturnValueOnce(gatedStream((release) => { releaseSend = release; }));
 
     const first = useChatStore.getState().sendMessageStream("First");
-    await Promise.resolve();
+    // Wait until the first request is genuinely in flight (stream requested
+    // and parked on the gate) before issuing the competing second send.
+    await vi.waitFor(() => expect(sendStreamMock).toHaveBeenCalledTimes(1));
+
     await useChatStore.getState().sendMessageStream("Second");
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-
-    resolveSend!({ reply: "ok", provider: "groq", model: "llama-3.3-70b-versatile" });
+    releaseSend!();
     await first;
 
     const cs = useChatStore.getState();
-    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
     expect(cs.messages).toHaveLength(2); // 1 user + 1 assistant, no duplicate
   });
 
@@ -554,23 +572,19 @@ describe("concurrent sends are prevented", () => {
     const asstMsg = makeMessage("g2", "chat-guard-r", "assistant", "a");
     await seed(chat, [userMsg, asstMsg]);
 
-    let resolveSend: ((value: Reply) => void) | undefined;
-    sendMock.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveSend = resolve;
-      })
-    );
+    let releaseSend: (() => void) | undefined;
+    sendStreamMock.mockReturnValueOnce(gatedStream((release) => { releaseSend = release; }));
 
     const first = useChatStore.getState().sendMessageStream("Next");
-    await Promise.resolve();
+    await vi.waitFor(() => expect(sendStreamMock).toHaveBeenCalledTimes(1));
+
     await useChatStore.getState().regenerateResponse("g2");
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-
-    resolveSend!({ reply: "ok", provider: "groq", model: "llama-3.3-70b-versatile" });
+    releaseSend!();
     await first;
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -589,8 +603,8 @@ describe("Path workspace context flows into chat requests", () => {
 
     await useChatStore.getState().sendMessageStream("Hello");
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [req] = sendMock.mock.calls[0];
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.workspaceContext).toBeUndefined();
   });
 
@@ -603,8 +617,8 @@ describe("Path workspace context flows into chat requests", () => {
       .getState()
       .sendMessageStream("Why does login.ts reject valid users?");
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
-    const [req] = sendMock.mock.calls[0];
+    expect(sendStreamMock).toHaveBeenCalledTimes(1);
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.message).toBe("Why does login.ts reject valid users?");
     expect(req.workspaceContext).toBeTruthy();
     expect(req.workspaceContext).toContain("src/auth/login.ts");
@@ -622,7 +636,7 @@ describe("Path workspace context flows into chat requests", () => {
       .getState()
       .sendMessageStream("What is this error?", "data:image/jpeg;base64,FRAME");
 
-    const [req] = sendMock.mock.calls[0];
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.image).toBe("data:image/jpeg;base64,FRAME");
     expect(req.workspaceContext).toBeTruthy();
   });
@@ -634,7 +648,7 @@ describe("Path workspace context flows into chat requests", () => {
 
     await useChatStore.getState().sendMessageStream("Can you see my folder?");
 
-    const [req] = sendMock.mock.calls[0];
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.workspaceContext).toBeTruthy();
     expect(req.workspaceContext).toContain("is connected");
     expect(req.workspaceContext).not.toContain("### src/");
@@ -647,7 +661,7 @@ describe("Path workspace context flows into chat requests", () => {
 
     await useChatStore.getState().sendMessageStream("List my files.");
 
-    const [req] = sendMock.mock.calls[0];
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.workspaceContext).toBeTruthy();
     expect(req.workspaceContext).toContain("src/auth/login.ts");
     expect(req.workspaceContext).toContain("Directories:");
@@ -659,7 +673,7 @@ describe("Path workspace context flows into chat requests", () => {
 
     await useChatStore.getState().sendMessageStream("Can you see my folder?");
 
-    const [req] = sendMock.mock.calls[0];
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.workspaceContext).toBeTruthy();
     expect(req.workspaceContext).toMatch(/no folder/i);
   });
@@ -680,16 +694,16 @@ describe("conversation-aware workspace references flow into chat requests", () =
     await seed(chat, []);
 
     await useChatStore.getState().sendMessageStream("Find the python files.");
-    let [req] = sendMock.mock.calls[0];
+    let [req] = sendStreamMock.mock.calls[0];
     expect(req.workspaceContext).toContain("server/api.py");
 
     await useChatStore.getState().sendMessageStream("Open the first one.");
-    [req] = sendMock.mock.calls[1];
+    [req] = sendStreamMock.mock.calls[1];
     expect(req.workspaceContext).toContain("server/api.py");
     expect(req.workspaceContext).toMatch(/Referenced file/);
 
     await useChatStore.getState().sendMessageStream("What does it do?");
-    [req] = sendMock.mock.calls[2];
+    [req] = sendStreamMock.mock.calls[2];
     expect(req.workspaceContext).toContain("server/api.py");
   });
 
@@ -700,7 +714,7 @@ describe("conversation-aware workspace references flow into chat requests", () =
 
     await useChatStore.getState().sendMessageStream("What was the folder name?");
 
-    const [req] = sendMock.mock.calls[0];
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.workspaceContext).toBeTruthy();
     expect(req.workspaceContext).toContain("nexuss-sample");
   });
@@ -712,7 +726,7 @@ describe("conversation-aware workspace references flow into chat requests", () =
 
     await useChatStore.getState().sendMessageStream("What is recursion?");
 
-    const [req] = sendMock.mock.calls[0];
+    const [req] = sendStreamMock.mock.calls[0];
     expect(req.workspaceContext).toBeUndefined();
   });
 });
@@ -731,17 +745,16 @@ describe("sendMessageStream with a workspace-change block", () => {
   it("stages a valid block as a pending change and strips it from the reply", async () => {
     const chat = makeChat("chat-change-1", "Change it");
     await seed(chat, []);
-    sendMock.mockResolvedValueOnce({
-      reply: [
-        "I'll change the endpoint.",
-        "```workspace-change",
-        JSON.stringify({ changes: [{ path: "server/api.py", content: "# updated\n" }] }),
-        "```"
-      ].join("\n"),
-      provider: "groq",
-      model: "llama-3.3-70b-versatile",
-      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
-    });
+    sendStreamMock.mockReturnValueOnce(
+      streamOf(
+        [
+          "I'll change the endpoint.",
+          "```workspace-change",
+          JSON.stringify({ changes: [{ path: "server/api.py", content: "# updated\n" }] }),
+          "```"
+        ].join("\n")
+      )
+    );
 
     await useChatStore.getState().sendMessageStream("Change the api endpoint");
 
@@ -764,17 +777,16 @@ describe("sendMessageStream with a workspace-change block", () => {
   it("never stages an escaping-path block and strips raw JSON from the reply", async () => {
     const chat = makeChat("chat-change-2", "Escape");
     await seed(chat, []);
-    sendMock.mockResolvedValueOnce({
-      reply: [
-        "```workspace-change",
-        JSON.stringify({ changes: [{ path: "../escape.ts", content: "x" }] }),
-        "```",
-        "I can't touch files outside the workspace."
-      ].join("\n"),
-      provider: "groq",
-      model: "llama-3.3-70b-versatile",
-      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
-    });
+    sendStreamMock.mockReturnValueOnce(
+      streamOf(
+        [
+          "```workspace-change",
+          JSON.stringify({ changes: [{ path: "../escape.ts", content: "x" }] }),
+          "```",
+          "I can't touch files outside the workspace."
+        ].join("\n")
+      )
+    );
 
     await useChatStore.getState().sendMessageStream("edit a file outside");
 
@@ -787,12 +799,9 @@ describe("sendMessageStream with a workspace-change block", () => {
   it("leaves normal code fences untouched and stages nothing", async () => {
     const chat = makeChat("chat-change-3", "Snippet");
     await seed(chat, []);
-    sendMock.mockResolvedValueOnce({
-      reply: "Here is the snippet:\n```ts\nconst x = 1;\n```",
-      provider: "groq",
-      model: "llama-3.3-70b-versatile",
-      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
-    });
+    sendStreamMock.mockReturnValueOnce(
+      streamOf("Here is the snippet:\n```ts\nconst x = 1;\n```")
+    );
 
     await useChatStore.getState().sendMessageStream("show a snippet");
 
@@ -839,17 +848,16 @@ describe("sendMessageStream with a workspace-command block", () => {
   it("stages a run request and strips the fence from the reply", async () => {
     const chat = makeChat("chat-cmd-1", "Run it");
     await seed(chat, []);
-    sendMock.mockResolvedValueOnce({
-      reply: [
-        "I'll run the tests.",
-        "```workspace-command",
-        JSON.stringify({ run: { command: "npm test" } }),
-        "```"
-      ].join("\n"),
-      provider: "groq",
-      model: "llama-3.3-70b-versatile",
-      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
-    });
+    sendStreamMock.mockReturnValueOnce(
+      streamOf(
+        [
+          "I'll run the tests.",
+          "```workspace-command",
+          JSON.stringify({ run: { command: "npm test" } }),
+          "```"
+        ].join("\n")
+      )
+    );
 
     await useChatStore.getState().sendMessageStream("run the tests");
 
@@ -864,17 +872,16 @@ describe("sendMessageStream with a workspace-command block", () => {
   it("strips the fence even when the command cannot be staged", async () => {
     const chat = makeChat("chat-cmd-2", "Run it");
     await seed(chat, []);
-    sendMock.mockResolvedValueOnce({
-      reply: [
-        "```workspace-command",
-        JSON.stringify({ run: { command: "" } }),
-        "```",
-        "Nothing to run here."
-      ].join("\n"),
-      provider: "groq",
-      model: "llama-3.3-70b-versatile",
-      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
-    });
+    sendStreamMock.mockReturnValueOnce(
+      streamOf(
+        [
+          "```workspace-command",
+          JSON.stringify({ run: { command: "" } }),
+          "```",
+          "Nothing to run here."
+        ].join("\n")
+      )
+    );
 
     await useChatStore.getState().sendMessageStream("run something");
 

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
 import { useUsageStore } from "@/store/usageStore";
-import { ApiError } from "@/services/api";
 import {
   getLastChatId,
   setLastChatId,
@@ -29,7 +28,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/store/useAuthStore", () => mocks.authStoreMock);
 
 vi.mock("@/services/chat", () => ({
-  chatService: { send: vi.fn() }
+  chatService: { sendStream: vi.fn() }
 }));
 
 vi.mock("@/services/settings", () => ({
@@ -39,11 +38,55 @@ vi.mock("@/services/settings", () => ({
   }
 }));
 
-import { chatService } from "@/services/chat";
+import {
+  chatService,
+  ChatStreamErrorEvent,
+  ChatStreamEvent
+} from "@/services/chat";
+import { FallbackAttempt, UsageInfo } from "@/types/chat";
 
 const UID_A = "user-a";
 const UID_B = "user-b";
 const setMockUser = mocks.setMockUser;
+
+// A completed stream: one chunk with the full reply, then the usage event.
+function streamOf(
+  reply: string,
+  opts: {
+    provider?: string;
+    model?: string;
+    usage?: UsageInfo;
+    fallback_used?: string | null;
+    attempts?: FallbackAttempt[];
+  } = {}
+): AsyncGenerator<ChatStreamEvent> {
+  async function* gen() {
+    yield { type: "chunk", content: reply } as ChatStreamEvent;
+    yield {
+      type: "usage",
+      usage: opts.usage ?? { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      provider: opts.provider ?? "groq",
+      model: opts.model ?? "llama-3.3-70b-versatile",
+      fallback_used: opts.fallback_used ?? null,
+      attempts: opts.attempts ?? []
+    } as ChatStreamEvent;
+  }
+  return gen();
+}
+
+function streamOfEvents(events: ChatStreamEvent[]): AsyncGenerator<ChatStreamEvent> {
+  async function* gen() {
+    for (const e of events) yield e;
+  }
+  return gen();
+}
+
+function streamRejected(err: unknown): AsyncGenerator<ChatStreamEvent> {
+  async function* gen() {
+    throw err;
+  }
+  return gen();
+}
 
 function makeChat(id: string, title: string, userId: string = UID_A): Chat {
   return { id, userId, title, provider: "groq", createdAt: 1, updatedAt: 1 };
@@ -70,7 +113,7 @@ beforeEach(async () => {
     loading: false,
     error: null,
     isStreaming: false,
-    streamingMessage: "",
+    streamingMessageId: null,
     fallbackNotice: null,
     theme: "light"
   });
@@ -299,11 +342,7 @@ describe("account isolation", () => {
         makeMessage("f2", "chat-foreign", "assistant", "A secret reply")
       ]
     });
-    vi.mocked(chatService.send).mockResolvedValue({
-      reply: "Hello back!",
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    });
+    vi.mocked(chatService.sendStream).mockReturnValue(streamOf("Hello back!"));
 
     await useChatStore.getState().sendMessageStream("Hello there");
 
@@ -311,7 +350,7 @@ describe("account isolation", () => {
     const bChat = useChatStore.getState().currentChat!;
     expect(bChat.id).not.toBe("chat-foreign");
     expect(bChat.userId).toBe(UID_B);
-    expect(chatService.send).toHaveBeenCalledWith(
+    expect(chatService.sendStream).toHaveBeenCalledWith(
       expect.objectContaining({ history: [] })
     );
   });
@@ -319,11 +358,7 @@ describe("account isolation", () => {
 
 describe("sendMessageStream", () => {
   it("creates a chat, sends history, and persists the assistant reply locally", async () => {
-    vi.mocked(chatService.send).mockResolvedValue({
-      reply: "Hello back!",
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    });
+    vi.mocked(chatService.sendStream).mockReturnValue(streamOf("Hello back!"));
 
     await useChatStore.getState().sendMessageStream("Hello there");
 
@@ -337,7 +372,7 @@ describe("sendMessageStream", () => {
     expect(cs.loading).toBe(false);
     expect(cs.error).toBeNull();
 
-    expect(chatService.send).toHaveBeenCalledWith(
+    expect(chatService.sendStream).toHaveBeenCalledWith(
       expect.objectContaining({
         message: "Hello there",
         history: [],
@@ -367,15 +402,11 @@ describe("sendMessageStream", () => {
         makeMessage("m2", "chat-1", "assistant", "Second")
       ]
     });
-    vi.mocked(chatService.send).mockResolvedValue({
-      reply: "Third reply",
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    });
+    vi.mocked(chatService.sendStream).mockReturnValue(streamOf("Third reply"));
 
     await useChatStore.getState().sendMessageStream("Third");
 
-    expect(chatService.send).toHaveBeenCalledWith(
+    expect(chatService.sendStream).toHaveBeenCalledWith(
       expect.objectContaining({
         message: "Third",
         history: [
@@ -392,7 +423,7 @@ describe("sendMessageStream", () => {
   });
 
   it("surfaces errors from the chat API without losing the user message", async () => {
-    vi.mocked(chatService.send).mockRejectedValue(new Error("Bad gateway"));
+    vi.mocked(chatService.sendStream).mockReturnValue(streamRejected(new Error("Bad gateway")));
 
     await useChatStore.getState().sendMessageStream("Hello");
 
@@ -404,16 +435,12 @@ describe("sendMessageStream", () => {
   });
 
   it("never stores API keys in localStorage or IndexedDB", async () => {
-    vi.mocked(chatService.send).mockResolvedValue({
-      reply: "Hello back!",
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    });
+    vi.mocked(chatService.sendStream).mockReturnValue(streamOf("Hello back!"));
 
     await useChatStore.getState().sendMessageStream("Hello");
 
     // Nothing sent to the backend looks like a key, and nothing local does.
-    expect(chatService.send).not.toHaveBeenCalledWith(
+    expect(chatService.sendStream).not.toHaveBeenCalledWith(
       expect.objectContaining({ api_key: expect.anything() })
     );
     const allLocal = JSON.stringify({
@@ -454,15 +481,13 @@ describe("provider/model selection", () => {
   it("sendMessageStream sends the exact selected model to the backend", async () => {
     useChatStore.getState().setProvider("gemini");
     useChatStore.getState().setModel("gemini-2.5-pro");
-    vi.mocked(chatService.send).mockResolvedValue({
-      reply: "Hello back!",
-      provider: "gemini",
-      model: "gemini-2.5-pro"
-    });
+    vi.mocked(chatService.sendStream).mockReturnValue(
+      streamOf("Hello back!", { provider: "gemini", model: "gemini-2.5-pro" })
+    );
 
     await useChatStore.getState().sendMessageStream("Hello");
 
-    expect(chatService.send).toHaveBeenCalledWith(
+    expect(chatService.sendStream).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "gemini", model: "gemini-2.5-pro" })
     );
     const cs = useChatStore.getState();
@@ -473,42 +498,44 @@ describe("provider/model selection", () => {
 
 describe("fallback usage tracking", () => {
   it("records every attempt and echoes the actual fallback provider/model", async () => {
-    vi.mocked(chatService.send).mockResolvedValue({
-      reply: "Hello from OpenRouter!",
-      provider: "openrouter",
-      model: "openai/gpt-oss-120b:free",
-      usage: { input_tokens: 3, output_tokens: 7, total_tokens: 10 },
-      fallback_used:
-        "Groq was temporarily unavailable. Response generated using Openrouter.",
-      attempts: [
-        {
-          provider: "groq",
-          model: "llama-3.3-70b-versatile",
-          attempt: 1,
-          status: "failed",
-          http_status: 429,
-          reason: "rate_limit",
-          input_tokens: 0,
-          output_tokens: 0,
-          total_tokens: 0,
-          response_time_ms: 42,
-          timestamp: 1
-        },
-        {
-          provider: "openrouter",
-          model: "openai/gpt-oss-120b:free",
-          attempt: 2,
-          status: "success",
-          http_status: 200,
-          reason: null,
-          input_tokens: 3,
-          output_tokens: 7,
-          total_tokens: 10,
-          response_time_ms: 120,
-          timestamp: 2
-        }
-      ]
-    });
+    const attempts: FallbackAttempt[] = [
+      {
+        provider: "groq",
+        model: "llama-3.3-70b-versatile",
+        attempt: 1,
+        status: "failed",
+        http_status: 429,
+        reason: "rate_limit",
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        response_time_ms: 42,
+        timestamp: 1
+      },
+      {
+        provider: "openrouter",
+        model: "openai/gpt-oss-120b:free",
+        attempt: 2,
+        status: "success",
+        http_status: 200,
+        reason: null,
+        input_tokens: 3,
+        output_tokens: 7,
+        total_tokens: 10,
+        response_time_ms: 120,
+        timestamp: 2
+      }
+    ];
+    vi.mocked(chatService.sendStream).mockReturnValue(
+      streamOf("Hello from OpenRouter!", {
+        provider: "openrouter",
+        model: "openai/gpt-oss-120b:free",
+        usage: { input_tokens: 3, output_tokens: 7, total_tokens: 10 },
+        fallback_used:
+          "Groq was temporarily unavailable. Response generated using Openrouter.",
+        attempts
+      })
+    );
 
     await useChatStore.getState().sendMessageStream("Hello");
 
@@ -535,7 +562,7 @@ describe("fallback usage tracking", () => {
   });
 
   it("records error attempts when every provider fails", async () => {
-    const failedAttempts = [
+    const failedAttempts: FallbackAttempt[] = [
       {
         provider: "groq",
         model: "llama-3.3-70b-versatile",
@@ -563,8 +590,16 @@ describe("fallback usage tracking", () => {
         timestamp: 2
       }
     ];
-    vi.mocked(chatService.send).mockRejectedValue(
-      new ApiError(502, "All AI providers failed.", failedAttempts)
+    vi.mocked(chatService.sendStream).mockReturnValue(
+      streamOfEvents([
+        {
+          type: "error",
+          status: 502,
+          message: "All AI providers failed.",
+          partial: false,
+          attempts: failedAttempts
+        } as ChatStreamErrorEvent
+      ])
     );
 
     await useChatStore.getState().sendMessageStream("Hello");
@@ -580,46 +615,44 @@ describe("fallback usage tracking", () => {
   });
 
   it("clears the fallback notice when the primary succeeds next time", async () => {
-    vi.mocked(chatService.send).mockResolvedValueOnce({
-      reply: "Fallen back",
-      provider: "openrouter",
-      model: "openai/gpt-oss-120b:free",
-      fallback_used:
-        "Groq was temporarily unavailable. Response generated using Openrouter.",
-      attempts: [
-        {
-          provider: "groq",
-          model: "llama-3.3-70b-versatile",
-          attempt: 1,
-          status: "failed",
-          http_status: 429,
-          reason: "rate_limit",
-          input_tokens: 0,
-          output_tokens: 0,
-          total_tokens: 0,
-          response_time_ms: 5,
-          timestamp: 1
-        },
-        {
-          provider: "openrouter",
-          model: "openai/gpt-oss-120b:free",
-          attempt: 2,
-          status: "success",
-          http_status: 200,
-          reason: null,
-          input_tokens: 1,
-          output_tokens: 1,
-          total_tokens: 2,
-          response_time_ms: 6,
-          timestamp: 2
-        }
-      ]
-    });
-    vi.mocked(chatService.send).mockResolvedValueOnce({
-      reply: "Primary back",
-      provider: "groq",
-      model: "llama-3.3-70b-versatile"
-    });
+    const fallbackAttempts: FallbackAttempt[] = [
+      {
+        provider: "groq",
+        model: "llama-3.3-70b-versatile",
+        attempt: 1,
+        status: "failed",
+        http_status: 429,
+        reason: "rate_limit",
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        response_time_ms: 5,
+        timestamp: 1
+      },
+      {
+        provider: "openrouter",
+        model: "openai/gpt-oss-120b:free",
+        attempt: 2,
+        status: "success",
+        http_status: 200,
+        reason: null,
+        input_tokens: 1,
+        output_tokens: 1,
+        total_tokens: 2,
+        response_time_ms: 6,
+        timestamp: 2
+      }
+    ];
+    vi.mocked(chatService.sendStream).mockReturnValueOnce(
+      streamOf("Fallen back", {
+        provider: "openrouter",
+        model: "openai/gpt-oss-120b:free",
+        fallback_used:
+          "Groq was temporarily unavailable. Response generated using Openrouter.",
+        attempts: fallbackAttempts
+      })
+    );
+    vi.mocked(chatService.sendStream).mockReturnValueOnce(streamOf("Primary back"));
 
     await useChatStore.getState().sendMessageStream("First");
     expect(useChatStore.getState().fallbackNotice).toContain("Groq");

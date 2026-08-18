@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import json
 import time
-from typing import Dict, List
+from typing import Dict, Iterator, List, Tuple
 
 import httpx
 
@@ -206,6 +207,27 @@ def _get_client() -> httpx.Client:
     return _client
 
 
+def _usage_from_dict(data) -> UsageInfo:
+    return UsageInfo(
+        input_tokens=data.get("prompt_tokens", 0),
+        output_tokens=data.get("completion_tokens", 0),
+        total_tokens=data.get("total_tokens", 0),
+    )
+
+
+def _stream_timeout(timeout: float | None) -> httpx.Timeout:
+    """Timeout for a streaming request.
+
+    Connect/write/pool phases stay short so a dead provider is detected fast;
+    the read phase is the per-chunk ceiling (capped so one hung chunk cannot
+    stall the whole chain). The overall wall-clock deadline is enforced by the
+    fallback engine between chunks, so a healthy stream keeps flowing while a
+    silent one still fails quickly.
+    """
+    read = min(timeout or GROQ_TIMEOUT_SECONDS, 30.0)
+    return httpx.Timeout(connect=10.0, read=read, write=10.0, pool=10.0)
+
+
 def _extract_retry_after(resp) -> float | None:
     """Best-effort cooldown hint from a 429 response.
 
@@ -341,10 +363,109 @@ def complete(
         raise EmptyResponseError()
 
     usage_data = data.get("usage") or {}
-    usage = UsageInfo(
-        input_tokens=usage_data.get("prompt_tokens", 0),
-        output_tokens=usage_data.get("completion_tokens", 0),
-        total_tokens=usage_data.get("total_tokens", 0),
-    )
+    usage = _usage_from_dict(usage_data)
 
     return raw.strip(), usage
+
+
+def complete_stream(
+    messages: List[Dict],
+    *,
+    provider: str = "groq",
+    model: str | None = None,
+    api_key: str | None = None,
+    timeout: float | None = None,
+) -> Iterator[Tuple[str | None, UsageInfo | None]]:
+    """Stream a chat completion from the selected provider.
+
+    Returns a generator yielding ``(delta, usage)`` tuples:
+      - ``(text, None)`` for each content delta (already stripped of trailing
+        whitespace; deltas are streamed exactly as the provider sends them)
+      - ``(None, UsageInfo)`` as the final item once the stream completes
+
+    Raises the same ``AIProviderError`` hierarchy as ``complete`` for setup
+    problems (unsupported provider, missing key, empty response) and maps
+    transport / HTTP failures the same way. A failure while the stream is
+    already producing content is raised from the generator's iteration; any
+    text already yielded is preserved by the caller.
+    """
+    if provider not in PROVIDER_ENDPOINTS:
+        raise UnsupportedProviderError()
+
+    if not api_key:
+        if provider == "groq":
+            api_key = get_api_key()
+        else:
+            raise MissingAPIKeyError()
+
+    resolved_model = model or (
+        get_model() if provider == "groq" else PROVIDER_DEFAULT_MODELS[provider]
+    )
+
+    payload = {
+        "model": resolved_model,
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": get_max_tokens(),
+        "stream": True,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    url = resolve_endpoint(provider)
+
+    return _stream_payload(
+        url,
+        {"json": payload, "headers": headers, "timeout": _stream_timeout(timeout)},
+    )
+
+
+def _stream_payload(
+    url: str, request_kwargs: Dict
+) -> Iterator[Tuple[str | None, UsageInfo | None]]:
+    """Generator that reads an OpenAI-style SSE stream from a provider."""
+    client = _get_client()
+    produced = False
+    usage: UsageInfo | None = None
+    try:
+        with client.stream("POST", url, **request_kwargs) as resp:
+            if resp.status_code != 200:
+                raise _map_error(resp.status_code, resp)
+
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except ValueError:
+                    continue  # ignore malformed keep-alive chunks
+                if obj.get("usage"):
+                    usage = _usage_from_dict(obj["usage"])
+                choices = obj.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                text = delta.get("content")
+                if isinstance(text, str) and text:
+                    produced = True
+                    yield text, None
+    except httpx.TimeoutException:
+        raise ProviderUnavailableError(
+            "The AI provider timed out. Please try again.", category="network"
+        ) from None
+    except httpx.HTTPError:
+        raise ProviderUnavailableError(
+            "Network error reaching the AI provider. Please try again.",
+            category="network",
+        ) from None
+
+    if not produced:
+        raise EmptyResponseError()
+    yield None, usage or UsageInfo()

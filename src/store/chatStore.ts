@@ -16,11 +16,11 @@ import {
   setLocalModel,
   clearAccountStorage
 } from "@/storage/localStorage";
-import { chatService } from "@/services/chat";
+import { chatService, ChatStreamErrorEvent, ChatStreamUsageEvent } from "@/services/chat";
 import { ApiError } from "@/services/api";
 import { settingsService } from "@/services/settings";
 import { generateTitle, getErrorMessage } from "@/utils";
-import { filterReasoning } from "@/utils/reasoning";
+import { ReasoningFilter } from "@/utils/reasoning";
 import db from "@/lib/db/db";
 import { useUsageStore } from "@/store/usageStore";
 import { useAuthStore } from "@/store/useAuthStore";
@@ -123,13 +123,18 @@ interface ChatRequestHistory {
 // Shown (and persisted) when a model reply is entirely internal reasoning with
 // no recoverable answer. Storing an empty string would corrupt the next
 // request's history (backend ChatTurn.content requires at least 1 char -> 422).
-const EMPTY_REPLY_FALLBACK =
+export const EMPTY_REPLY_FALLBACK =
   "I couldn't generate a complete response. Please try again or rephrase your question.";
 
-// Shared request path for sending a user turn and persisting the assistant
+// Shared request path for sending a user turn and streaming the assistant
 // reply. Used by the initial send AND by edit/regenerate so that every path
 // preserves provider routing, model selection, fallback behavior, streaming
 // state, usage tracking, and error handling identically.
+//
+// Streaming: chunks are appended to a single assistant message in place as
+// they arrive (visible immediately), the message is persisted to IndexedDB
+// once the stream completes, and the reasoning filter is applied per chunk so
+// markers never reach the screen even when split across chunk boundaries.
 async function requestAssistant(
   chat: Chat,
   text: string,
@@ -141,14 +146,19 @@ async function requestAssistant(
   const model = isValidModelForProvider(provider, state.model)
     ? state.model
     : DEFAULT_PROVIDER_MODELS[provider];
+  const asstId = newId();
 
   useChatStore.setState({
     loading: true,
     error: null,
-    isStreaming: false,
-    streamingMessage: "",
+    isStreaming: true,
+    streamingMessageId: asstId,
     fallbackNotice: null
   });
+
+  let usageEvent: ChatStreamUsageEvent | null = null;
+  let errorEvent: ChatStreamErrorEvent | null = null;
+  let display = "";
 
   try {
     const startTime = performance.now();
@@ -156,7 +166,7 @@ async function requestAssistant(
     // relevant local files/sections for THIS question and attaches them as
     // optional context. The full project is never sent.
     const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
-    const res = await chatService.send({
+    const events = chatService.sendStream({
       message: text,
       history,
       provider,
@@ -166,9 +176,65 @@ async function requestAssistant(
     });
     const responseTime = performance.now() - startTime;
 
+    // The model may attach fenced `workspace-change` / `workspace-command`
+    // blocks proposing edits or runs. They are staged for approval and always
+    // stripped from the transcript; nothing is ever executed or written
+    // without the user approving it first (the validated tool layer enforces
+    // the workspace boundary).
+    const reasoner = new ReasoningFilter();
+    let assistantAdded = false;
+
+    const appendOrUpdate = () => {
+      if (!assistantAdded) {
+        assistantAdded = true;
+        useChatStore.setState((s) => ({
+          messages: [
+            ...s.messages,
+            {
+              id: asstId,
+              chatId: chat.id,
+              role: "assistant" as const,
+              content: display,
+              timestamp: Date.now()
+            }
+          ]
+        }));
+      } else {
+        useChatStore.setState((s) => ({
+          messages: s.messages.map((m) =>
+            m.id === asstId ? { ...m, content: display } : m
+          )
+        }));
+      }
+    };
+
+    for await (const event of events) {
+      if (event.type === "chunk") {
+        const visible = reasoner.push(event.content);
+        if (!visible) continue;
+        display += visible;
+        appendOrUpdate();
+      } else if (event.type === "usage") {
+        usageEvent = event;
+        if (event.fallback_used) {
+          useChatStore.setState({ fallbackNotice: event.fallback_used });
+        }
+      } else if (event.type === "error") {
+        errorEvent = event;
+      }
+    }
+
+    // Release any answer text the reasoning filter was holding back (e.g. a
+    // marker split right before the stream ended) so nothing is lost.
+    const tail = reasoner.flush();
+    if (tail) {
+      display += tail;
+      appendOrUpdate();
+    }
+
     // Record usage for EVERY attempted request (primary + fallbacks). The
     // successful attempt carries the actual provider/model that answered.
-    const attempts = res.attempts ?? [];
+    const attempts = usageEvent?.attempts ?? errorEvent?.attempts ?? [];
     if (attempts.length > 0) {
       await recordAttempts(
         attempts.map((a) => ({
@@ -181,23 +247,37 @@ async function requestAssistant(
           success: a.status === "success"
         }))
       );
-    } else {
+    } else if (usageEvent) {
       // Older backend without an attempt log: fall back to a single record.
       await recordAttempts([
         {
-          provider: (res.provider || provider) as ProviderType,
-          model: res.model || model,
-          inputTokens: res.usage?.input_tokens ?? 0,
-          outputTokens: res.usage?.output_tokens ?? 0,
-          totalTokens: res.usage?.total_tokens ?? 0,
+          provider: (usageEvent.provider || provider) as ProviderType,
+          model: usageEvent.model || model,
+          inputTokens: usageEvent.usage?.input_tokens ?? 0,
+          outputTokens: usageEvent.usage?.output_tokens ?? 0,
+          totalTokens: usageEvent.usage?.total_tokens ?? 0,
           responseTime: Math.round(responseTime),
           success: true
         }
       ]);
+    } else if (errorEvent) {
+      await recordAttempts([
+        {
+          provider,
+          model,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          responseTime: 0,
+          success: false
+        }
+      ]);
     }
 
-    if (res.fallback_used) {
-      useChatStore.setState({ fallbackNotice: res.fallback_used });
+    // A mid-stream failure keeps the partial text on screen but tells the user
+    // the answer was interrupted (the regenerate button is the retry path).
+    if (errorEvent) {
+      useChatStore.setState({ error: errorEvent.message });
     }
 
     // Echo the exact provider/model the backend used so the on-screen
@@ -205,24 +285,23 @@ async function requestAssistant(
     // temporarily routed to a server-side vision model the user never picked;
     // keep the user's selection untouched there so the dropdown stays valid
     // for subsequent normal chat.
-    const latest = useChatStore.getState();
-    if (!image) {
-      if (res.provider && res.provider !== latest.provider) {
-        useChatStore.setState({ provider: res.provider as ProviderType });
+    if (usageEvent && !image) {
+      const latest = useChatStore.getState();
+      if (usageEvent.provider && usageEvent.provider !== latest.provider) {
+        useChatStore.setState({ provider: usageEvent.provider as ProviderType });
       }
-      if (res.model && res.model !== latest.model) {
-        useChatStore.setState({ model: res.model });
+      if (usageEvent.model && usageEvent.model !== latest.model) {
+        useChatStore.setState({ model: usageEvent.model });
       }
     }
 
-    const filtered = filterReasoning(res.reply).trim();
-    // The model may attach a fenced `workspace-change` block proposing edits.
-    // It is always stripped from the transcript; a valid block is staged as a
-    // diff in the workspace panel for the user to approve. Nothing is ever
-    // written without approval, and the validated tool layer enforces the
-    // workspace boundary before staging.
+    const filtered = display.trim();
+    // Shown (and persisted) when a model reply is entirely internal reasoning
+    // with no recoverable answer. Storing an empty string would corrupt the
+    // next request's history (backend ChatTurn.content requires at least 1
+    // char -> 422).
     const changeBlock = extractChangeBlock(filtered);
-    let display =
+    let finalContent =
       filtered.length > 0 ? stripChangeBlock(filtered) : EMPTY_REPLY_FALLBACK;
     if (changeBlock) {
       void useWorkspaceStore
@@ -237,9 +316,9 @@ async function requestAssistant(
     // payload is invalid); a valid block is staged in the workspace panel for
     // approval. A command is only ever executed after the user runs it, and
     // only via the native runtime's validation layer.
-    const commandBlock = extractCommandBlock(display);
-    if (commandBlock || hasCommandFence(display)) {
-      display = stripCommandBlock(display) || EMPTY_REPLY_FALLBACK;
+    const commandBlock = extractCommandBlock(finalContent);
+    if (commandBlock || hasCommandFence(finalContent)) {
+      finalContent = stripCommandBlock(finalContent) || EMPTY_REPLY_FALLBACK;
       if (commandBlock) {
         void useWorkspaceStore
           .getState()
@@ -264,27 +343,38 @@ async function requestAssistant(
           ...(last.stderr ? [`Stderr:\n\`\`\`\n${last.stderr}\n\`\`\``] : [])
         ].join("\n");
         useWorkspaceStore.getState().clearLastCommandResult();
-        display = `${display}\n\n${resultText}`;
+        finalContent = `${finalContent}\n\n${resultText}`;
       }
     }
+
     const asstMsg: Message = {
-      id: newId(),
+      id: asstId,
       chatId: chat.id,
       role: "assistant",
-      content: display,
+      content: finalContent,
       timestamp: Date.now()
     };
+    // Persist the completed assistant message (chunks were shown live but
+    // only the final filtered text is stored).
     await db.messages.add(asstMsg);
     await db.chats.update(chat.id, { updatedAt: asstMsg.timestamp });
-    useChatStore.setState((s) => ({
-      messages: [...s.messages, asstMsg],
-      currentChat: s.currentChat
-        ? { ...s.currentChat, updatedAt: asstMsg.timestamp }
-        : s.currentChat,
-      chats: s.chats.map((c) =>
-        c.id === chat.id ? { ...c, updatedAt: asstMsg.timestamp } : c
-      )
-    }));
+    useChatStore.setState((s) => {
+      const exists = s.messages.some((m) => m.id === asstId);
+      const mapped = s.messages.map((m) =>
+        m.id === asstId
+          ? { ...m, content: finalContent, timestamp: asstMsg.timestamp }
+          : m
+      );
+      return {
+        messages: exists ? mapped : [...mapped, asstMsg],
+        currentChat: s.currentChat
+          ? { ...s.currentChat, updatedAt: asstMsg.timestamp }
+          : s.currentChat,
+        chats: s.chats.map((c) =>
+          c.id === chat.id ? { ...c, updatedAt: asstMsg.timestamp } : c
+        )
+      };
+    });
   } catch (e: unknown) {
     // Record every failed attempt from the backend when the error body
     // carried the attempt log; otherwise record a single failed entry.
@@ -317,7 +407,11 @@ async function requestAssistant(
     }
     useChatStore.setState({ error: getErrorMessage(e) });
   } finally {
-    useChatStore.setState({ loading: false, isStreaming: false, streamingMessage: "" });
+    useChatStore.setState({
+      loading: false,
+      isStreaming: false,
+      streamingMessageId: null
+    });
   }
 }
 
@@ -330,7 +424,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
   loading: false,
   error: null,
   isStreaming: false,
-  streamingMessage: "",
+  streamingMessageId: null,
   fallbackNotice: null,
   theme: "light",
 
@@ -344,7 +438,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       loading: false,
       error: null,
       isStreaming: false,
-      streamingMessage: "",
+      streamingMessageId: null,
       fallbackNotice: null,
       theme: "light"
     });
@@ -522,7 +616,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       currentChat: wasCurrent ? null : state.currentChat,
       messages: wasCurrent ? [] : state.messages,
       isStreaming: wasCurrent ? false : state.isStreaming,
-      streamingMessage: wasCurrent ? "" : state.streamingMessage,
+      streamingMessageId: wasCurrent ? null : state.streamingMessageId,
       error: null
     }));
     if (getLastChatId(uid) === id) {
@@ -544,6 +638,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
 
     const current = get();
     if (current.loading || current.isStreaming) return;
+    // Set the in-flight flag synchronously so a second send issued before the
+    // first reaches its first await can never slip through the guard.
+    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null });
 
     // The entire flow is wrapped so any failure (local DB, network, provider)
     // surfaces as a user-visible error instead of failing silently.
@@ -579,7 +676,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
         loading: true,
         error: null,
         isStreaming: false,
-        streamingMessage: "",
+        streamingMessageId: null,
         fallbackNotice: null,
         currentChat: state.currentChat
           ? { ...state.currentChat, updatedAt }
@@ -611,7 +708,12 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
         await get().renameChat(currentChat!.id, generateTitle(text));
       }
     } catch (e: unknown) {
-      set({ error: getErrorMessage(e) });
+      set({
+        error: getErrorMessage(e),
+        loading: false,
+        isStreaming: false,
+        streamingMessageId: null
+      });
     }
   },
 
@@ -651,6 +753,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const removed = messages.slice(idx);
     const removedIds = removed.map((m) => m.id);
     const kept = messages.slice(0, idx);
+    // Set the in-flight flag synchronously (before the first await) so a
+    // racing regenerate/edit/send can never slip through the guard.
+    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null });
     try {
       await db.transaction("rw", db.messages, db.chats, async () => {
         if (removedIds.length > 0) {
@@ -660,7 +765,12 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
         await db.chats.update(currentChat.id, { updatedAt: editedMsg.timestamp });
       });
     } catch (e: unknown) {
-      set({ error: getErrorMessage(e) });
+      set({
+        error: getErrorMessage(e),
+        loading: false,
+        isStreaming: false,
+        streamingMessageId: null
+      });
       return;
     }
 
@@ -669,7 +779,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       loading: true,
       error: null,
       isStreaming: false,
-      streamingMessage: "",
+      streamingMessageId: null,
       fallbackNotice: null,
       currentChat: state.currentChat
         ? { ...state.currentChat, updatedAt: editedMsg.timestamp }
@@ -719,6 +829,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const removedIds = removed.map((m) => m.id);
     const kept = messages.slice(0, idx);
     const updatedAt = Date.now();
+    // Set the in-flight flag synchronously (before the first await) so a
+    // racing regenerate/edit/send can never slip through the guard.
+    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null });
     try {
       await db.transaction("rw", db.messages, db.chats, async () => {
         if (removedIds.length > 0) {
@@ -727,7 +840,12 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
         await db.chats.update(currentChat.id, { updatedAt });
       });
     } catch (e: unknown) {
-      set({ error: getErrorMessage(e) });
+      set({
+        error: getErrorMessage(e),
+        loading: false,
+        isStreaming: false,
+        streamingMessageId: null
+      });
       return;
     }
 
@@ -736,7 +854,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       loading: true,
       error: null,
       isStreaming: false,
-      streamingMessage: "",
+      streamingMessageId: null,
       fallbackNotice: null,
       currentChat: state.currentChat
         ? { ...state.currentChat, updatedAt }

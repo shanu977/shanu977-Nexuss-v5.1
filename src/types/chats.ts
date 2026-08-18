@@ -37,6 +37,8 @@ export interface ChatState {
   loading: boolean;
   error: string | null;
   isStreaming: boolean;
-  streamingMessage: string;
+  // Id of the assistant message currently being streamed (added to `messages`
+  // as soon as the first chunk arrives and updated in place until completion).
+  streamingMessageId: string | null;
   fallbackNotice: string | null;
 }
