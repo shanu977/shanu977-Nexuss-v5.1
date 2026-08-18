@@ -9,18 +9,24 @@ afterEach(() => {
 function renderComposer(overrides: {
   onOpenWorkspace?: () => void;
   onStartScreenShare?: () => void;
+  loading?: boolean;
+  disabled?: boolean;
+  onStop?: () => void;
 } = {}) {
   const onSend = vi.fn();
   const onStartScreenShare = overrides.onStartScreenShare ?? vi.fn();
+  const onStop = overrides.onStop ?? vi.fn();
   render(
     <ChatComposer
       onSend={onSend}
-      loading={false}
+      onStop={onStop}
+      loading={overrides.loading ?? false}
+      disabled={overrides.disabled}
       onOpenWorkspace={overrides.onOpenWorkspace}
       onStartScreenShare={onStartScreenShare}
     />
   );
-  return { onSend, onStartScreenShare };
+  return { onSend, onStartScreenShare, onStop };
 }
 
 describe("ChatComposer Path menu item", () => {
@@ -55,5 +61,42 @@ describe("ChatComposer Path menu item", () => {
     expect(() => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Path" }));
     }).not.toThrow();
+  });
+});
+
+describe("ChatComposer Stop button", () => {
+  it("shows Send when idle and Stop while generating", () => {
+    const onStop = vi.fn();
+    const { rerender } = render(
+      <ChatComposer onSend={vi.fn()} onStop={onStop} loading={false} />
+    );
+    expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
+
+    rerender(<ChatComposer onSend={vi.fn()} onStop={onStop} loading={true} />);
+    expect(screen.getByRole("button", { name: "Stop generating" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+  });
+
+  it("calls onStop when the Stop button is clicked", () => {
+    const onStop = vi.fn();
+    render(<ChatComposer onSend={vi.fn()} onStop={onStop} loading={true} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays clickable while disabled (isStreaming) and does not submit the form", () => {
+    const onStop = vi.fn();
+    const onSend = vi.fn();
+    render(
+      <ChatComposer onSend={onSend} onStop={onStop} loading={false} disabled={true} />
+    );
+
+    const stop = screen.getByRole("button", { name: "Stop generating" });
+    expect(stop).not.toBeDisabled();
+    fireEvent.click(stop);
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
   });
 });

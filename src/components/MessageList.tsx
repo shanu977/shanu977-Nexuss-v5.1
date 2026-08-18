@@ -66,7 +66,7 @@ export default function MessageList({
   screenShareActive,
   captureScreenFrame
 }: MessageListProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const editMessageAndRegenerate = useChatStore((s) => s.editMessageAndRegenerate);
   const regenerateResponse = useChatStore((s) => s.regenerateResponse);
 
@@ -75,9 +75,47 @@ export default function MessageList({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // Tracks whether the user is at/near the bottom of the conversation. Manual
+  // scrolling always wins: once the user scrolls beyond the threshold, auto-
+  // following stops and only resumes when they come back to the bottom.
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const isGenerating = loading || isStreaming;
+  const prevFirstIdRef = useRef<string | undefined>(undefined);
+  const prevLengthRef = useRef(0);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = distanceFromBottom < 120;
+    setIsNearBottom((prev) => (prev === near ? prev : near));
+  }, []);
+
+  // Scroll policy:
+  // - A different conversation loading in always lands on the newest message.
+  // - A new message appended while the user is still near the bottom scrolls
+  //   down so the reply is visible.
+  // - While generating, streamed content only keeps the view pinned to the
+  //   bottom when the user is already there. If the user scrolls away, their
+  //   position is never overridden until they return to the bottom.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isStreaming, streamingMessageId]);
+    const el = scrollRef.current;
+    if (!el) return;
+    const firstId = messages[0]?.id;
+    const length = messages.length;
+    const chatSwitched = firstId !== undefined && firstId !== prevFirstIdRef.current;
+    const messageAdded = length > prevLengthRef.current;
+    prevFirstIdRef.current = firstId;
+    prevLengthRef.current = length;
+
+    if (chatSwitched) {
+      el.scrollTop = el.scrollHeight;
+    } else if (messageAdded && isNearBottom) {
+      el.scrollTop = el.scrollHeight;
+    } else if (isGenerating && isNearBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages, isGenerating, isNearBottom]);
 
   const copyTimer = useRef<number | null>(null);
 
@@ -207,7 +245,11 @@ export default function MessageList({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div
+      ref={scrollRef}
+      onScroll={handleScroll}
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+    >
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-6">
         {messages.map((msg) => (
           <MessageItem
@@ -239,7 +281,7 @@ export default function MessageList({
           </div>
         )}
 
-        <div ref={bottomRef} className="h-px" />
+        <div className="h-px" />
       </div>
     </div>
   );

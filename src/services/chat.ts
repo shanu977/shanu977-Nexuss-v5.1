@@ -59,9 +59,13 @@ export const chatService = {
     }),
 
   /** Stream the assistant answer as Server-Sent Events (`chunk`/`usage`/`error`). */
-  sendStream: (body: ChatSendBody): AsyncGenerator<ChatStreamEvent> =>
+  sendStream: (
+    body: ChatSendBody,
+    options?: { signal?: AbortSignal }
+  ): AsyncGenerator<ChatStreamEvent> =>
     requestStream<ChatStreamEvent>("/chat/stream", {
       method: "POST",
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      ...(options?.signal ? { signal: options.signal } : {})
     })
 };

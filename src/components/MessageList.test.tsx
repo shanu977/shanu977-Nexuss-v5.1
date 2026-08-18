@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import MessageList from "@/components/MessageList";
 import { useChatStore } from "@/store";
 import { Message } from "@/types/chats";
@@ -42,10 +42,34 @@ function makeMessage(
   return { id, chatId, role, content, timestamp: 1 };
 }
 
+// jsdom does not lay out elements, so give the scroll container fake scroll
+// metrics to drive the near-bottom detection used by auto-scrolling.
+function mockScrollMetrics(
+  el: HTMLElement,
+  opts: { scrollTop: number; scrollHeight: number; clientHeight: number }
+) {
+  Object.defineProperty(el, "scrollTop", {
+    configurable: true,
+    writable: true,
+    value: opts.scrollTop
+  });
+  Object.defineProperty(el, "scrollHeight", {
+    configurable: true,
+    get: () => opts.scrollHeight
+  });
+  Object.defineProperty(el, "clientHeight", {
+    configurable: true,
+    get: () => opts.clientHeight
+  });
+}
+
+function scrollContainer(container: HTMLElement): HTMLElement {
+  const el = container.querySelector(".overflow-y-auto");
+  if (!el) throw new Error("scroll container not found");
+  return el as HTMLElement;
+}
+
 beforeEach(async () => {
-  // jsdom does not implement scrollIntoView; stub it so the auto-scroll effect
-  // on message changes does not throw.
-  Element.prototype.scrollIntoView = vi.fn();
   window.localStorage.clear();
   await db.transaction("rw", db.chats, db.messages, async () => {
     await db.chats.clear();
@@ -185,5 +209,107 @@ describe("MessageList streaming", () => {
 
     // The plain user bubble carries the responsive word-break utility.
     expect(container.querySelector("p.break-words")).not.toBeNull();
+  });
+
+  it("keeps following the stream while the user is near the bottom", () => {
+    const userMsg = makeMessage("u1", "c1", "user", "Explain hooks");
+    const asstMsg = makeMessage("a1", "c1", "assistant", "First token.");
+    const { container, rerender } = renderList({
+      messages: [userMsg, asstMsg],
+      isStreaming: true,
+      streamingMessageId: "a1"
+    });
+
+    const el = scrollContainer(container);
+    mockScrollMetrics(el, { scrollTop: 1990, scrollHeight: 2000, clientHeight: 500 });
+    fireEvent.scroll(el);
+
+    const updated = makeMessage("a1", "c1", "assistant", "First token. Second token.");
+    rerender(
+      <MessageList
+        messages={[userMsg, updated]}
+        loading={false}
+        isStreaming={true}
+        streamingMessageId="a1"
+      />
+    );
+
+    expect(el.scrollTop).toBe(2000);
+  });
+
+  it("does not override the scroll position when the user scrolls away mid-stream", () => {
+    const userMsg = makeMessage("u1", "c1", "user", "Explain hooks");
+    const asstMsg = makeMessage("a1", "c1", "assistant", "First token.");
+    const { container, rerender } = renderList({
+      messages: [userMsg, asstMsg],
+      isStreaming: true,
+      streamingMessageId: "a1"
+    });
+
+    const el = scrollContainer(container);
+    mockScrollMetrics(el, { scrollTop: 500, scrollHeight: 2000, clientHeight: 500 });
+    fireEvent.scroll(el);
+
+    const updated = makeMessage("a1", "c1", "assistant", "First token. Second token.");
+    rerender(
+      <MessageList
+        messages={[userMsg, updated]}
+        loading={false}
+        isStreaming={true}
+        streamingMessageId="a1"
+      />
+    );
+
+    expect(el.scrollTop).toBe(500);
+  });
+
+  it("resumes following once the user returns to the bottom", () => {
+    const userMsg = makeMessage("u1", "c1", "user", "Explain hooks");
+    const asstMsg = makeMessage("a1", "c1", "assistant", "First token.");
+    const { container, rerender } = renderList({
+      messages: [userMsg, asstMsg],
+      isStreaming: true,
+      streamingMessageId: "a1"
+    });
+
+    const el = scrollContainer(container);
+    mockScrollMetrics(el, { scrollTop: 500, scrollHeight: 2000, clientHeight: 500 });
+    fireEvent.scroll(el);
+
+    el.scrollTop = 1990;
+    fireEvent.scroll(el);
+
+    const updated = makeMessage("a1", "c1", "assistant", "First token. Second token.");
+    rerender(
+      <MessageList
+        messages={[userMsg, updated]}
+        loading={false}
+        isStreaming={true}
+        streamingMessageId="a1"
+      />
+    );
+
+    expect(el.scrollTop).toBe(2000);
+  });
+
+  it("scrolls to the bottom when a new message arrives while near the bottom", () => {
+    const userMsg = makeMessage("u1", "c1", "user", "Hi");
+    const { container, rerender } = renderList({ messages: [userMsg] });
+
+    const el = scrollContainer(container);
+    mockScrollMetrics(el, { scrollTop: 1990, scrollHeight: 2000, clientHeight: 500 });
+    fireEvent.scroll(el);
+
+    const asstMsg = makeMessage("a1", "c1", "assistant", "Hello!");
+    rerender(
+      <MessageList
+        messages={[userMsg, asstMsg]}
+        loading={false}
+        isStreaming={false}
+        streamingMessageId={null}
+      />
+    );
+
+    expect(el.scrollTop).toBe(2000);
   });
 });

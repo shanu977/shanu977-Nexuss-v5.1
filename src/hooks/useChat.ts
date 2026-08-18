@@ -8,6 +8,7 @@ export function useChat() {
   const streamingMessageId = useChatStore((s) => s.streamingMessageId);
   const error = useChatStore((s) => s.error);
   const sendMessageStream = useChatStore((s) => s.sendMessageStream);
+  const stopGeneration = useChatStore((s) => s.stopGeneration);
   const editMessageAndRegenerate = useChatStore((s) => s.editMessageAndRegenerate);
   const regenerateResponse = useChatStore((s) => s.regenerateResponse);
   const createNewChat = useChatStore((s) => s.createNewChat);
@@ -33,6 +34,7 @@ export function useChat() {
     setProvider,
     setModel,
     sendMessageStream,
+    stopGeneration,
     editMessageAndRegenerate,
     regenerateResponse,
     createNewChat,

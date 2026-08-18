@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import Spinner from "@/components/Spinner";
 import { useChatStore } from "@/store";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { PROVIDER_LABELS } from "@/utils/providerLabels";
@@ -13,6 +12,7 @@ import {
 } from "@/types/providers";
 import {
   SendIcon,
+  SquareIcon,
   PlusIcon,
   ChevronDownIcon,
   CheckIcon,
@@ -22,6 +22,7 @@ import {
 
 interface ChatComposerProps {
   onSend: (content: string) => Promise<void>;
+  onStop?: () => void;
   loading: boolean;
   disabled?: boolean;
   onStartScreenShare?: () => void;
@@ -30,6 +31,7 @@ interface ChatComposerProps {
 
 export default function ChatComposer({
   onSend,
+  onStop,
   loading,
   disabled,
   onStartScreenShare,
@@ -120,20 +122,30 @@ export default function ChatComposer({
             </div>
           </div>
 
-          {/* Send Button */}
-          <button
-            type="submit"
-            disabled={blocked || !text.trim()}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
-            title="Send message"
-            aria-label="Send message"
-          >
-            {loading ? (
-              <Spinner className="h-4 w-4" />
-            ) : (
+          {/* Send / Stop Button — during generation the Send button becomes a
+              Stop button that aborts the active request. It stays enabled so it
+              is always tappable; the partial response is preserved on stop. */}
+          {blocked ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-all hover:opacity-90 active:scale-95 cursor-pointer"
+              title="Stop generating"
+              aria-label="Stop generating"
+            >
+              <SquareIcon className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!text.trim()}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
+              title="Send message"
+              aria-label="Send message"
+            >
               <SendIcon className="h-4 w-4" />
-            )}
-          </button>
+            </button>
+          )}
         </div>
 
         {/* Shortcuts notice */}

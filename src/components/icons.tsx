@@ -110,6 +110,14 @@ export function SendIcon({ className }: IconProps) {
   );
 }
 
+export function SquareIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <rect x="7" y="7" width="10" height="10" rx="1" />
+    </Icon>
+  );
+}
+
 export function ChevronDownIcon({ className }: IconProps) {
   return (
     <Icon className={className}>

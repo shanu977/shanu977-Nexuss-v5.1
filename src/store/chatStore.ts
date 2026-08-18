@@ -38,6 +38,7 @@ interface ChatStore extends ChatState {
   theme: string;
   reset: (clearStorage?: boolean) => void;
   sendMessageStream: (content: string, image?: string) => Promise<void>;
+  stopGeneration: () => void;
   createNewChat: () => Promise<Chat>;
   renameChat: (id: string, title: string) => Promise<void>;
   deleteChat: (id: string) => Promise<void>;
@@ -126,6 +127,12 @@ interface ChatRequestHistory {
 export const EMPTY_REPLY_FALLBACK =
   "I couldn't generate a complete response. Please try again or rephrase your question.";
 
+// The in-flight generation's AbortController. Only one generation runs at a
+// time (the store guards against concurrent sends); the Stop button aborts it
+// through `stopGeneration`. The identity check in the request's `finally` makes
+// sure a superseded request can never reset the state of a newer one.
+let activeAbortController: AbortController | null = null;
+
 // Shared request path for sending a user turn and streaming the assistant
 // reply. Used by the initial send AND by edit/regenerate so that every path
 // preserves provider routing, model selection, fallback behavior, streaming
@@ -147,6 +154,12 @@ async function requestAssistant(
     ? state.model
     : DEFAULT_PROVIDER_MODELS[provider];
   const asstId = newId();
+
+  // Register this request as the active generation so the Stop button can
+  // abort it. Replaced synchronously when a new request starts, so cancelling
+  // the previous one never interferes with a newer generation.
+  const abortController = new AbortController();
+  activeAbortController = abortController;
 
   useChatStore.setState({
     loading: true,
@@ -183,14 +196,17 @@ async function requestAssistant(
     // relevant local files/sections for THIS question and attaches them as
     // optional context. The full project is never sent.
     const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
-    const events = chatService.sendStream({
-      message: text,
-      history,
-      provider,
-      model,
-      image,
-      workspaceContext: workspaceResult?.contextText
-    });
+    const events = chatService.sendStream(
+      {
+        message: text,
+        history,
+        provider,
+        model,
+        image,
+        workspaceContext: workspaceResult?.contextText
+      },
+      { signal: abortController.signal }
+    );
     const responseTime = performance.now() - startTime;
 
     // The model may attach fenced `workspace-change` / `workspace-command`
@@ -408,7 +424,14 @@ async function requestAssistant(
         }
       ]);
     }
-    useChatStore.setState({ error: getErrorMessage(e) });
+    // An intentional user stop (Stop button) is NOT an error: keep whatever was
+    // already streamed on screen and never surface an error banner. The fetch
+    // itself aborts via the controller; timeouts/stalls abort the internal
+    // controller only, so the external signal being aborted means the user
+    // cancelled the request.
+    if (!abortController.signal.aborted) {
+      useChatStore.setState({ error: getErrorMessage(e) });
+    }
   } finally {
     // If the stream produced no visible content at all (the request itself
     // threw before any chunk), drop the empty placeholder so no blank
@@ -420,11 +443,17 @@ async function requestAssistant(
         messages: s.messages.filter((m) => m.id !== asstId)
       }));
     }
-    useChatStore.setState({
-      loading: false,
-      isStreaming: false,
-      streamingMessageId: null
-    });
+    // Only the request that is still current may clear the generation state. If
+    // the user stopped this request and already started a new one, the new
+    // request owns the state from here on.
+    if (activeAbortController === abortController) {
+      activeAbortController = null;
+      useChatStore.setState({
+        loading: false,
+        isStreaming: false,
+        streamingMessageId: null
+      });
+    }
   }
 }
 
@@ -728,6 +757,23 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
         streamingMessageId: null
       });
     }
+  },
+
+  // Cancel the active generation: abort the streaming request and reset the
+  // generation state so the Send button returns immediately. Whatever was
+  // already streamed stays on screen; the request's catch/finally treats this
+  // as a user-initiated stop, not an error. Cancelling the old controller makes
+  // it impossible for a stopped generation to keep updating the UI.
+  stopGeneration: () => {
+    const controller = activeAbortController;
+    activeAbortController = null;
+    if (controller) controller.abort();
+    set({
+      loading: false,
+      isStreaming: false,
+      streamingMessageId: null,
+      error: null
+    });
   },
 
   // Replace an existing user message and everything generated after it, then

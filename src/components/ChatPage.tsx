@@ -28,6 +28,7 @@ export default function ChatPage({
     streamingMessageId,
     error,
     sendMessageStream,
+    stopGeneration,
     clearError
   } = useChat();
 
@@ -90,6 +91,7 @@ export default function ChatPage({
         {workspacePanelOpen && <WorkspacePanel />}
         <ChatComposer
           onSend={handleSend}
+          onStop={stopGeneration}
           loading={loading}
           disabled={isStreaming}
           onStartScreenShare={() => void screenShare.startSharing()}

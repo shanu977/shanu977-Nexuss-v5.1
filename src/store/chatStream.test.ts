@@ -37,7 +37,10 @@ const sendStreamMock = vi.mocked(chatService.sendStream);
 // A controllable stream: each step is gated until `next()` is called, letting
 // the test observe the store state BETWEEN chunks (in-place message updates,
 // streamingMessageId, isStreaming).
-function stepStream(steps: (() => ChatStreamEvent)[]): {
+function stepStream(
+  steps: (() => ChatStreamEvent)[],
+  signal?: AbortSignal
+): {
   gen: AsyncGenerator<ChatStreamEvent>;
   next: () => void;
 } {
@@ -52,7 +55,20 @@ function stepStream(steps: (() => ChatStreamEvent)[]): {
   }
   async function* gen() {
     for (let i = 0; i < steps.length; i++) {
-      await gates[i];
+      if (signal?.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      await Promise.race([
+        gates[i],
+        new Promise<never>((_, reject) => {
+          if (!signal) return;
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true }
+          );
+        })
+      ]);
       yield steps[i]() as ChatStreamEvent;
     }
   }
@@ -391,5 +407,125 @@ describe("chat streaming", () => {
     expect(cs.isStreaming).toBe(false);
     expect(cs.streamingMessageId).toBeNull();
     expect(cs.messages.map((m) => m.content)).toEqual(["Hello"]);
+  });
+
+  it("stopGeneration aborts mid-stream, keeps the partial reply, and sets no error", async () => {
+    const chat = makeChat("chat-stop", "Stop chat");
+    await db.chats.add(chat);
+    useChatStore.setState({ currentChat: chat, chats: [chat] });
+
+    let capturedSignal: AbortSignal | undefined;
+    let step: { gen: AsyncGenerator<ChatStreamEvent>; next: () => void } | null =
+      null;
+    sendStreamMock.mockImplementation((_body, options) => {
+      capturedSignal = options?.signal;
+      step = stepStream(
+        [
+          () => ({ type: "chunk", content: "Partial" }),
+          () => ({ type: "chunk", content: " response" }),
+          () => usageEvent()
+        ],
+        options?.signal
+      );
+      return step.gen;
+    });
+
+    const pending = useChatStore.getState().sendMessageStream("Hi");
+
+    await vi.waitFor(() =>
+      expect(useChatStore.getState().streamingMessageId).not.toBeNull()
+    );
+    expect(capturedSignal).toBeDefined();
+
+    step!.next();
+    await vi.waitFor(() => expect(lastMessage().content).toBe("Partial"));
+
+    useChatStore.getState().stopGeneration();
+    expect(capturedSignal!.aborted).toBe(true);
+    await pending;
+
+    const cs = useChatStore.getState();
+    expect(cs.isStreaming).toBe(false);
+    expect(cs.streamingMessageId).toBeNull();
+    expect(cs.loading).toBe(false);
+    expect(cs.error).toBeNull();
+    expect(lastMessage().role).toBe("assistant");
+    expect(lastMessage().content).toBe("Partial");
+    expect(cs.messages[0].role).toBe("user");
+    expect(cs.messages[0].content).toBe("Hi");
+  });
+
+  it("lets a fresh generation run after stopping, untouched by the cancelled stream", async () => {
+    const chat = makeChat("chat-multi", "Multi");
+    await db.chats.add(chat);
+    useChatStore.setState({ currentChat: chat, chats: [chat] });
+
+    const steps: {
+      gen: AsyncGenerator<ChatStreamEvent>;
+      next: () => void;
+    }[] = [];
+    sendStreamMock
+      .mockImplementationOnce((_b, o) => {
+        const s = stepStream(
+          [
+            () => ({ type: "chunk", content: "Old" }),
+            () => ({ type: "chunk", content: " reply" })
+          ],
+          o?.signal
+        );
+        steps.push(s);
+        return s.gen;
+      })
+      .mockImplementationOnce((_b, o) => {
+        const s = stepStream(
+          [
+            () => ({ type: "chunk", content: "New" }),
+            () => ({ type: "chunk", content: " answer" }),
+            () => usageEvent()
+          ],
+          o?.signal
+        );
+        steps.push(s);
+        return s.gen;
+      });
+
+    const pendingA = useChatStore.getState().sendMessageStream("A");
+    await vi.waitFor(() =>
+      expect(useChatStore.getState().streamingMessageId).not.toBeNull()
+    );
+    steps[0].next();
+    await vi.waitFor(() => expect(lastMessage().content).toBe("Old"));
+
+    useChatStore.getState().stopGeneration();
+    await pendingA;
+
+    const pendingB = useChatStore.getState().sendMessageStream("B");
+    await vi.waitFor(() =>
+      expect(useChatStore.getState().streamingMessageId).not.toBeNull()
+    );
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    steps[1].next();
+    await vi.waitFor(() => expect(lastMessage().content).toBe("New"));
+    steps[1].next();
+    await vi.waitFor(() => expect(lastMessage().content).toBe("New answer"));
+    steps[1].next();
+    await pendingB;
+
+    const cs = useChatStore.getState();
+    expect(cs.isStreaming).toBe(false);
+    expect(cs.streamingMessageId).toBeNull();
+    expect(cs.loading).toBe(false);
+    expect(cs.error).toBeNull();
+    const assistantMsgs = cs.messages.filter((m) => m.role === "assistant");
+    expect(assistantMsgs).toHaveLength(2);
+    expect(assistantMsgs[0].content).toBe("Old");
+    expect(assistantMsgs[1].content).toBe("New answer");
+    expect(cs.messages.map((m) => m.content)).toEqual([
+      "A",
+      "Old",
+      "B",
+      "New answer"
+    ]);
   });
 });

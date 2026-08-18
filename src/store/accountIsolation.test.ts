@@ -351,7 +351,8 @@ describe("account isolation", () => {
     expect(bChat.id).not.toBe("chat-foreign");
     expect(bChat.userId).toBe(UID_B);
     expect(chatService.sendStream).toHaveBeenCalledWith(
-      expect.objectContaining({ history: [] })
+      expect.objectContaining({ history: [] }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
   });
 });
@@ -378,7 +379,8 @@ describe("sendMessageStream", () => {
         history: [],
         provider: "groq",
         model: "openai/gpt-oss-120b"
-      })
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
 
     const storedMessages = await db.messages
@@ -414,7 +416,8 @@ describe("sendMessageStream", () => {
           { role: "assistant", content: "Second" }
         ],
         provider: "groq"
-      })
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
 
     const cs = useChatStore.getState();
@@ -488,7 +491,8 @@ describe("provider/model selection", () => {
     await useChatStore.getState().sendMessageStream("Hello");
 
     expect(chatService.sendStream).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: "gemini", model: "gemini-2.5-pro" })
+      expect.objectContaining({ provider: "gemini", model: "gemini-2.5-pro" }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
     const cs = useChatStore.getState();
     expect(cs.provider).toBe("gemini");
