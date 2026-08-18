@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     BigInteger,
@@ -18,7 +18,10 @@ from ..database import Base
 
 
 def utc_now_ms() -> int:
-    return int(datetime.utcnow().timestamp() * 1000)
+    # timezone-aware so .timestamp() is always interpreted as UTC, never as the
+    # process-local timezone (datetime.utcnow() is deprecated and its naive
+    # .timestamp() silently shifts timestamps by the local offset).
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
 class User(Base):
