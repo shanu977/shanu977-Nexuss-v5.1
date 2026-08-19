@@ -7,6 +7,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Message } from "@/types";
 import { useChatStore } from "@/store";
+import AdsterraNativeBanner from "@/components/AdsterraNativeBanner";
 
 interface MessageListProps {
   messages: Message[];
@@ -240,6 +241,11 @@ export default function MessageList({
             </button>
           ))}
         </div>
+
+        {/* Adsterra Native Banner — visible on the initial (idle) chat. */}
+        <div className="mt-8 flex w-full max-w-2xl flex-col items-center">
+          <AdsterraNativeBanner />
+        </div>
       </div>
     );
   }
@@ -270,7 +276,11 @@ export default function MessageList({
           />
         ))}
 
-        {loading && !isStreaming && (
+        {/* Status area: the Adsterra native banner occupies the exact spot of
+            the existing thinking/loading state. Thinking shows while the
+            request is starting (before streaming), and the ad only returns
+            after generation has fully finished — never during streaming. */}
+        {loading && !isStreaming ? (
           <div className="flex items-center gap-3 self-start max-w-[90%]">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card border border-border">
               <img src="/nexuss-logo.png" alt="NEXUSS" className="w-4 h-4 object-contain" />
@@ -279,7 +289,11 @@ export default function MessageList({
               <ThinkingIndicator />
             </div>
           </div>
-        )}
+        ) : !isGenerating ? (
+          <div className="flex w-full min-h-[44px] items-start justify-center">
+            <AdsterraNativeBanner />
+          </div>
+        ) : null}
 
         <div className="h-px" />
       </div>
