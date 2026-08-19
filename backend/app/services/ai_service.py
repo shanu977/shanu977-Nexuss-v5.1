@@ -1,3 +1,5 @@
+import logging
+import time
 from typing import Iterator
 
 from sqlalchemy.orm import Session
@@ -13,6 +15,8 @@ from ..schemas.settings import (
 )
 from ..utils.reasoning import ReasoningFilter, filter_reasoning
 from . import fallback_service, llm_service, prompt_service, settings_service, usage_service
+
+logger = logging.getLogger("uvicorn.error")
 
 
 def _resolve_vision_model(provider: str, selected_model: str) -> str | None:
@@ -47,15 +51,19 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
     overload, 5xx, network), the centralized fallback engine retries the next
     configured provider. The user's saved provider/model are never changed.
     """
-    settings = settings_service.get_or_create_settings(db, user)
-    provider = payload.provider or settings.provider or "groq"
+    if payload.provider and payload.model:
+        # The client always sends an explicit provider/model, so the saved
+        # settings row would only be a dead fallback here. Skip the database
+        # lookup to keep the pre-model path as short as possible.
+        provider = payload.provider
+        model = payload.model
+    else:
+        settings = settings_service.get_or_create_settings(db, user)
+        provider = payload.provider or settings.provider or "groq"
+        model = payload.model or settings.model
     if provider not in ALLOWED_PROVIDERS:
         raise llm_service.UnsupportedProviderError()
 
-    model = payload.model or settings.model
-    # A retired model id (e.g. a Groq model decommissioned by the provider)
-    # cannot be honored; upgrade it to the supported replacement so stored or
-    # stale explicit selections keep working instead of failing with a 404.
     model = DEPRECATED_MODEL_REPLACEMENTS.get(model, model)
     if model not in ALLOWED_MODELS.get(provider, set()):
         if payload.model:
@@ -152,16 +160,22 @@ def handle_chat_stream(db: Session, user: User, payload: ChatRequest) -> Iterato
     frontend applies the same filter). A trailing reasoning marker that is
     split across chunk boundaries is flushed just before completion so held-back
     answer text is never lost.
+
+    A single lightweight timing line is logged per completed stream
+    (``setup`` = pre-model work before headers, ``ttft`` = time to the first
+    content chunk after the provider chain starts, ``total`` = whole stream).
     """
-    settings = settings_service.get_or_create_settings(db, user)
-    provider = payload.provider or settings.provider or "groq"
+    t_setup = time.perf_counter()
+    if payload.provider and payload.model:
+        provider = payload.provider
+        model = payload.model
+    else:
+        settings = settings_service.get_or_create_settings(db, user)
+        provider = payload.provider or settings.provider or "groq"
+        model = payload.model or settings.model
     if provider not in ALLOWED_PROVIDERS:
         raise llm_service.UnsupportedProviderError()
 
-    model = payload.model or settings.model
-    # A retired model id (e.g. a Groq model decommissioned by the provider)
-    # cannot be honored; upgrade it to the supported replacement so stored or
-    # stale explicit selections keep working instead of failing with a 404.
     model = DEPRECATED_MODEL_REPLACEMENTS.get(model, model)
     if model not in ALLOWED_MODELS.get(provider, set()):
         if payload.model:
@@ -202,9 +216,12 @@ def handle_chat_stream(db: Session, user: User, payload: ChatRequest) -> Iterato
             messages, payload.workspace_context
         )
 
+    setup_ms = (time.perf_counter() - t_setup) * 1000
     reasoning = ReasoningFilter()
 
     def gen() -> Iterator[dict]:
+        t_start = time.perf_counter()
+        ttft_ms: float | None = None
         try:
             for event in fallback_service.stream_with_fallback(
                 db,
@@ -215,6 +232,8 @@ def handle_chat_stream(db: Session, user: User, payload: ChatRequest) -> Iterato
                 fallback_models=fallback_models,
             ):
                 if event["type"] == "chunk":
+                    if ttft_ms is None:
+                        ttft_ms = (time.perf_counter() - t_start) * 1000
                     visible = reasoning.push(event["content"])
                     if visible:
                         yield {"type": "chunk", "content": visible}
@@ -239,5 +258,12 @@ def handle_chat_stream(db: Session, user: User, payload: ChatRequest) -> Iterato
                 "attempts": exc.attempts,
                 "partial": exc.partial,
             }
+        finally:
+            logger.info(
+                "[chat] stream setup=%.0fms ttft=%s total=%.0fms",
+                setup_ms,
+                f"{ttft_ms:.0f}ms" if ttft_ms is not None else "n/a",
+                (time.perf_counter() - t_start) * 1000,
+            )
 
     return gen()

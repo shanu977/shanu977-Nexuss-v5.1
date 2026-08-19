@@ -165,30 +165,31 @@ def _build_chain(
     primary_provider: str,
     primary_model: str,
     fallback_models: Optional[Dict[str, str]] = None,
-) -> List[Tuple[str, str, str]]:
+) -> List[Tuple[str, str]]:
     """Build the ordered attempt chain: primary first, then configured fallbacks.
 
-    A candidate is only included when it is configured and has a usable API
-    key, its model exists and belongs to that provider, and it is not in
-    cooldown. The primary provider with no key is a permanent config error.
+    Only provider/model eligibility (configuration, cooldown) is decided here.
+    API keys are resolved lazily per attempt (see ``_resolve_key_for_attempt``)
+    so the common success path performs exactly one key lookup — the primary's —
+    before the model request starts, instead of also decrypting every fallback
+    key up front.
 
     `fallback_models` overrides the fallback model per provider (used by the
     screen-analysis path so every candidate is vision-capable). Models coming
     from this server-side override are trusted and skip the ALLOWED_MODELS
     check; only the user-selected primary model is strictly validated upstream.
     """
-    candidates: List[Tuple[str, str, str]] = []
+    candidates: List[Tuple[str, str]] = []
     seen: set = set()
 
-    def add(provider: str, model: str, key: str) -> None:
+    def add(provider: str, model: str) -> None:
         if provider in seen:
             return
         seen.add(provider)
-        candidates.append((provider, model, key))
+        candidates.append((provider, model))
 
     if not cooldown.active(primary_provider):
-        primary_key = _resolve_key_strict(db, user, primary_provider)
-        add(primary_provider, primary_model, primary_key)
+        add(primary_provider, primary_model)
 
     for provider in FALLBACK_PRIORITY:
         if provider == primary_provider or cooldown.active(provider):
@@ -201,12 +202,22 @@ def _build_chain(
             model = llm_service.PROVIDER_DEFAULT_MODELS.get(provider)
             if model is None or model not in ALLOWED_MODELS.get(provider, set()):
                 continue
-        key = _resolve_key_optional(db, user, provider)
-        if key is None:
-            continue  # skip fallbacks without a configured API key
-        add(provider, model, key)
+        add(provider, model)
 
     return candidates
+
+
+def _resolve_key_for_attempt(
+    db: Session, user: User, provider: str, is_primary: bool
+) -> Optional[str]:
+    """Resolve the API key for a single chain candidate, right before it runs.
+
+    The primary's key is resolved strictly (a missing/undecryptable key is a
+    permanent config error). A fallback without a usable key is skipped (None).
+    """
+    if is_primary:
+        return _resolve_key_strict(db, user, provider)
+    return _resolve_key_optional(db, user, provider)
 
 
 def _attempt_failed(
@@ -293,7 +304,7 @@ def execute_with_fallback(
     # timeout so a slow-but-successful reply is still delivered.
     deadline = time.monotonic() + float(settings.ai_total_deadline_seconds)
 
-    for index, (provider, model, key) in enumerate(candidates, start=1):
+    for index, (provider, model) in enumerate(candidates, start=1):
         remaining = deadline - time.monotonic()
         if remaining < MIN_ATTEMPT_WINDOW_SECONDS:
             # Not enough budget left for a meaningful attempt: stop the chain
@@ -323,6 +334,12 @@ def execute_with_fallback(
         # first executed candidate is really a fallback.
         is_primary = provider == primary_provider
         label = "Primary" if is_primary else "Fallback"
+
+        key = _resolve_key_for_attempt(db, user, provider, is_primary)
+        if key is None:
+            # A fallback without a usable API key is skipped, never attempted.
+            continue
+
         logger.info("[AI] %s: %s/%s", label, provider.capitalize(), model)
 
         started = time.perf_counter()
@@ -435,7 +452,7 @@ def stream_with_fallback(
 
     deadline = time.monotonic() + float(settings.ai_total_deadline_seconds)
 
-    for index, (provider, model, key) in enumerate(candidates, start=1):
+    for index, (provider, model) in enumerate(candidates, start=1):
         remaining = deadline - time.monotonic()
         if remaining < MIN_ATTEMPT_WINDOW_SECONDS:
             logger.warning(
@@ -460,6 +477,12 @@ def stream_with_fallback(
 
         is_primary = provider == primary_provider
         label = "Primary" if is_primary else "Fallback"
+
+        key = _resolve_key_for_attempt(db, user, provider, is_primary)
+        if key is None:
+            # A fallback without a usable API key is skipped, never attempted.
+            continue
+
         logger.info("[AI] %s (stream): %s/%s", label, provider.capitalize(), model)
 
         started = time.perf_counter()
