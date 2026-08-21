@@ -9,7 +9,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
 export const PROVIDER_MODELS: Record<ProviderType, string> = {
   groq: "openai/gpt-oss-120b",
   gemini: "gemini-3.6-flash",
-  openrouter: "openai/gpt-oss-120b:free"
+  openrouter: "openai/gpt-oss-120b"
 };
 
 export function generateTitle(firstMessage: string): string {

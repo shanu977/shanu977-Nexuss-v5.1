@@ -109,34 +109,15 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         }`}
       >
         {/* Header - Branding + Collapse */}
-        <div className="flex items-center justify-between px-3.5 py-3 shrink-0">
-          <div className="flex items-center gap-2.5 overflow-hidden">
-            <div className="relative h-6 w-6 flex items-center justify-center shrink-0">
-              <img
-                src="/nexuss-logo.png"
-                alt="NEXUSS Logo"
-                className="h-full w-full object-contain"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="whitespace-nowrap text-xs font-bold uppercase tracking-widest text-foreground font-mono">
-                NEXUSS
-              </span>
-              <span className="rounded bg-muted border border-border px-1.5 py-0.5 text-[9px] font-mono font-semibold text-muted-foreground whitespace-nowrap">
-                AI
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            title="Close sidebar"
-            aria-label="Close sidebar"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
-          >
-            <PanelLeftIcon className="h-4 w-4" />
-          </button>
-        </div>
+<button
+  type="button"
+  onClick={onClose}
+  title="Close sidebar"
+  aria-label="Close sidebar"
+  className="ml-auto h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
+>
+  <PanelLeftIcon className="h-4 w-4" />
+</button>
 
         {/* Search */}
         <div className="shrink-0 px-3 pb-3">

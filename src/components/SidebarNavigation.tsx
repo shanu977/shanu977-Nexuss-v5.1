@@ -9,14 +9,14 @@ interface SidebarNavigationProps {
 export default function SidebarNavigation({ onNewChat }: SidebarNavigationProps) {
   return (
     <nav className="shrink-0 px-3 pt-3" aria-label="Main navigation">
-      <button
-        type="button"
-        onClick={onNewChat}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-muted px-3.5 py-2.5 text-xs font-semibold text-foreground transition-all hover:bg-accent active:scale-[0.99] cursor-pointer"
-      >
-        <PlusIcon className="h-3.5 w-3.5" />
-        <span>New chat</span>
-      </button>
+<button
+  type="button"
+  onClick={onNewChat}
+  className="flex w-full items-center gap-2 rounded-xl text-foreground transition-all hover:bg-accent active:scale-[0.99] cursor-pointer"
+>
+  <PlusIcon className="h-3.5 w-3.5" />
+  <span>New chat</span>
+</button>
     </nav>
   );
 }

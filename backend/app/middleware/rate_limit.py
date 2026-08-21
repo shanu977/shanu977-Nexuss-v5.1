@@ -1,4 +1,5 @@
 import ipaddress
+import math
 import time
 from collections import defaultdict, deque
 from typing import Callable, Sequence
@@ -51,11 +52,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         max_requests: int = 60,
         window_seconds: int = 60,
         paths: Sequence[str] = ("/chat",),
+        path_limits: Sequence[tuple[str, int]] | None = None,
     ):
         super().__init__(app)
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.paths = tuple(paths)
+        self.path_limits = tuple(path_limits or ())
         self._hits: dict[str, deque] = defaultdict(deque)
         _instances.add(self)
 
@@ -89,6 +92,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if not self._hits[key]:
                 del self._hits[key]
 
+    def _max_requests_for_path(self, path: str) -> int | None:
+        """Return the configured limit for a matching path prefix."""
+        for prefix, max_requests in self.path_limits:
+            if path.startswith(prefix):
+                return max_requests
+        if any(path.startswith(prefix) for prefix in self.paths):
+            return self.max_requests
+        return None
+
+    def _retry_after_seconds(self, oldest_hit: float, now: float) -> int:
+        """Return a safe positive wait until the oldest sliding-window hit ages out."""
+        return max(1, math.ceil(oldest_hit + self.window_seconds - now))
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip rate limiting for OPTIONS (CORS preflight) requests.
         # OPTIONS requests must be processed by CORSMiddleware without rate-limit
@@ -96,7 +112,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        if not any(request.url.path.startswith(p) for p in self.paths):
+        max_requests = self._max_requests_for_path(request.url.path)
+        if max_requests is None:
             return await call_next(request)
 
         now = time.monotonic()
@@ -109,13 +126,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         while window and window[0] < now - self.window_seconds:
             window.popleft()
 
-        if len(window) >= self.max_requests:
+        if len(window) >= max_requests:
             # Return an HTTP response directly. Raising HTTPException here would
             # bypass FastAPI's exception handlers (this middleware sits outside
             # the ExceptionMiddleware) and surface as a 500 instead of a 429.
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many requests. Please try again later."},
+                headers={"Retry-After": str(self._retry_after_seconds(window[0], now))},
             )
 
         window.append(now)

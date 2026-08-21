@@ -85,7 +85,17 @@ app = FastAPI(
 #   2. All responses (including 429 from RateLimitMiddleware) include the
 #      Access-Control-Allow-Origin header the browser requires.
 # Do NOT swap this order without understanding the LIFO semantics.
-app.add_middleware(RateLimitMiddleware, max_requests=20, window_seconds=60, paths=("/chat",))
+app.add_middleware(
+    RateLimitMiddleware,
+    max_requests=20,
+    window_seconds=60,
+    paths=("/chat",),
+    path_limits=(
+        ("/auth/otp/send", 5),
+        ("/auth/user-status", 10),
+        ("/admin/", 15),
+    ),
+)
 
 app.add_middleware(
     CORSMiddleware,

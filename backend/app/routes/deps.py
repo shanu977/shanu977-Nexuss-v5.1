@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..database import get_db
 from ..models import User, UserSettings
 from ..models.models import utc_now_ms
@@ -44,9 +43,9 @@ def get_current_user(
 
     1. Reads Authorization header (`Bearer <Firebase ID Token>`).
     2. Verifies token with Firebase Admin SDK.
-    3. Extracts verified Firebase UID, email, and name.
-    4. Looks up application user by firebase_uid (or email fallback).
-    5. Syncs/provisions user and default UserSettings if new.
+    3. Extracts the verified Firebase UID.
+    4. Looks up the application user by firebase_uid.
+    5. Provisions a user and default UserSettings only for a new email.
     6. Returns verified User instance.
     """
     if not authorization or not authorization.startswith("Bearer "):
@@ -100,18 +99,16 @@ def get_current_user(
     if user is not None:
         return _ensure_not_blocked(user)
 
-    # 2. Search user by email as fallback
-    user = db.scalar(select(User).where(User.email == email))
-    if user is not None:
-        user.firebase_uid = uid
-        if photo_url:
-            user.photo_url = photo_url
-        user.updated_at = utc_now_ms()
-        db.commit()
-        db.refresh(user)
-        return _ensure_not_blocked(user)
+    # A legacy row with the same email but no UID must be linked by a trusted
+    # production data operation, not by the first token that presents that
+    # email. Otherwise a UID mismatch could silently take over that row.
+    if db.scalar(select(User.id).where(User.email == email)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User identity is not linked to this Firebase account.",
+        )
 
-    # 3. Create new application user
+    # 2. Create a new application user from the verified Firebase identity.
     new_id = uid
     user = User(
         id=new_id,
@@ -142,8 +139,11 @@ def get_current_user(
         db.rollback()
         user = db.scalar(select(User).where(User.firebase_uid == uid))
         if user is None:
-            user = db.scalar(select(User).where(User.email == email))
-        if user is None:
+            if db.scalar(select(User.id).where(User.email == email)) is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User identity is not linked to this Firebase account.",
+                )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="User provisioning race condition failed.",
@@ -159,24 +159,17 @@ def get_current_admin(user: User = Depends(get_current_user)) -> User:
     the database — never from client-provided state, localStorage, or any
     frontend flag.
 
-    Additionally enforces the following identity checks (all five must pass):
-
-    1. Firebase authenticated         — already verified by ``get_current_user``
-    2. Firebase email == admin_email  — compared against the configured
-                                       admin email (may be overridden via
-                                       ``ADMIN_EMAIL`` env var)
-    3. server-side User name == admin_name — compared against the configured
-                                       admin name (may be overridden via
-                                       ``ADMIN_NAME`` env var)
-    4. User role == "admin"
-    5. User status == "active"
+    The Firebase UID has already selected ``user`` in ``get_current_user``.
+    Role and status are read only from that database row. Firebase email,
+    display name, and client-provided values are deliberately excluded from
+    authorization.
 
     Returns:
         The verified admin User.
 
     Raises:
         401: unauthenticated (from ``get_current_user``).
-        403: authenticated, but any of the five identity checks failed.
+        403: authenticated, but role or status is insufficient.
     """
     # 1. Role check
     if user.role != "admin":
@@ -185,21 +178,6 @@ def get_current_admin(user: User = Depends(get_current_user)) -> User:
             detail="Admin privileges required.",
         )
 
-    # 2. Email check — use the configured admin email from settings
-    if user.email != settings.admin_email:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin email verification failed.",
-        )
-
-    # 3. Name check — use the configured admin name from settings
-    if user.name != settings.admin_name:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin name verification failed.",
-        )
-
-    # 4. Status check — admins must have active status
     if user.status != "active":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

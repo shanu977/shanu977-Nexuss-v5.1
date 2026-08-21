@@ -11,7 +11,7 @@ export const PROVIDERS = {
   },
   openrouter: {
     name: "OpenRouter",
-    model: "openai/gpt-oss-120b:free",
+    model: "openai/gpt-oss-120b",
     icon: "openrouter"
   }
 } as const;
@@ -46,7 +46,7 @@ export const PROVIDER_MODEL_OPTIONS: Record<ProviderType, readonly ProviderModel
     { id: "gemma-4", label: "Gemma 4", badge: "FREE*" }
   ],
   openrouter: [
-    { id: "openai/gpt-oss-120b:free", label: "GPT-OSS 120B", badge: "FREE" },
+    { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B", badge: "FREE" },
     { id: "openai/gpt-oss-20b:free", label: "GPT-OSS 20B", badge: "FREE" },
     { id: "nvidia/nemotron-3-ultra:free", label: "Nemotron 3 Ultra", badge: "FREE" },
     { id: "nvidia/nemotron-3-super:free", label: "Nemotron 3 Super", badge: "FREE" },
@@ -59,7 +59,7 @@ export const PROVIDER_MODEL_OPTIONS: Record<ProviderType, readonly ProviderModel
 export const DEFAULT_PROVIDER_MODELS: Record<ProviderType, string> = {
   groq: "openai/gpt-oss-120b",
   gemini: "gemini-3.6-flash",
-  openrouter: "openai/gpt-oss-120b:free"
+  openrouter: "openai/gpt-oss-120b"
 };
 
 // A provider and model must always be a valid combination: a model from one

@@ -7,6 +7,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Message } from "@/types";
 import { useChatStore } from "@/store";
+import { NexussLogo } from "@/components/admin/NexussLogo";
 
 interface MessageListProps {
   messages: Message[];
@@ -17,29 +18,6 @@ interface MessageListProps {
   screenShareActive?: boolean;
   captureScreenFrame?: () => string | null;
 }
-
-const SUGGESTIONS = [
-  {
-    title: "Write code",
-    prompt: "Write a clean TypeScript utility for exponential backoff retries with async/await.",
-    icon: "💻"
-  },
-  {
-    title: "Explain concepts",
-    prompt: "Explain the architectural difference between WebSockets and Server-Sent Events (SSE).",
-    icon: "💡"
-  },
-  {
-    title: "Analyze data",
-    prompt: "How can I profile and fix memory leaks or unnecessary re-renders in a large React application?",
-    icon: "📊"
-  },
-  {
-    title: "Brainstorm ideas",
-    prompt: "Brainstorm a scalable architecture for an AI agent platform with background workers.",
-    icon: "⚡"
-  }
-];
 
 interface MessageActionProps {
   message: Message;
@@ -202,48 +180,19 @@ export default function MessageList({
 
   const blocked = loading || isStreaming;
 
-  if (messages.length === 0 && !loading && !isStreaming) {
+if (messages.length === 0 && !loading && !isStreaming) {
     return (
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col items-center justify-center px-6 py-12 text-center">
-        {/* Emblem */}
-        <div className="relative mb-6 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-card">
-          <img
-            src="/nexuss-logo.png"
-            alt="NEXUSS Logo"
-            className="h-8 w-8 object-contain"
-          />
-        </div>
+        <NexussLogo size={64} className="mb-4" />
         <h2 className="text-xl font-bold tracking-tight text-foreground font-sans">
           What&apos;s on your mind today?
         </h2>
         <p className="mt-2 max-w-md text-xs text-muted-foreground font-sans leading-relaxed">
           Ask technical questions, generate clean code, analyze complex architectures, or debug your code with NEXUSS AI.
         </p>
-
-        {/* Suggestion Cards */}
-        <div className="mt-8 grid w-full max-w-2xl grid-cols-1 gap-3 text-left sm:grid-cols-2">
-          {SUGGESTIONS.map((item) => (
-            <button
-              key={item.title}
-              onClick={() => void onSendSuggestion?.(item.prompt)}
-              className="flex flex-col justify-between rounded-xl border border-border bg-card p-3.5 text-left transition-all duration-150 hover:bg-muted/70 hover:border-ring/30 group cursor-pointer"
-            >
-              <div className="mb-1.5 flex items-center gap-2">
-                <span className="text-sm">{item.icon}</span>
-                <span className="text-xs font-semibold text-foreground font-mono">
-                  {item.title}
-                </span>
-              </div>
-              <p className="line-clamp-2 text-[11px] text-muted-foreground leading-relaxed font-sans">
-                {item.prompt}
-              </p>
-            </button>
-          ))}
-        </div>
       </div>
     );
   }
-
   return (
     <div
       ref={scrollRef}
