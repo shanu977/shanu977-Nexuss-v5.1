@@ -1,0 +1,594 @@
+
+ RUN  v4.1.10 C:/Users/pilli/Downloads/Nexuss-git
+
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > shows connect controls when no workspace is connected 175ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > connects a real folder via the file system picker 23ms
+ × |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > runs a hybrid search and lists ranked results 28ms
+   → Unable to find an element with the placeholder text of: Search files, symbols, error text…
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"shrink-0 bg-background px-3 pb-1 sm:px-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"mx-auto flex w-full max-w-3xl flex-col gap-2"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"Workspace"[39m
+          [33mclass[39m=[32m"overflow-hidden rounded-2xl border border-border bg-card shadow-lg animate-fade-in-up"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex w-full items-center gap-1 px-4 py-3"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"workspace-details"[39m
+              [33maria-expanded[39m=[32m"false"[39m
+              [33mclass[39m=[32m"flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-muted/50 cursor-pointer"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex min-w-0 items-center gap-2 text-xs font-mono font-semibold text-foreground"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"h-4 w-4 shrink-0 text-primary"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"truncate"[39m
+                [36m>[39m
+                  [0mPath[0m
+                [36m</span>[39m
+              [36m</span>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"h-4 w-4 shrink-0 text-muted-foreground transition-transform "[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m6 9 6 6 6-6"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Close workspace panel"[39m
+              [33mclass[39m=[32m"flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"h-4 w-4"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M18 6 6 18"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m6 6 12 12"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"max-h-0 overflow-hidden"[39m
+            [33mid[39m=[32m"workspace-details"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"border-t border-border p-4 animate-fade-in-up"[39m
+            [36m>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"text-[11px] font-mono text-muted-foreground"[39m
+              [36m>[39m
+                [0mGive Nexuss a local folder to inspect, search, and fix. Everything stays inside the folder you choose.[0m
+              [36m</p>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"mt-3 flex flex-wrap items-center gap-2"[39m
+              [36m>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-medium text-primary-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"[39m
+                  [33mtype[39m=[32m"button"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33maria-hidden[39m=[32m"true"[39m
+                    [33mclass[39m=[32m"h-3.5 w-3.5"[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                  [0mConnect a folder[0m
+                [36m</button>[39m
+              [36m</div>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"mt-3 text-[10px] font-mono text-muted-foreground"[39m
+              [36m>[39m
+                [0mWorks in Chrome/Edge.[0m
+              [36m</p>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ × |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > shows no-matches feedback for an unmatched query 18ms
+   → Unable to find an element with the placeholder text of: Search files, symbols, error text…
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"shrink-0 bg-background px-3 pb-1 sm:px-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"mx-auto flex w-full max-w-3xl flex-col gap-2"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"Workspace"[39m
+          [33mclass[39m=[32m"overflow-hidden rounded-2xl border border-border bg-card shadow-lg animate-fade-in-up"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex w-full items-center gap-1 px-4 py-3"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"workspace-details"[39m
+              [33maria-expanded[39m=[32m"false"[39m
+              [33mclass[39m=[32m"flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-muted/50 cursor-pointer"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex min-w-0 items-center gap-2 text-xs font-mono font-semibold text-foreground"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"h-4 w-4 shrink-0 text-primary"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"truncate"[39m
+                [36m>[39m
+                  [0mPath[0m
+                [36m</span>[39m
+              [36m</span>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"h-4 w-4 shrink-0 text-muted-foreground transition-transform "[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m6 9 6 6 6-6"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Close workspace panel"[39m
+              [33mclass[39m=[32m"flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"h-4 w-4"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M18 6 6 18"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m6 6 12 12"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"max-h-0 overflow-hidden"[39m
+            [33mid[39m=[32m"workspace-details"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"border-t border-border p-4 animate-fade-in-up"[39m
+            [36m>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"text-[11px] font-mono text-muted-foreground"[39m
+              [36m>[39m
+                [0mGive Nexuss a local folder to inspect, search, and fix. Everything stays inside the folder you choose.[0m
+              [36m</p>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"mt-3 flex flex-wrap items-center gap-2"[39m
+              [36m>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-medium text-primary-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"[39m
+                  [33mtype[39m=[32m"button"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33maria-hidden[39m=[32m"true"[39m
+                    [33mclass[39m=[32m"h-3.5 w-3.5"[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                  [0mConnect a folder[0m
+                [36m</button>[39m
+              [36m</div>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"mt-3 text-[10px] font-mono text-muted-foreground"[39m
+              [36m>[39m
+                [0mWorks in Chrome/Edge.[0m
+              [36m</p>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > closes the panel via the header close button 12ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > surfaces a browser-support error when folder access is unavailable 70ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > starts collapsed and expands via the header toggle 102ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > keeps the connection and search query across collapse/expand 60ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel agent section > shows a staged change with its diff and approval controls 253ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel agent section > applies the change on approval 155ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel agent section > discards the change on reject without writing 78ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel agent section > surfaces a version-conflict alert without overwriting the file 119ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel agent section > shows recent agent activity when there are no pending changes 32ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel command execution card > shows a staged run command with Run/Reject controls 117ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel command execution card > rejects a staged command without executing it 89ms
+ ✓ |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel command execution card > runs a staged command and surfaces the result 128ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > runs a hybrid search and lists ranked results
+TestingLibraryElementError: Unable to find an element with the placeholder text of: Search files, symbols, error text…
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"shrink-0 bg-background px-3 pb-1 sm:px-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"mx-auto flex w-full max-w-3xl flex-col gap-2"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"Workspace"[39m
+          [33mclass[39m=[32m"overflow-hidden rounded-2xl border border-border bg-card shadow-lg animate-fade-in-up"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex w-full items-center gap-1 px-4 py-3"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"workspace-details"[39m
+              [33maria-expanded[39m=[32m"false"[39m
+              [33mclass[39m=[32m"flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-muted/50 cursor-pointer"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex min-w-0 items-center gap-2 text-xs font-mono font-semibold text-foreground"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"h-4 w-4 shrink-0 text-primary"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"truncate"[39m
+                [36m>[39m
+                  [0mPath[0m
+                [36m</span>[39m
+              [36m</span>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"h-4 w-4 shrink-0 text-muted-foreground transition-transform "[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m6 9 6 6 6-6"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Close workspace panel"[39m
+              [33mclass[39m=[32m"flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"h-4 w-4"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M18 6 6 18"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m6 6 12 12"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"max-h-0 overflow-hidden"[39m
+            [33mid[39m=[32m"workspace-details"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"border-t border-border p-4 animate-fade-in-up"[39m
+            [36m>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"text-[11px] font-mono text-muted-foreground"[39m
+              [36m>[39m
+                [0mGive Nexuss a local folder to inspect, search, and fix. Everything stays inside the folder you choose.[0m
+              [36m</p>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"mt-3 flex flex-wrap items-center gap-2"[39m
+              [36m>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-medium text-primary-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"[39m
+                  [33mtype[39m=[32m"button"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33maria-hidden[39m=[32m"true"[39m
+                    [33mclass[39m=[32m"h-3.5 w-3.5"[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                  [0mConnect a folder[0m
+                [36m</button>[39m
+              [36m</div>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"mt-3 text-[10px] font-mono text-muted-foreground"[39m
+              [36m>[39m
+                [0mWorks in Chrome/Edge.[0m
+              [36m</p>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/workspace/WorkspacePanel.test.tsx:45:26
+     43|     ).toBeInTheDocument();
+     44|
+     45|     const input = screen.getByPlaceholderText("Search files, symbols, …
+       |                          ^
+     46|     fireEvent.change(input, { target: { value: "login" } });
+     47|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  |web| src/workspace/WorkspacePanel.test.tsx > WorkspacePanel > shows no-matches feedback for an unmatched query
+TestingLibraryElementError: Unable to find an element with the placeholder text of: Search files, symbols, error text…
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"shrink-0 bg-background px-3 pb-1 sm:px-4"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"mx-auto flex w-full max-w-3xl flex-col gap-2"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"Workspace"[39m
+          [33mclass[39m=[32m"overflow-hidden rounded-2xl border border-border bg-card shadow-lg animate-fade-in-up"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex w-full items-center gap-1 px-4 py-3"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"workspace-details"[39m
+              [33maria-expanded[39m=[32m"false"[39m
+              [33mclass[39m=[32m"flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-muted/50 cursor-pointer"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex min-w-0 items-center gap-2 text-xs font-mono font-semibold text-foreground"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"h-4 w-4 shrink-0 text-primary"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"1.8"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"truncate"[39m
+                [36m>[39m
+                  [0mPath[0m
+                [36m</span>[39m
+              [36m</span>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"h-4 w-4 shrink-0 text-muted-foreground transition-transform "[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m6 9 6 6 6-6"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Close workspace panel"[39m
+              [33mclass[39m=[32m"flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"h-4 w-4"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"1.8"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M18 6 6 18"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"m6 6 12 12"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"max-h-0 overflow-hidden"[39m
+            [33mid[39m=[32m"workspace-details"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"border-t border-border p-4 animate-fade-in-up"[39m
+            [36m>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"text-[11px] font-mono text-muted-foreground"[39m
+              [36m>[39m
+                [0mGive Nexuss a local folder to inspect, search, and fix. Everything stays inside the folder you choose.[0m
+              [36m</p>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"mt-3 flex flex-wrap items-center gap-2"[39m
+              [36m>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-medium text-primary-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"[39m
+                  [33mtype[39m=[32m"button"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33maria-hidden[39m=[32m"true"[39m
+                    [33mclass[39m=[32m"h-3.5 w-3.5"[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                  [0mConnect a folder[0m
+                [36m</button>[39m
+              [36m</div>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"mt-3 text-[10px] font-mono text-muted-foreground"[39m
+              [36m>[39m
+                [0mWorks in Chrome/Edge.[0m
+              [36m</p>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/workspace/WorkspacePanel.test.tsx:59:26
+     57|     ).toBeInTheDocument();
+     58|
+     59|     const input = screen.getByPlaceholderText("Search files, symbols, …
+       |                          ^
+     60|     fireEvent.change(input, { target: { value: "zzzznothing" } });
+     61|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 14 passed (16)
+   Start at  12:28:08
+   Duration  4.22s (transform 678ms, setup 400ms, import 835ms, tests 1.47s, environment 1.26s)
+

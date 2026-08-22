@@ -174,7 +174,7 @@ async function initializeWorkspace(
   const index = buildIndex(bridge.rootLabel, files);
   const manifest = buildManifest(index);
   useWorkspaceStore.setState({
-    workspace: { name: bridge.rootLabel, root: bridge.rootLabel, kind },
+    workspace: { name: bridge.rootLabel, root: bridge.rootPath, kind },
     bridge,
     index,
     manifest,
@@ -198,7 +198,8 @@ async function initializeWorkspace(
     pendingCommand: null,
     runningCommand: false,
     lastCommandResult: null,
-    commandError: null
+    commandError: null,
+    workspacePath: bridge.rootPath
   });
 }
 
@@ -222,6 +223,8 @@ interface WorkspaceState {
   lastSearchResults: string[];
   /** The last file the user explicitly referenced ("the first one", "test.py"). */
   lastReferencedFile: string | null;
+  /** The path of the connected workspace folder. */
+  workspacePath: string | null;
   /** Staged, user-approved-before-apply agent changes (diffs shown in the UI). */
   pendingChanges: ProposedChange[];
   /** Native execution surface (window.nexussDesktop.runtime), when present. */
@@ -299,6 +302,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   commandError: null,
   agentLog: [],
   changeError: null,
+  workspacePath: null,
 
   openPanel: () => set({ panelOpen: true }),
 
@@ -318,12 +322,15 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       await initializeWorkspace(bridge, native ? "native" : "fs-access");
     } catch (e) {
       const { kind, message } = classifyError(e);
+      // If already connected, preserve the connection on cancel rather than
+      // disconnecting. If previously disconnected, remain disconnected.
+      const alreadyConnected = get().connected;
       set({
         connecting: false,
-        connected: false,
-        status: "error",
-        errorKind: kind,
-        error: message
+        connected: alreadyConnected ? true : false,
+        status: alreadyConnected ? "connected" : "error",
+        errorKind: alreadyConnected ? null : kind,
+        error: alreadyConnected ? null : message
       });
     }
   },
@@ -332,7 +339,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     set({ connecting: true, error: null, errorKind: null, status: "reading" });
     try {
       await initializeWorkspace(
-        new InMemoryBridge("nexuss-sample", DEMO_FILES),
+        new InMemoryBridge("nexuss-sample", "nexuss-sample", DEMO_FILES),
         "in-memory"
       );
     } catch (e) {
@@ -375,7 +382,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       pendingCommand: null,
       runningCommand: false,
       lastCommandResult: null,
-      commandError: null
+      commandError: null,
+      workspacePath: null
     });
   },
 

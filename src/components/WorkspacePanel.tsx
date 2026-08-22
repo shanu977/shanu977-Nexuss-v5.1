@@ -31,7 +31,6 @@ export default function WorkspacePanel() {
   const searchResults = useWorkspaceStore((s) => s.searchResults);
   const searching = useWorkspaceStore((s) => s.searching);
   const connectLocal = useWorkspaceStore((s) => s.connectLocal);
-  const connectDemo = useWorkspaceStore((s) => s.connectDemo);
   const disconnect = useWorkspaceStore((s) => s.disconnect);
   const search = useWorkspaceStore((s) => s.search);
   const closePanel = useWorkspaceStore((s) => s.closePanel);
@@ -51,6 +50,7 @@ export default function WorkspacePanel() {
   const rejectPendingCommand = useWorkspaceStore((s) => s.rejectPendingCommand);
   const clearCommandError = useWorkspaceStore((s) => s.clearCommandError);
   const clearLastCommandResult = useWorkspaceStore((s) => s.clearLastCommandResult);
+  const workspacePath = useWorkspaceStore((s) => s.workspacePath);
   const [query, setQuery] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
   const panelId = "workspace-details";
@@ -144,17 +144,9 @@ export default function WorkspacePanel() {
                   <FolderIcon className="h-3.5 w-3.5" />
                   Connect a folder
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void connectDemo()}
-                  disabled={connecting}
-                  className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-1.5 text-[11px] font-mono font-medium text-foreground transition-colors hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-                >
-                  Try sample workspace
-                </button>
               </div>
               <p className="mt-3 text-[10px] font-mono text-muted-foreground">
-                Works in Chrome/Edge. Other browsers can try the sample workspace.
+                Works in Chrome/Edge.
               </p>
             </div>
           ) : (
@@ -178,6 +170,30 @@ export default function WorkspacePanel() {
                   <XCircleIcon className="h-3.5 w-3.5" />
                   Disconnect
                 </button>
+              </div>
+
+              <div className="mt-2 flex items-center gap-2">
+                <FolderIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
+                <span
+                  className="truncate text-[11px] font-mono text-foreground"
+                  title={workspacePath ?? ""}
+                >
+                  {workspacePath &&
+                  workspacePath.length > 60
+                    ? `${workspacePath.slice(0, 30)}…${workspacePath.slice(
+                        -30
+                      )}`
+                    : workspacePath}
+                </span>
+                {connected && (
+                  <button
+                    type="button"
+                    onClick={() => void connectLocal()}
+                    className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-2.5 py-1 text-[10px] font-mono font-medium text-foreground transition-colors hover:bg-muted/70 cursor-pointer"
+                  >
+                    Change folder
+                  </button>
+                )}
               </div>
 
               <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2">

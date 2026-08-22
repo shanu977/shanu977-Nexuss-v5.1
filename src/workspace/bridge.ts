@@ -25,6 +25,7 @@ export interface FileSource {
 export interface WorkspaceBridge {
   readonly kind: WorkspaceKind;
   readonly rootLabel: string;
+  readonly rootPath: string;
   /** Discovery stats from the most recent list() call, when available. */
   readonly lastScan?: { entries: number; files: number };
   list(): Promise<FileSource[]>;
@@ -57,6 +58,7 @@ interface FsHandleLike {
   getDirectoryHandle?(name: string, options?: { create?: boolean }): Promise<FsHandleLike>;
   removeEntry?(name: string, options?: { recursive?: boolean }): Promise<void>;
   entries?(): AsyncIterable<[string, FsHandleLike]>;
+  toURL?(): string;
 }
 
 const IGNORED_DIR_NAMES = new Set([
@@ -88,14 +90,16 @@ const MAX_SCANNED_FILES = 5000;
 export class FileSystemAccessBridge implements WorkspaceBridge {
   readonly kind = "fs-access" as const;
   readonly rootLabel: string;
+  readonly rootPath: string;
   readonly lastScan = { entries: 0, files: 0 };
   private readonly root: FsHandleLike;
   private closed = false;
   private scanned = 0;
 
-  constructor(root: FsHandleLike) {
+  constructor(root: FsHandleLike, rootPath: string) {
     this.root = root;
     this.rootLabel = root.name;
+    this.rootPath = rootPath;
   }
 
   static async pick(): Promise<FileSystemAccessBridge> {
@@ -108,7 +112,8 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
       throw new Error("This browser does not support folder access.");
     }
     const handle = await win.showDirectoryPicker({ mode: "readwrite" });
-    return new FileSystemAccessBridge(handle);
+    const rootPath = handle.toURL?.() ?? handle.name;
+    return new FileSystemAccessBridge(handle, rootPath);
   }
 
   async list(): Promise<FileSource[]> {
@@ -227,11 +232,13 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
 export class InMemoryBridge implements WorkspaceBridge {
   readonly kind = "in-memory" as const;
   readonly rootLabel: string;
+  readonly rootPath: string;
   readonly lastScan = { entries: 0, files: 0 };
   private readonly files = new Map<string, string>();
 
-  constructor(name: string, files: Record<string, string> = {}) {
+  constructor(name: string, rootPath = name, files: Record<string, string> = {}) {
     this.rootLabel = name;
+    this.rootPath = rootPath;
     for (const [path, content] of Object.entries(files)) {
       this.files.set(path, content);
     }
