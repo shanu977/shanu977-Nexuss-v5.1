@@ -58,7 +58,7 @@ _PLANNING_HEADING_RE = re.compile(
     r"^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*"
     r"(Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$"
     r"|^\s*\[.*(?:Done|Proceeds).*?\]\s*$"
-    r"|^\s*(?:Ready|Proceeds)\.?\s*$",
+    r"|^\s*[-*]?\s*(?:Ready|Proceeds)\.?\s*[✅]*\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -67,6 +67,86 @@ _WAIT = object()
 
 def _is_planning_heading(line: str) -> bool:
     return bool(_PLANNING_HEADING_RE.match(line.strip()))
+
+
+def _strip_freeform_deliberation(text: str) -> str:
+    """Strip free-form deliberation that is not heading-based.
+
+    Handles leaks like:
+      "Hi there! How can I help you?"\\nLet's try...\\n"Hello! How can I assist you?"\\nFinal decision: "Hi there!..."
+      and
+      ":** I need to keep it tight... I am an AI assistant..."
+    Keeps only the final quoted greeting or the final "I am an AI assistant..." block.
+    """
+    if not text:
+        return text
+    # Strip leading markdown artifact ":**" etc.
+    t = re.sub(r"^\s*:\*\*\s*", "", text).strip()
+    # If text contains deliberation keywords and multiple quoted candidates, keep last quoted greeting
+    # This covers the "hi" leak with many "Let's try" / "Final decision" quoted candidates
+    if re.search(r"Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,", t, re.IGNORECASE):
+        # Paragraph-aware: find last quoted greeting in a clean paragraph (no deliberation keywords on same paragraph)
+        parts = re.split(r"\n\s*\n", t)
+        for p in reversed(parts):
+            if not p.strip() or re.search(r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,", p, re.IGNORECASE):
+                continue
+            m_q = re.search(r'"([^"]*How can I help[^"]*)"', p, re.IGNORECASE)
+            if m_q:
+                return m_q.group(1).strip().strip('"').strip()
+            # Also check for quoted greeting without How can I help, but Hello/Hi
+            m_q2 = re.search(r'"([^"]+)"', p)
+            if m_q2 and re.search(r"Hello|Hi", m_q2.group(1), re.IGNORECASE):
+                # Ensure quoted itself is not deliberation
+                if not re.search(r"Let's|Actually|I will|Final decision|Refined plan", m_q2.group(1), re.IGNORECASE):
+                    return m_q2.group(1).strip()
+            # If paragraph itself is a greeting without quotes
+            if re.search(r"Hello|Hi.*How can I help", p, re.IGNORECASE) and len(p.strip()) < 120:
+                return p.strip().strip('"').strip()
+        # Fallback: global search for quoted greetings in clean context
+        quotes = re.findall(r'"([^"]*How can I help[^"]*)"', t, re.IGNORECASE)
+        if quotes:
+            # Filter out those inside deliberation paragraphs
+            clean_quotes = []
+            for q in quotes:
+                # Find paragraph containing this quote
+                idx = t.find(q)
+                para_start = t.rfind("\n\n", 0, idx)
+                para = t[para_start:idx+len(q)+50]
+                if not re.search(r"Let's try|Actually,|Final decision|Wait,", para, re.IGNORECASE):
+                    clean_quotes.append(q)
+            if clean_quotes:
+                return clean_quotes[-1].strip().strip('"').strip()
+            return quotes[-1].strip().strip('"').strip()
+        # For tell-me-about-yourself, keep from "I am an AI assistant" onward
+        m2 = None
+        for mm in re.finditer(r"I(?:'m| am) an AI assistant", t, re.IGNORECASE):
+            m2 = mm
+        if m2:
+            return t[m2.start():].strip().lstrip(":** ").strip()
+        # Generic: keep last paragraph that looks like final answer
+        parts = re.split(r"\n\s*\n", t)
+        # Return last non-deliberation paragraph
+        for p in reversed(parts):
+            if p.strip() and not re.search(r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,", p, re.IGNORECASE):
+                # Strip leading enumeration "6. "
+                cleaned = re.sub(r"^\s*\d+\.\s*", "", p.strip())
+                if cleaned:
+                    return cleaned
+    # Specific for "I need to keep it tight" deliberation before final AI intro
+    if re.search(r"I need to keep it tight", t, re.IGNORECASE):
+        m2 = None
+        for mm in re.finditer(r"I(?:'m| am) an AI assistant designed to be helpful", t, re.IGNORECASE):
+            m2 = mm
+        if m2:
+            return t[m2.start():].strip().lstrip(":** ").strip()
+        # Fallback: strip leading ":**" already done, try to find "I am an AI"
+        m3 = re.search(r"I(?:'m| am) an AI assistant", t, re.IGNORECASE)
+        if m3:
+            return t[m3.start():].strip()
+    # Strip leading ":**" artifact for tell-me case
+    if t.startswith(":**"):
+        t = t[3:].strip()
+    return t
 
 
 def _strip_planning_headings(text: str) -> str:
@@ -79,7 +159,7 @@ def _strip_planning_headings(text: str) -> str:
     heading's newline is returned.
     """
     if not text or not _PLANNING_HEADING_RE.search(text):
-        return text
+        return _strip_freeform_deliberation(text)
     lines = text.splitlines(True)
     last_idx = -1
     last_after = ""
@@ -256,9 +336,10 @@ class ReasoningFilter:
         self._saw_planning = False
 
     def _is_plan_prefix(self, line: str) -> bool:
-        t = line.strip().lstrip("*# ").strip()
-        # Strip leading numbering like "4. "
+        t = line.strip().lstrip("*# -").strip()
+        # Strip leading numbering like "4. " or bullet "- "
         t = re.sub(r"^\d+\.\s*", "", t).strip()
+        t = re.sub(r"^[-*]\s*", "", t).strip()
         # Strip bracket wrapping for prefix check
         t = t.strip("[]").strip()
         t = t.lower()
@@ -417,7 +498,7 @@ class ReasoningFilter:
             # Strip leading enumeration if we had planning
             if self._saw_planning and re.match(r"^\s*\d+\.\s*", tail):
                 tail = re.sub(r"^\s*\d+\.\s*", "", tail)
-            return tail
+            return _strip_freeform_deliberation(tail).strip()
 
         out = self.pending
         self.pending = ""
@@ -447,22 +528,16 @@ class ReasoningFilter:
         # Strip leading enumeration artifact if we saw planning
         if self._saw_planning and re.match(r"^\s*\d+\.\s*", stripped):
             stripped = re.sub(r"^\s*\d+\.\s*", "", stripped)
-        # If stripping changed the visible output, we must not have already
-        # emitted the heading lines earlier (they were dropped per-line above),
-        # so just return the stripped remainder. Otherwise return combined with
-        # its buffered tail already applied.
-        # For the simple per-line dropped case, combined == stripped.
-        if stripped != combined and self.emitted:
-            # Re-check: if we already emitted some prefix before the last heading,
-            # the per-line dropping already handled it; the batch strip would
-            # duplicate. Prefer the per-line result which is streaming-safe.
-            # Only use the batch-stripped version when it is shorter (meaning
-            # headings were in the same chunk as the answer).
-            if len(stripped) < len(combined):
-                return stripped
-        if stripped != combined:
-            return stripped
-        return combined
+        # Apply freeform deliberation stripping as final defense
+        stripped_free = _strip_freeform_deliberation(stripped).strip()
+        combined_free = _strip_freeform_deliberation(combined).strip()
+        # Use freeform-cleaned versions for comparison
+        if stripped_free != combined_free and self.emitted:
+            if len(stripped_free) < len(combined_free):
+                return stripped_free
+        if stripped_free != combined_free:
+            return stripped_free
+        return combined_free
 
     def _step(self) -> str | object:
         if not self.pending:
@@ -531,7 +606,8 @@ def filter_reasoning(text: str) -> str:
     Delegates to the streaming filter so the batch and per-chunk paths behave
     identically (matching the frontend's ``ReasoningFilter``).
     """
-    # Fast path: thinking/response markers first, then planning headings.
+    # Fast path: thinking/response markers first, then planning headings, then freeform deliberation.
     filter_ = ReasoningFilter()
     primary = (filter_.push(text) + filter_.flush()).strip()
-    return _strip_planning_headings(primary).strip()
+    after_headings = _strip_planning_headings(primary).strip()
+    return _strip_freeform_deliberation(after_headings).strip()
