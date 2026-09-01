@@ -52,13 +52,13 @@ _LEADING_WHITESPACE = re.compile(r"^[\t \r\n]+")
 # These appear as bare lines like "Strategy: ...", "Draft: ...", "Refine: ..." etc.
 # They are stripped as reasoning even when not wrapped in thinking/response markers.
 # Also catches numbered headings ("4. Strategy:"), bracket markers ("[Done]"),
-# and standalone "Proceeds." / "Checks against guidelines:" variants.
+# and standalone "Proceeds." / "Checks against guidelines:" variants, plus arrow
+# delimiters like "Output Generation -> \"Hello\"".
 _PLANNING_HEADING_RE = re.compile(
-    r"^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?"
-    r"(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Checks? Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan|Decision|Final choice|Choice|Conclusion|Summary|Result|Final answer)\s*(?:\(.*?\))?\s*:.*$"
+    r"^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*"
+    r"(Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$"
     r"|^\s*\[.*(?:Done|Proceeds).*?\]\s*$"
-    r"|^\s*Proceeds\.?\s*$"
-    r"|^\s*\[Done\]\s*$",
+    r"|^\s*(?:Ready|Proceeds)\.?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -100,9 +100,23 @@ def _strip_planning_headings(text: str) -> str:
                     last_heading_name = "proceeds"
                 else:
                     last_heading_name = "proceeds"
+            # Support both ":" and "->" delimiters
+            dpos = -1
+            arrow = line.find("->")
             colon = line.find(":")
-            if colon != -1:
-                after = line[colon + 1 :].strip(" *#\t\r\n")
+            if arrow != -1 and colon != -1:
+                dpos = min(arrow, colon)
+                # If arrow is delimiter, take after arrow, else after colon
+                if arrow < colon:
+                    after = line[arrow + 2 :].strip(" *#\t\r\n\"'✅")
+                    last_after = after
+                    continue
+            elif arrow != -1:
+                after = line[arrow + 2 :].strip(" *#\t\r\n\"'✅")
+                last_after = after
+                continue
+            elif colon != -1:
+                after = line[colon + 1 :].strip(" *#\t\r\n\"'✅")
                 last_after = after
             else:
                 last_after = ""
@@ -110,7 +124,10 @@ def _strip_planning_headings(text: str) -> str:
         return text
     remaining = "".join(lines[last_idx + 1 :])
     if remaining.strip():
-        return remaining.lstrip("\r\n").strip()
+        cleaned = remaining.lstrip("\r\n").strip()
+        # Strip leading enumeration like "6. " that is artifact of the chain
+        cleaned = re.sub(r"^\s*\d+\.\s*", "", cleaned)
+        return cleaned
     # No remaining text after the last heading: only return after-colon if the
     # last heading is an answer-type heading, otherwise treat it as
     # reasoning-only and return empty to trigger fallback. If there was content
@@ -236,6 +253,7 @@ class ReasoningFilter:
         self.pending = ""
         self.emitted = False
         self._plan_buf = ""
+        self._saw_planning = False
 
     def _is_plan_prefix(self, line: str) -> bool:
         t = line.strip().lstrip("*# ").strip()
@@ -295,10 +313,12 @@ class ReasoningFilter:
         if not text:
             return ""
         self._plan_buf += text
+        if _PLANNING_HEADING_RE.search(self._plan_buf):
+            self._saw_planning = True
         # If we have ever seen a planning heading, buffer everything until flush
         # (the final answer is only known after the last heading). This prevents
         # leaking lines like "hi" that sit between Strategy and Draft.
-        if _PLANNING_HEADING_RE.search(self._plan_buf):
+        if self._saw_planning:
             # Hold back an incomplete trailing line that could still become a heading
             if "\n" not in self._plan_buf:
                 return ""
@@ -309,12 +329,7 @@ class ReasoningFilter:
             # Otherwise, still hold the whole buffer until flush for safety.
             # We still need to allow the case where no heading has been seen yet:
             # fall through to per-line logic only when no heading seen.
-            if _PLANNING_HEADING_RE.search(self._plan_buf):
-                # Contains a heading – hold everything
-                # But if the buffer ends with a complete non-heading line and we
-                # have already passed the last heading, we could emit. Since we
-                # don't know if more headings will arrive, hold until flush.
-                return ""
+            return ""
         out_parts: list[str] = []
         while "\n" in self._plan_buf:
             idx = self._plan_buf.index("\n")
@@ -361,11 +376,21 @@ class ReasoningFilter:
                 }
                 if name not in answer_headings:
                     return ""
+                # Support both ":" and "->"
+                arrow = line.find("->")
                 colon = line.find(":")
-                if colon != -1:
-                    after = line[colon + 1 :].strip(" *#\t\r\n")
-                    if after:
-                        return after
+                after = ""
+                if arrow != -1 and colon != -1:
+                    if arrow < colon:
+                        after = line[arrow + 2 :].strip(" *#\t\r\n\"'✅")
+                    else:
+                        after = line[colon + 1 :].strip(" *#\t\r\n\"'✅")
+                elif arrow != -1:
+                    after = line[arrow + 2 :].strip(" *#\t\r\n\"'✅")
+                elif colon != -1:
+                    after = line[colon + 1 :].strip(" *#\t\r\n\"'✅")
+                if after:
+                    return after
                 return ""
         return line
 
@@ -389,6 +414,9 @@ class ReasoningFilter:
             self.pending = ""
             # Preserve any visible answer that was already buffered in planBuf
             tail = self._plan_flush()
+            # Strip leading enumeration if we had planning
+            if self._saw_planning and re.match(r"^\s*\d+\.\s*", tail):
+                tail = re.sub(r"^\s*\d+\.\s*", "", tail)
             return tail
 
         out = self.pending
@@ -416,6 +444,9 @@ class ReasoningFilter:
         # (e.g. a complete "Strategy: ...\\nAnswer" arrived in one chunk),
         # strip them now.
         stripped = _strip_planning_headings(combined)
+        # Strip leading enumeration artifact if we saw planning
+        if self._saw_planning and re.match(r"^\s*\d+\.\s*", stripped):
+            stripped = re.sub(r"^\s*\d+\.\s*", "", stripped)
         # If stripping changed the visible output, we must not have already
         # emitted the heading lines earlier (they were dropped per-line above),
         # so just return the stripped remainder. Otherwise return combined with

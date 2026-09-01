@@ -126,7 +126,7 @@ const LEADING_WHITESPACE = /^[\t \r\n]+/;
 // "Strategy: ...", "Draft: ...", "Refine: ..." etc (case-insensitive,
 // optional markdown wrapping). They are stripped as reasoning.
 const PLANNING_HEADING_RE =
-  /^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Checks? Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan|Decision|Final choice|Choice|Conclusion|Summary|Result|Final answer)\s*(?:\(.*?\))?\s*:.*$|^\s*\[.*(?:Done|Proceeds).*?\]\s*$|^\s*Proceeds\.?\s*$|^\s*\[Done\]\s*$/im;
+  /^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*(Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$|^\s*\[.*(?:Done|Proceeds).*?\]\s*$|^\s*(?:Ready|Proceeds)\.?\s*$/im;
 
 function isPlanningHeading(line: string): boolean {
   return PLANNING_HEADING_RE.test(line.trim());
@@ -161,9 +161,15 @@ function stripPlanningHeadings(text: string): string {
         else if (low.includes("proceeds")) lastName = "proceeds";
         else lastName = "proceeds";
       }
+      const arrow = line.indexOf("->");
       const colon = line.indexOf(":");
-      if (colon !== -1) {
-        lastAfter = line.slice(colon + 1).replace(/^[ *#\t\r\n]+/, "").trim();
+      if (arrow !== -1 && colon !== -1) {
+        if (arrow < colon) lastAfter = line.slice(arrow + 2).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
+        else lastAfter = line.slice(colon + 1).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
+      } else if (arrow !== -1) {
+        lastAfter = line.slice(arrow + 2).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
+      } else if (colon !== -1) {
+        lastAfter = line.slice(colon + 1).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
       } else {
         lastAfter = "";
       }
@@ -171,7 +177,11 @@ function stripPlanningHeadings(text: string): string {
   }
   if (lastIdx === -1) return text;
   const remaining = rawLines.slice(lastIdx + 1).join("");
-  if (remaining.trim()) return remaining.replace(/^\r?\n/, "").trim();
+  if (remaining.trim()) {
+    let cleaned = remaining.replace(/^\r?\n/, "").trim();
+    cleaned = cleaned.replace(/^\s*\d+\.\s*/, "");
+    return cleaned;
+  }
   const answerHeadings = new Set([
     "output generation",
     "final polish",
@@ -203,6 +213,7 @@ export class ReasoningFilter {
   private pending = "";
   private emitted = false;
   private planBuf = "";
+  private sawPlanning = false;
 
   private isPlanPrefix(line: string): boolean {
     let t = line.trim().replace(/^[*#\s]+/, "");
@@ -255,7 +266,8 @@ export class ReasoningFilter {
   private planPush(text: string): string {
     if (!text) return "";
     this.planBuf += text;
-    if (PLANNING_HEADING_RE.test(this.planBuf)) {
+    if (PLANNING_HEADING_RE.test(this.planBuf)) this.sawPlanning = true;
+    if (this.sawPlanning) {
       if (!this.planBuf.includes("\n")) return "";
       return "";
     }
@@ -303,11 +315,18 @@ export class ReasoningFilter {
           "final answer",
         ]);
         if (!answerHeadings.has(name)) return "";
+        const arrow = line.indexOf("->");
         const colon = line.indexOf(":");
-        if (colon !== -1) {
-          const after = line.slice(colon + 1).replace(/^[ *#\t\r\n]+/, "").trim();
-          if (after) return after;
+        let after = "";
+        if (arrow !== -1 && colon !== -1) {
+          if (arrow < colon) after = line.slice(arrow + 2).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
+          else after = line.slice(colon + 1).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
+        } else if (arrow !== -1) {
+          after = line.slice(arrow + 2).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
+        } else if (colon !== -1) {
+          after = line.slice(colon + 1).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
         }
+        if (after) return after;
         return "";
       }
     }
@@ -332,7 +351,8 @@ export class ReasoningFilter {
   flush(): string {
     if (this.state === "thinking") {
       this.pending = "";
-      const tail = this.planFlush();
+      let tail = this.planFlush();
+      if (this.sawPlanning && /^\s*\d+\.\s*/.test(tail)) tail = tail.replace(/^\s*\d+\.\s*/, "");
       return tail;
     }
 
@@ -357,7 +377,8 @@ export class ReasoningFilter {
     if (out.length > 0) this.emitted = true;
     const planTail = this.planFlush();
     const combined = out + planTail;
-    const stripped = stripPlanningHeadings(combined);
+    let stripped = stripPlanningHeadings(combined);
+    if (this.sawPlanning && /^\s*\d+\.\s*/.test(stripped)) stripped = stripped.replace(/^\s*\d+\.\s*/, "");
     if (stripped !== combined && stripped.length < combined.length) return stripped;
     if (stripped !== combined) return stripped;
     return combined;
