@@ -426,8 +426,8 @@ export class ReasoningFilter {
     const combined = out + planTail;
     let stripped = stripPlanningHeadings(combined);
     if (this.sawPlanning && /^\s*\d+\.\s*/.test(stripped)) stripped = stripped.replace(/^\s*\d+\.\s*/, "");
-    let strippedFree = stripFreeformDeliberation(stripped).trim();
-    let combinedFree = stripFreeformDeliberation(combined).trim();
+    const strippedFree = stripFreeformDeliberation(stripped).trim();
+    const combinedFree = stripFreeformDeliberation(combined).trim();
     if (strippedFree !== combinedFree && this.emitted) {
       if (strippedFree.length < combinedFree.length) return strippedFree;
     }
