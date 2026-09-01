@@ -126,7 +126,7 @@ const LEADING_WHITESPACE = /^[\t \r\n]+/;
 // "Strategy: ...", "Draft: ...", "Refine: ..." etc (case-insensitive,
 // optional markdown wrapping). They are stripped as reasoning.
 const PLANNING_HEADING_RE =
-  /^\s*(?:\*\*|#{1,6}\s*)?(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Check Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan)\s*:.*$/i;
+  /^\s*(?:\*\*|#{1,6}\s*)?(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Check Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan|Decision|Final choice|Choice|Conclusion|Summary|Result|Final answer)\s*(?:\(.*?\))?\s*:.*$/i;
 
 function isPlanningHeading(line: string): boolean {
   return PLANNING_HEADING_RE.test(line.trim());
@@ -165,8 +165,28 @@ function stripPlanningHeadings(text: string): string {
   if (lastIdx === -1) return text;
   const remaining = rawLines.slice(lastIdx + 1).join("");
   if (remaining.trim()) return remaining.replace(/^\r?\n/, "").trim();
-  const answerHeadings = new Set(["output generation", "final polish"]);
+  const answerHeadings = new Set([
+    "output generation",
+    "final polish",
+    "decision",
+    "final choice",
+    "choice",
+    "conclusion",
+    "summary",
+    "result",
+    "final answer",
+  ]);
   if (answerHeadings.has(lastName) && lastAfter.trim()) return lastAfter.trim();
+  // Keep preamble before first heading if present
+  let firstIdx = -1;
+  for (let i = 0; i < rawLines.length; i++) {
+    if (PLANNING_HEADING_RE.test(rawLines[i].replace(/\r?\n$/, ""))) {
+      firstIdx = i;
+      break;
+    }
+  }
+  const prefix = firstIdx > 0 ? rawLines.slice(0, firstIdx).join("").trim() : "";
+  if (prefix) return prefix;
   if (rawLines.length === 1) return "";
   return answerHeadings.has(lastName) ? lastAfter.trim() : "";
 }
@@ -180,7 +200,8 @@ export class ReasoningFilter {
   private isPlanPrefix(line: string): boolean {
     const t = line.trim().replace(/^[*#\s]+/, "").toLowerCase();
     if (t === "") return true;
-    const first = t.split(":")[0].trim();
+    let first = t.split(":")[0].trim();
+    first = first.replace(/\(.*?\)/g, "").trim();
     const candidates = [
       "strategy",
       "mental",
@@ -205,6 +226,13 @@ export class ReasoningFilter {
       "plan",
       "steps",
       "step",
+      "decision",
+      "final choice",
+      "choice",
+      "conclusion",
+      "summary",
+      "result",
+      "final answer",
     ];
     return candidates.some(
       (c) => c.startsWith(first) && first.length <= c.length || first.startsWith(c)
@@ -238,7 +266,17 @@ export class ReasoningFilter {
     const m = line.trim().match(PLANNING_HEADING_RE);
     if (m) {
       const name = m[1].trim().toLowerCase();
-      const answerHeadings = new Set(["output generation", "final polish"]);
+      const answerHeadings = new Set([
+        "output generation",
+        "final polish",
+        "decision",
+        "final choice",
+        "choice",
+        "conclusion",
+        "summary",
+        "result",
+        "final answer",
+      ]);
       if (!answerHeadings.has(name)) return "";
       const colon = line.indexOf(":");
       if (colon !== -1) {

@@ -53,7 +53,7 @@ _LEADING_WHITESPACE = re.compile(r"^[\t \r\n]+")
 # They are stripped as reasoning even when not wrapped in thinking/response markers.
 _PLANNING_HEADING_RE = re.compile(
     r"^\s*(?:\*\*|#{1,6}\s*)?"
-    r"(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Check Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan)\s*:.*$",
+    r"(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Check Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan|Decision|Final choice|Choice|Conclusion|Summary|Result|Final answer)\s*(?:\(.*?\))?\s*:.*$",
     re.IGNORECASE,
 )
 
@@ -96,11 +96,31 @@ def _strip_planning_headings(text: str) -> str:
     if remaining.strip():
         return remaining.lstrip("\r\n").strip()
     # No remaining text after the last heading: only return after-colon if the
-    # last heading is an answer-type heading (Output Generation / Final Polish),
-    # otherwise treat it as reasoning-only and return empty to trigger fallback.
-    answer_headings = {"output generation", "final polish"}
+    # last heading is an answer-type heading, otherwise treat it as
+    # reasoning-only and return empty to trigger fallback. If there was content
+    # before the first heading, keep it (e.g. "Preamble\nStrategy: ...").
+    answer_headings = {
+        "output generation",
+        "final polish",
+        "decision",
+        "final choice",
+        "choice",
+        "conclusion",
+        "summary",
+        "result",
+        "final answer",
+    }
     if last_heading_name.lower() in answer_headings and last_after.strip():
         return last_after.strip()
+    # Find first heading to check for preamble
+    first_idx = -1
+    for i, line in enumerate(lines):
+        if _PLANNING_HEADING_RE.match(line.rstrip("\r\n")):
+            first_idx = i
+            break
+    prefix = "".join(lines[:first_idx]).strip() if first_idx > 0 else ""
+    if prefix:
+        return prefix
     if len(lines) == 1:
         return ""
     return last_after.strip() if last_heading_name.lower() in answer_headings else ""
@@ -205,8 +225,9 @@ class ReasoningFilter:
         t = line.strip().lstrip("*# ").strip().lower()
         if t == "":
             return True
-        # Remove possible trailing colon content for prefix check
+        # Remove possible trailing colon content and parenthetical for prefix check
         first = t.split(":")[0].strip()
+        first = re.sub(r"\(.*?\)", "", first).strip()
         candidates = [
             "strategy",
             "mental",
@@ -231,6 +252,13 @@ class ReasoningFilter:
             "plan",
             "steps",
             "step",
+            "decision",
+            "final choice",
+            "choice",
+            "conclusion",
+            "summary",
+            "result",
+            "final answer",
         ]
         return any(
             c.startswith(first) and len(first) <= len(c) or first.startswith(c) for c in candidates
@@ -267,7 +295,17 @@ class ReasoningFilter:
         m = _PLANNING_HEADING_RE.match(line.strip())
         if m:
             name = m.group(1).strip().lower()
-            answer_headings = {"output generation", "final polish"}
+            answer_headings = {
+                "output generation",
+                "final polish",
+                "decision",
+                "final choice",
+                "choice",
+                "conclusion",
+                "summary",
+                "result",
+                "final answer",
+            }
             if name not in answer_headings:
                 return ""
             colon = line.find(":")
