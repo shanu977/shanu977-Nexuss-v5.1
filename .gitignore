@@ -35,3 +35,4 @@ secrets.*
 credentials.json
 service-account*.json
 *.service_account_key.json
+.vercel
