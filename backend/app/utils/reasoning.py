@@ -51,10 +51,15 @@ _LEADING_WHITESPACE = re.compile(r"^[\t \r\n]+")
 # Planning / chain-of-thought headings that must never be shown to the user.
 # These appear as bare lines like "Strategy: ...", "Draft: ...", "Refine: ..." etc.
 # They are stripped as reasoning even when not wrapped in thinking/response markers.
+# Also catches numbered headings ("4. Strategy:"), bracket markers ("[Done]"),
+# and standalone "Proceeds." / "Checks against guidelines:" variants.
 _PLANNING_HEADING_RE = re.compile(
-    r"^\s*(?:\*\*|#{1,6}\s*)?"
-    r"(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Check Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan|Decision|Final choice|Choice|Conclusion|Summary|Result|Final answer)\s*(?:\(.*?\))?\s*:.*$",
-    re.IGNORECASE,
+    r"^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?"
+    r"(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Checks? Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan|Decision|Final choice|Choice|Conclusion|Summary|Result|Final answer)\s*(?:\(.*?\))?\s*:.*$"
+    r"|^\s*\[.*(?:Done|Proceeds).*?\]\s*$"
+    r"|^\s*Proceeds\.?\s*$"
+    r"|^\s*\[Done\]\s*$",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 _WAIT = object()
@@ -83,7 +88,18 @@ def _strip_planning_headings(text: str) -> str:
         m = _PLANNING_HEADING_RE.match(line.rstrip("\r\n"))
         if m:
             last_idx = i
-            last_heading_name = m.group(1).strip().lower()
+            grp = m.group(1)
+            if grp is not None:
+                last_heading_name = grp.strip().lower()
+            else:
+                # Bracket / Proceeds match has no capture group 1
+                txt = line.strip().lower()
+                if "done" in txt:
+                    last_heading_name = "done"
+                elif "proceeds" in txt:
+                    last_heading_name = "proceeds"
+                else:
+                    last_heading_name = "proceeds"
             colon = line.find(":")
             if colon != -1:
                 after = line[colon + 1 :].strip(" *#\t\r\n")
@@ -222,7 +238,12 @@ class ReasoningFilter:
         self._plan_buf = ""
 
     def _is_plan_prefix(self, line: str) -> bool:
-        t = line.strip().lstrip("*# ").strip().lower()
+        t = line.strip().lstrip("*# ").strip()
+        # Strip leading numbering like "4. "
+        t = re.sub(r"^\d+\.\s*", "", t).strip()
+        # Strip bracket wrapping for prefix check
+        t = t.strip("[]").strip()
+        t = t.lower()
         if t == "":
             return True
         # Remove possible trailing colon content and parenthetical for prefix check
@@ -245,6 +266,7 @@ class ReasoningFilter:
             "prompt text",
             "planning text",
             "check against guidelines",
+            "checks against guidelines",
             "final polish",
             "output generation",
             "thought process",
@@ -259,16 +281,40 @@ class ReasoningFilter:
             "summary",
             "result",
             "final answer",
+            "proceeds",
+            "done",
         ]
         return any(
             c.startswith(first) and len(first) <= len(c) or first.startswith(c) for c in candidates
         ) or any(first.startswith(c.split()[0]) for c in candidates)
 
     def _plan_push(self, text: str) -> str:
-        """Streaming-safe planning-heading filter: drops heading lines."""
+        """Streaming-safe planning-heading filter: drops heading lines and
+        buffers content between first and last heading until flush, so
+        intermediate non-heading lines inside the reasoning block never leak."""
         if not text:
             return ""
         self._plan_buf += text
+        # If we have ever seen a planning heading, buffer everything until flush
+        # (the final answer is only known after the last heading). This prevents
+        # leaking lines like "hi" that sit between Strategy and Draft.
+        if _PLANNING_HEADING_RE.search(self._plan_buf):
+            # Hold back an incomplete trailing line that could still become a heading
+            if "\n" not in self._plan_buf:
+                return ""
+            # Keep at least the last incomplete line buffered
+            # Only emit if we are sure no heading will appear later – but we
+            # cannot be sure until flush, so hold all when a heading has been seen.
+            # Check if the buffer ends with a partial heading prefix – hold it.
+            # Otherwise, still hold the whole buffer until flush for safety.
+            # We still need to allow the case where no heading has been seen yet:
+            # fall through to per-line logic only when no heading seen.
+            if _PLANNING_HEADING_RE.search(self._plan_buf):
+                # Contains a heading – hold everything
+                # But if the buffer ends with a complete non-heading line and we
+                # have already passed the last heading, we could emit. Since we
+                # don't know if more headings will arrive, hold until flush.
+                return ""
         out_parts: list[str] = []
         while "\n" in self._plan_buf:
             idx = self._plan_buf.index("\n")
@@ -292,28 +338,35 @@ class ReasoningFilter:
             return ""
         line = self._plan_buf
         self._plan_buf = ""
-        m = _PLANNING_HEADING_RE.match(line.strip())
-        if m:
-            name = m.group(1).strip().lower()
-            answer_headings = {
-                "output generation",
-                "final polish",
-                "decision",
-                "final choice",
-                "choice",
-                "conclusion",
-                "summary",
-                "result",
-                "final answer",
-            }
-            if name not in answer_headings:
+        # Only treat as single heading if no newline (single incomplete line)
+        if "\n" not in line:
+            m = _PLANNING_HEADING_RE.match(line.strip())
+            if m:
+                grp = m.group(1)
+                if grp is not None:
+                    name = grp.strip().lower()
+                else:
+                    low = line.strip().lower()
+                    name = "done" if "done" in low else "proceeds" if "proceeds" in low else "done"
+                answer_headings = {
+                    "output generation",
+                    "final polish",
+                    "decision",
+                    "final choice",
+                    "choice",
+                    "conclusion",
+                    "summary",
+                    "result",
+                    "final answer",
+                }
+                if name not in answer_headings:
+                    return ""
+                colon = line.find(":")
+                if colon != -1:
+                    after = line[colon + 1 :].strip(" *#\t\r\n")
+                    if after:
+                        return after
                 return ""
-            colon = line.find(":")
-            if colon != -1:
-                after = line[colon + 1 :].strip(" *#\t\r\n")
-                if after:
-                    return after
-            return ""
         return line
 
     def push(self, chunk: str) -> str:

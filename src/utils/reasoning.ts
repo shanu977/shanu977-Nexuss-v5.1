@@ -126,7 +126,7 @@ const LEADING_WHITESPACE = /^[\t \r\n]+/;
 // "Strategy: ...", "Draft: ...", "Refine: ..." etc (case-insensitive,
 // optional markdown wrapping). They are stripped as reasoning.
 const PLANNING_HEADING_RE =
-  /^\s*(?:\*\*|#{1,6}\s*)?(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Check Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan|Decision|Final choice|Choice|Conclusion|Summary|Result|Final answer)\s*(?:\(.*?\))?\s*:.*$/i;
+  /^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Checks? Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan|Decision|Final choice|Choice|Conclusion|Summary|Result|Final answer)\s*(?:\(.*?\))?\s*:.*$|^\s*\[.*(?:Done|Proceeds).*?\]\s*$|^\s*Proceeds\.?\s*$|^\s*\[Done\]\s*$/im;
 
 function isPlanningHeading(line: string): boolean {
   return PLANNING_HEADING_RE.test(line.trim());
@@ -153,7 +153,14 @@ function stripPlanningHeadings(text: string): string {
     const m = line.match(PLANNING_HEADING_RE);
     if (m) {
       lastIdx = i;
-      lastName = m[1].trim().toLowerCase();
+      if (m[1]) {
+        lastName = m[1].trim().toLowerCase();
+      } else {
+        const low = line.trim().toLowerCase();
+        if (low.includes("done")) lastName = "done";
+        else if (low.includes("proceeds")) lastName = "proceeds";
+        else lastName = "proceeds";
+      }
       const colon = line.indexOf(":");
       if (colon !== -1) {
         lastAfter = line.slice(colon + 1).replace(/^[ *#\t\r\n]+/, "").trim();
@@ -198,7 +205,10 @@ export class ReasoningFilter {
   private planBuf = "";
 
   private isPlanPrefix(line: string): boolean {
-    const t = line.trim().replace(/^[*#\s]+/, "").toLowerCase();
+    let t = line.trim().replace(/^[*#\s]+/, "");
+    t = t.replace(/^\d+\.\s*/, "").trim();
+    t = t.replace(/^\[|\]$/g, "").trim();
+    t = t.toLowerCase();
     if (t === "") return true;
     let first = t.split(":")[0].trim();
     first = first.replace(/\(.*?\)/g, "").trim();
@@ -219,6 +229,7 @@ export class ReasoningFilter {
       "prompt text",
       "planning text",
       "check against guidelines",
+      "checks against guidelines",
       "final polish",
       "output generation",
       "thought process",
@@ -233,6 +244,8 @@ export class ReasoningFilter {
       "summary",
       "result",
       "final answer",
+      "proceeds",
+      "done",
     ];
     return candidates.some(
       (c) => c.startsWith(first) && first.length <= c.length || first.startsWith(c)
@@ -242,6 +255,10 @@ export class ReasoningFilter {
   private planPush(text: string): string {
     if (!text) return "";
     this.planBuf += text;
+    if (PLANNING_HEADING_RE.test(this.planBuf)) {
+      if (!this.planBuf.includes("\n")) return "";
+      return "";
+    }
     let out = "";
     while (this.planBuf.includes("\n")) {
       const idx = this.planBuf.indexOf("\n");
@@ -263,27 +280,36 @@ export class ReasoningFilter {
     if (!this.planBuf) return "";
     const line = this.planBuf;
     this.planBuf = "";
-    const m = line.trim().match(PLANNING_HEADING_RE);
-    if (m) {
-      const name = m[1].trim().toLowerCase();
-      const answerHeadings = new Set([
-        "output generation",
-        "final polish",
-        "decision",
-        "final choice",
-        "choice",
-        "conclusion",
-        "summary",
-        "result",
-        "final answer",
-      ]);
-      if (!answerHeadings.has(name)) return "";
-      const colon = line.indexOf(":");
-      if (colon !== -1) {
-        const after = line.slice(colon + 1).replace(/^[ *#\t\r\n]+/, "").trim();
-        if (after) return after;
+    if (!line.includes("\n")) {
+      const m = line.trim().match(PLANNING_HEADING_RE);
+      if (m) {
+        let name = "";
+        if (m[1]) name = m[1].trim().toLowerCase();
+        else {
+          const low = line.trim().toLowerCase();
+          if (low.includes("done")) name = "done";
+          else if (low.includes("proceeds")) name = "proceeds";
+          else name = "done";
+        }
+        const answerHeadings = new Set([
+          "output generation",
+          "final polish",
+          "decision",
+          "final choice",
+          "choice",
+          "conclusion",
+          "summary",
+          "result",
+          "final answer",
+        ]);
+        if (!answerHeadings.has(name)) return "";
+        const colon = line.indexOf(":");
+        if (colon !== -1) {
+          const after = line.slice(colon + 1).replace(/^[ *#\t\r\n]+/, "").trim();
+          if (after) return after;
+        }
+        return "";
       }
-      return "";
     }
     return line;
   }
