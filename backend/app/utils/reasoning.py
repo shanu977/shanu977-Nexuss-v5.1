@@ -48,7 +48,62 @@ _BARE_LINE_MARKER_RE = re.compile(
 _TRAILING_WHITESPACE = re.compile(r"[\t \r\n]+$")
 _LEADING_WHITESPACE = re.compile(r"^[\t \r\n]+")
 
+# Planning / chain-of-thought headings that must never be shown to the user.
+# These appear as bare lines like "Strategy: ...", "Draft: ...", "Refine: ..." etc.
+# They are stripped as reasoning even when not wrapped in thinking/response markers.
+_PLANNING_HEADING_RE = re.compile(
+    r"^\s*(?:\*\*|#{1,6}\s*)?"
+    r"(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Check Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan)\s*:.*$",
+    re.IGNORECASE,
+)
+
 _WAIT = object()
+
+
+def _is_planning_heading(line: str) -> bool:
+    return bool(_PLANNING_HEADING_RE.match(line.strip()))
+
+
+def _strip_planning_headings(text: str) -> str:
+    """Remove planning / CoT heading blocks, keeping only the final answer.
+
+    If the text contains lines like "Strategy: ...", the entire block up to and
+    including the last such heading is discarded. When the last heading line
+    itself carries the answer after its colon (e.g. "Output Generation: Hello!"),
+    that after-colon content is returned. Otherwise the text after the last
+    heading's newline is returned.
+    """
+    if not text or not _PLANNING_HEADING_RE.search(text):
+        return text
+    lines = text.splitlines(True)
+    last_idx = -1
+    last_after = ""
+    last_heading_name = ""
+    for i, line in enumerate(lines):
+        m = _PLANNING_HEADING_RE.match(line.rstrip("\r\n"))
+        if m:
+            last_idx = i
+            last_heading_name = m.group(1).strip().lower()
+            colon = line.find(":")
+            if colon != -1:
+                after = line[colon + 1 :].strip(" *#\t\r\n")
+                last_after = after
+            else:
+                last_after = ""
+    if last_idx == -1:
+        return text
+    remaining = "".join(lines[last_idx + 1 :])
+    if remaining.strip():
+        return remaining.lstrip("\r\n").strip()
+    # No remaining text after the last heading: only return after-colon if the
+    # last heading is an answer-type heading (Output Generation / Final Polish),
+    # otherwise treat it as reasoning-only and return empty to trigger fallback.
+    answer_headings = {"output generation", "final polish"}
+    if last_heading_name.lower() in answer_headings and last_after.strip():
+        return last_after.strip()
+    if len(lines) == 1:
+        return ""
+    return last_after.strip() if last_heading_name.lower() in answer_headings else ""
 
 
 def _classify_angle_tag(tag: str) -> str:
@@ -144,6 +199,84 @@ class ReasoningFilter:
         self.state = "normal"
         self.pending = ""
         self.emitted = False
+        self._plan_buf = ""
+
+    def _is_plan_prefix(self, line: str) -> bool:
+        t = line.strip().lstrip("*# ").strip().lower()
+        if t == "":
+            return True
+        # Remove possible trailing colon content for prefix check
+        first = t.split(":")[0].strip()
+        candidates = [
+            "strategy",
+            "mental",
+            "draft",
+            "refine",
+            "self-correction",
+            "self correction",
+            "verification",
+            "analysis",
+            "reasoning",
+            "chain-of-thought",
+            "chain of thought",
+            "internal instructions",
+            "internal instruction",
+            "prompt text",
+            "planning text",
+            "check against guidelines",
+            "final polish",
+            "output generation",
+            "thought process",
+            "thought",
+            "plan",
+            "steps",
+            "step",
+        ]
+        return any(
+            c.startswith(first) and len(first) <= len(c) or first.startswith(c) for c in candidates
+        ) or any(first.startswith(c.split()[0]) for c in candidates)
+
+    def _plan_push(self, text: str) -> str:
+        """Streaming-safe planning-heading filter: drops heading lines."""
+        if not text:
+            return ""
+        self._plan_buf += text
+        out_parts: list[str] = []
+        while "\n" in self._plan_buf:
+            idx = self._plan_buf.index("\n")
+            line = self._plan_buf[: idx + 1]
+            self._plan_buf = self._plan_buf[idx + 1 :]
+            if _PLANNING_HEADING_RE.match(line.rstrip("\r\n")):
+                continue
+            out_parts.append(line)
+        # If the remaining buffer could still become a heading, hold it
+        if self._plan_buf and self._is_plan_prefix(self._plan_buf):
+            return "".join(out_parts)
+        if self._plan_buf:
+            # Not a heading prefix -> emit it now
+            tail = self._plan_buf
+            self._plan_buf = ""
+            return "".join(out_parts) + tail
+        return "".join(out_parts)
+
+    def _plan_flush(self) -> str:
+        if not self._plan_buf:
+            return ""
+        line = self._plan_buf
+        self._plan_buf = ""
+        m = _PLANNING_HEADING_RE.match(line.strip())
+        if m:
+            name = m.group(1).strip().lower()
+            answer_headings = {"output generation", "final polish"}
+            if name not in answer_headings:
+                return ""
+            colon = line.find(":")
+            if colon != -1:
+                after = line[colon + 1 :].strip(" *#\t\r\n")
+                if after:
+                    return after
+            return ""
+        return line
 
     def push(self, chunk: str) -> str:
         self.pending += chunk
@@ -157,12 +290,15 @@ class ReasoningFilter:
             if result:
                 self.emitted = True
             out.append(result)
-        return "".join(out)
+        raw = "".join(out)
+        return self._plan_push(raw)
 
     def flush(self) -> str:
         if self.state == "thinking":
             self.pending = ""
-            return ""
+            # Preserve any visible answer that was already buffered in planBuf
+            tail = self._plan_flush()
+            return tail
 
         out = self.pending
         self.pending = ""
@@ -181,7 +317,30 @@ class ReasoningFilter:
 
         if out:
             self.emitted = True
-        return out
+        # Flush any buffered planning line, then apply batch heading strip as
+        # defense-in-depth for cases where headings were not newline-delimited.
+        plan_tail = self._plan_flush()
+        combined = out + plan_tail
+        # If the combined output still contains planning headings as a batch
+        # (e.g. a complete "Strategy: ...\\nAnswer" arrived in one chunk),
+        # strip them now.
+        stripped = _strip_planning_headings(combined)
+        # If stripping changed the visible output, we must not have already
+        # emitted the heading lines earlier (they were dropped per-line above),
+        # so just return the stripped remainder. Otherwise return combined with
+        # its buffered tail already applied.
+        # For the simple per-line dropped case, combined == stripped.
+        if stripped != combined and self.emitted:
+            # Re-check: if we already emitted some prefix before the last heading,
+            # the per-line dropping already handled it; the batch strip would
+            # duplicate. Prefer the per-line result which is streaming-safe.
+            # Only use the batch-stripped version when it is shorter (meaning
+            # headings were in the same chunk as the answer).
+            if len(stripped) < len(combined):
+                return stripped
+        if stripped != combined:
+            return stripped
+        return combined
 
     def _step(self) -> str | object:
         if not self.pending:
@@ -250,5 +409,7 @@ def filter_reasoning(text: str) -> str:
     Delegates to the streaming filter so the batch and per-chunk paths behave
     identically (matching the frontend's ``ReasoningFilter``).
     """
+    # Fast path: thinking/response markers first, then planning headings.
     filter_ = ReasoningFilter()
-    return (filter_.push(text) + filter_.flush()).strip()
+    primary = (filter_.push(text) + filter_.flush()).strip()
+    return _strip_planning_headings(primary).strip()

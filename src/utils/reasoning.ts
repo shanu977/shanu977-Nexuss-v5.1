@@ -122,10 +122,133 @@ function partialMarkerAt(text: string): number | null {
 const TRAILING_WHITESPACE = /[\t \r\n]+$/;
 const LEADING_WHITESPACE = /^[\t \r\n]+/;
 
+// Planning / CoT headings that must never be shown. Matches lines like
+// "Strategy: ...", "Draft: ...", "Refine: ..." etc (case-insensitive,
+// optional markdown wrapping). They are stripped as reasoning.
+const PLANNING_HEADING_RE =
+  /^\s*(?:\*\*|#{1,6}\s*)?(Strategy|Mental|Draft|Refine|Self[-\s]?Correction|Verification|Analysis|Reasoning|Chain[-\s]?of[-\s]?thought|Internal instructions?|Prompt text|Planning text|Check Against Guidelines|Final Polish|Output Generation|Thought Process|Steps?|Thought|Plan)\s*:.*$/i;
+
+function isPlanningHeading(line: string): boolean {
+  return PLANNING_HEADING_RE.test(line.trim());
+}
+
+function stripPlanningHeadings(text: string): string {
+  if (!text || !PLANNING_HEADING_RE.test(text)) return text;
+  const rawLines: string[] = [];
+  let pos = 0;
+  while (pos < text.length) {
+    const nl = text.indexOf("\n", pos);
+    if (nl === -1) {
+      rawLines.push(text.slice(pos));
+      break;
+    }
+    rawLines.push(text.slice(pos, nl + 1));
+    pos = nl + 1;
+  }
+  let lastIdx = -1;
+  let lastAfter = "";
+  let lastName = "";
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i].replace(/\r?\n$/, "");
+    const m = line.match(PLANNING_HEADING_RE);
+    if (m) {
+      lastIdx = i;
+      lastName = m[1].trim().toLowerCase();
+      const colon = line.indexOf(":");
+      if (colon !== -1) {
+        lastAfter = line.slice(colon + 1).replace(/^[ *#\t\r\n]+/, "").trim();
+      } else {
+        lastAfter = "";
+      }
+    }
+  }
+  if (lastIdx === -1) return text;
+  const remaining = rawLines.slice(lastIdx + 1).join("");
+  if (remaining.trim()) return remaining.replace(/^\r?\n/, "").trim();
+  const answerHeadings = new Set(["output generation", "final polish"]);
+  if (answerHeadings.has(lastName) && lastAfter.trim()) return lastAfter.trim();
+  if (rawLines.length === 1) return "";
+  return answerHeadings.has(lastName) ? lastAfter.trim() : "";
+}
+
 export class ReasoningFilter {
   private state: ReasoningState = "normal";
   private pending = "";
   private emitted = false;
+  private planBuf = "";
+
+  private isPlanPrefix(line: string): boolean {
+    const t = line.trim().replace(/^[*#\s]+/, "").toLowerCase();
+    if (t === "") return true;
+    const first = t.split(":")[0].trim();
+    const candidates = [
+      "strategy",
+      "mental",
+      "draft",
+      "refine",
+      "self-correction",
+      "self correction",
+      "verification",
+      "analysis",
+      "reasoning",
+      "chain-of-thought",
+      "chain of thought",
+      "internal instructions",
+      "internal instruction",
+      "prompt text",
+      "planning text",
+      "check against guidelines",
+      "final polish",
+      "output generation",
+      "thought process",
+      "thought",
+      "plan",
+      "steps",
+      "step",
+    ];
+    return candidates.some(
+      (c) => c.startsWith(first) && first.length <= c.length || first.startsWith(c)
+    ) || candidates.some((c) => first.startsWith(c.split(" ")[0]));
+  }
+
+  private planPush(text: string): string {
+    if (!text) return "";
+    this.planBuf += text;
+    let out = "";
+    while (this.planBuf.includes("\n")) {
+      const idx = this.planBuf.indexOf("\n");
+      const line = this.planBuf.slice(0, idx + 1);
+      this.planBuf = this.planBuf.slice(idx + 1);
+      if (PLANNING_HEADING_RE.test(line.replace(/\r?\n$/, ""))) continue;
+      out += line;
+    }
+    if (this.planBuf && this.isPlanPrefix(this.planBuf)) return out;
+    if (this.planBuf) {
+      const tail = this.planBuf;
+      this.planBuf = "";
+      return out + tail;
+    }
+    return out;
+  }
+
+  private planFlush(): string {
+    if (!this.planBuf) return "";
+    const line = this.planBuf;
+    this.planBuf = "";
+    const m = line.trim().match(PLANNING_HEADING_RE);
+    if (m) {
+      const name = m[1].trim().toLowerCase();
+      const answerHeadings = new Set(["output generation", "final polish"]);
+      if (!answerHeadings.has(name)) return "";
+      const colon = line.indexOf(":");
+      if (colon !== -1) {
+        const after = line.slice(colon + 1).replace(/^[ *#\t\r\n]+/, "").trim();
+        if (after) return after;
+      }
+      return "";
+    }
+    return line;
+  }
 
   /** Feed one response chunk; returns the visible (non-reasoning) portion. */
   push(chunk: string): string {
@@ -138,14 +261,15 @@ export class ReasoningFilter {
       if (result.length > 0) this.emitted = true;
       out += result;
     }
-    return out;
+    return this.planPush(out);
   }
 
   /** Flush any remaining input (end of stream). Reasoning is never exposed. */
   flush(): string {
     if (this.state === "thinking") {
       this.pending = "";
-      return "";
+      const tail = this.planFlush();
+      return tail;
     }
 
     let out = this.pending;
@@ -167,7 +291,12 @@ export class ReasoningFilter {
     }
 
     if (out.length > 0) this.emitted = true;
-    return out;
+    const planTail = this.planFlush();
+    const combined = out + planTail;
+    const stripped = stripPlanningHeadings(combined);
+    if (stripped !== combined && stripped.length < combined.length) return stripped;
+    if (stripped !== combined) return stripped;
+    return combined;
   }
 
   private step(): string | "wait" {
@@ -282,5 +411,6 @@ function findCloseMarker(text: string): Marker | null {
 /** Strip internal reasoning from a complete model response. */
 export function filterReasoning(text: string): string {
   const filter = new ReasoningFilter();
-  return filter.push(text) + filter.flush();
+  const primary = (filter.push(text) + filter.flush()).trim();
+  return stripPlanningHeadings(primary).trim();
 }
