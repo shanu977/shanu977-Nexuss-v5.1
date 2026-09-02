@@ -56,7 +56,7 @@ _LEADING_WHITESPACE = re.compile(r"^[\t \r\n]+")
 # delimiters like "Output Generation -> \"Hello\"".
 _PLANNING_HEADING_RE = re.compile(
     r"^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*"
-    r"(Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$"
+    r"(Final Output Generation|Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Follow Constraints?|Constraints|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$"
     r"|^\s*\[.*(?:Done|Proceeds).*?\]\s*$"
     r"|^\s*[-*]?\s*(?:Ready|Proceeds)\.?\s*[✅]*\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -81,14 +81,16 @@ def _strip_freeform_deliberation(text: str) -> str:
     if not text:
         return text
     # Strip leading markdown artifact ":**" etc.
-    t = re.sub(r"^\s*:\*\*\s*", "", text).strip()
+    # Strip leading "NEXUSS:**" / "NEXUSS :**" / ":**" artifacts that leak from the model
+    t = re.sub(r"^\s*(?:NEXUSS\s*:?\s*)?:\*\*\s*", "", text, flags=re.IGNORECASE).strip()
+    t = re.sub(r"^\s*:\*\*\s*", "", t).strip()
     # If text contains deliberation keywords and multiple quoted candidates, keep last quoted greeting
     # This covers the "hi" leak with many "Let's try" / "Final decision" quoted candidates
-    if re.search(r"Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,", t, re.IGNORECASE):
+    if re.search(r"Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,|I should respond|I should acknowledge|should respond with|Follow Constraints|Final Output Generation|Respond only with|Never reveal internal|Be helpful and concise|Acknowledge the friendly", t, re.IGNORECASE):
         # Paragraph-aware: find last quoted greeting in a clean paragraph (no deliberation keywords on same paragraph)
         parts = re.split(r"\n\s*\n", t)
         for p in reversed(parts):
-            if not p.strip() or re.search(r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,", p, re.IGNORECASE):
+            if not p.strip() or re.search(r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal|Acknowledge the friendly", p, re.IGNORECASE):
                 continue
             m_q = re.search(r'"([^"]*How can I help[^"]*)"', p, re.IGNORECASE)
             if m_q:
@@ -112,11 +114,39 @@ def _strip_freeform_deliberation(text: str) -> str:
                 idx = t.find(q)
                 para_start = t.rfind("\n\n", 0, idx)
                 para = t[para_start:idx+len(q)+50]
-                if not re.search(r"Let's try|Actually,|Final decision|Wait,", para, re.IGNORECASE):
+                if not re.search(r"Let's try|Actually,|Final decision|Wait,|I should|Follow Constraints|Final Output Generation", para, re.IGNORECASE):
                     clean_quotes.append(q)
             if clean_quotes:
                 return clean_quotes[-1].strip().strip('"').strip()
             return quotes[-1].strip().strip('"').strip()
+        # Handle "Example: \"...final answer...\"" pattern where final answer is quoted and then repeated plain
+        m_ex = re.search(r'Example:\s*"([^"]+)"', t, re.IGNORECASE | re.DOTALL)
+        if m_ex and re.search(r"As an AI|don't drink coffee|How can I help|Hello! How can I help", m_ex.group(1), re.IGNORECASE):
+            after = t[m_ex.end():].strip()
+            # Strip leading numbered marker like "5." / "5.I'd"
+            after = re.sub(r'^[\s\d\.\:\-\u2705]*', '', after)
+            if after and len(after) > 20 and not re.search(r"Acknowledge the friendly|I should respond", after[:80], re.IGNORECASE):
+                if re.search(r"As an AI|don't drink coffee|How can I help|Hello!", after, re.IGNORECASE):
+                    # Return the plain final answer after the example, not the quoted example itself
+                    # Clean up any leading enumeration still present
+                    after_clean = re.sub(r'^\s*\d+\.\s*', '', after).strip().strip('"').strip()
+                    if after_clean:
+                        return after_clean
+            return m_ex.group(1).strip()
+        # Fallback: extract from "I'd love to, but as an AI" onward when deliberation leaked in same paragraph
+        m_love = re.search(r"I'd love to, but as an AI.*", t, re.IGNORECASE | re.DOTALL)
+        if m_love:
+            # Prefer the last occurrence (the plain final answer, not the quoted example)
+            last_love = None
+            for mm in re.finditer(r"I'd love to, but as an AI.*", t, re.IGNORECASE | re.DOTALL):
+                last_love = mm
+            if last_love:
+                candidate = t[last_love.start():].strip()
+                # Trim trailing deliberation artifacts like '5.' prefix already handled, strip quotes
+                candidate = candidate.strip().strip('"').strip()
+                # If candidate still contains deliberation prefix like 'Example:', strip it
+                if len(candidate) > 20:
+                    return candidate
         # For tell-me-about-yourself, keep from "I am an AI assistant" onward
         m2 = None
         for mm in re.finditer(r"I(?:'m| am) an AI assistant", t, re.IGNORECASE):
@@ -127,11 +157,17 @@ def _strip_freeform_deliberation(text: str) -> str:
         parts = re.split(r"\n\s*\n", t)
         # Return last non-deliberation paragraph
         for p in reversed(parts):
-            if p.strip() and not re.search(r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,", p, re.IGNORECASE):
+            if p.strip() and not re.search(r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal", p, re.IGNORECASE):
                 # Strip leading enumeration "6. "
                 cleaned = re.sub(r"^\s*\d+\.\s*", "", p.strip())
                 if cleaned:
                     return cleaned
+        # Last resort: if text still contains deliberation but also contains a clear final answer sentence, extract it
+        # e.g. single paragraph with ":** Acknowledge... 5.I'd love..." -> take from "I'd love" onward
+        if re.search(r"Acknowledge the friendly|I should acknowledge", t, re.IGNORECASE):
+            m_final = re.search(r"(I'd love to, but as an AI.*|Hello! How can I help.*)", t, re.IGNORECASE | re.DOTALL)
+            if m_final:
+                return m_final.group(1).strip().strip('"').strip()
     # Specific for "I need to keep it tight" deliberation before final AI intro
     if re.search(r"I need to keep it tight", t, re.IGNORECASE):
         m2 = None
@@ -214,6 +250,7 @@ def _strip_planning_headings(text: str) -> str:
     # before the first heading, keep it (e.g. "Preamble\nStrategy: ...").
     answer_headings = {
         "output generation",
+        "final output generation",
         "final polish",
         "decision",
         "final choice",
@@ -336,6 +373,9 @@ class ReasoningFilter:
         self._saw_planning = False
 
     def _is_plan_prefix(self, line: str) -> bool:
+        # Hold back lines that look like leaked deliberation (":**", "I should", "Acknowledge")
+        if re.search(r":\*\*|I should|Acknowledge the friendly|Follow Constraints|Final Output Generation", line, re.IGNORECASE):
+            return True
         t = line.strip().lstrip("*# -").strip()
         # Strip leading numbering like "4. " or bullet "- "
         t = re.sub(r"^\d+\.\s*", "", t).strip()
@@ -366,6 +406,9 @@ class ReasoningFilter:
             "planning text",
             "check against guidelines",
             "checks against guidelines",
+            "follow constraints",
+            "constraints",
+            "final output generation",
             "final polish",
             "output generation",
             "thought process",
@@ -418,7 +461,17 @@ class ReasoningFilter:
             self._plan_buf = self._plan_buf[idx + 1 :]
             if _PLANNING_HEADING_RE.match(line.rstrip("\r\n")):
                 continue
+            # Drop leaked deliberation lines that precede headings (e.g. ":** I should...")
+            if re.search(r":\*\*|I should respond|I should acknowledge|Acknowledge the friendly", line, re.IGNORECASE):
+                # Treat as planning: hold subsequent content until flush
+                self._saw_planning = True
+                continue
             out_parts.append(line)
+        # If we discovered deliberation mid-push, hold everything for flush-time cleaning
+        if self._saw_planning:
+            if out_parts:
+                self._plan_buf = "".join(out_parts) + self._plan_buf
+            return ""
         # If the remaining buffer could still become a heading, hold it
         if self._plan_buf and self._is_plan_prefix(self._plan_buf):
             return "".join(out_parts)
@@ -446,6 +499,7 @@ class ReasoningFilter:
                     name = "done" if "done" in low else "proceeds" if "proceeds" in low else "done"
                 answer_headings = {
                     "output generation",
+                    "final output generation",
                     "final polish",
                     "decision",
                     "final choice",

@@ -126,7 +126,7 @@ const LEADING_WHITESPACE = /^[\t \r\n]+/;
 // "Strategy: ...", "Draft: ...", "Refine: ..." etc (case-insensitive,
 // optional markdown wrapping). They are stripped as reasoning.
 const PLANNING_HEADING_RE =
-  /^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*(Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$|^\s*\[.*(?:Done|Proceeds).*?\]\s*$|^\s*[-*]?\s*(?:Ready|Proceeds)\.?\s*[✅]*\s*$/im;
+  /^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*(Final Output Generation|Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Follow Constraints?|Constraints|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$|^\s*\[.*(?:Done|Proceeds).*?\]\s*$|^\s*[-*]?\s*(?:Ready|Proceeds)\.?\s*[✅]*\s*$/im;
 
 function isPlanningHeading(line: string): boolean {
   return PLANNING_HEADING_RE.test(line.trim());
@@ -184,6 +184,7 @@ function stripPlanningHeadings(text: string): string {
   }
   const answerHeadings = new Set([
     "output generation",
+    "final output generation",
     "final polish",
     "decision",
     "final choice",
@@ -210,12 +211,13 @@ function stripPlanningHeadings(text: string): string {
 
 function stripFreeformDeliberation(text: string): string {
   if (!text) return text;
-  let t = text.replace(/^\s*:\*\*\s*/, "").trim();
-  if (/Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,/i.test(t)) {
+  let t = text.replace(/^\s*(?:NEXUSS\s*:?\s*)?:\*\*\s*/i, "").trim();
+  t = t.replace(/^\s*:\*\*\s*/, "").trim();
+  if (/Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,|I should respond|I should acknowledge|should respond with|Follow Constraints|Final Output Generation|Respond only with|Never reveal internal|Be helpful and concise|Acknowledge the friendly/i.test(t)) {
     const parts = t.split(/\n\s*\n/);
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
-      if (!p.trim() || /Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,/i.test(p)) continue;
+      if (!p.trim() || /Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal|Acknowledge the friendly/i.test(p)) continue;
       const m_q = p.match(/"([^"]*How can I help[^"]*)"/i);
       if (m_q) return m_q[1].trim().replace(/^["']|["']$/g, "").trim();
       const m_q2 = p.match(/"([^"]+)"/);
@@ -230,18 +232,39 @@ function stripFreeformDeliberation(text: string): string {
         const idx = t.indexOf(q);
         const paraStart = t.lastIndexOf("\n\n", idx);
         const para = t.slice(paraStart, idx + q.length + 50);
-        if (!/Let's try|Actually,|Final decision|Wait,/i.test(para)) return q.trim().replace(/^["']|["']$/g, "").trim();
+        if (!/Let's try|Actually,|Final decision|Wait,|I should|Follow Constraints|Final Output Generation/i.test(para)) return q.trim().replace(/^["']|["']$/g, "").trim();
       }
       return quotes[quotes.length - 1].trim().replace(/^["']|["']$/g, "").trim();
+    }
+    const mEx = t.match(/Example:\s*"([^"]+)"/i);
+    if (mEx && /As an AI|don't drink coffee|How can I help|Hello! How can I help/i.test(mEx[1])) {
+      const after = t.slice((mEx.index ?? 0) + mEx[0].length).trim().replace(/^[\s\d.:\-✅]*/, "");
+      if (after && after.length > 20 && !/Acknowledge the friendly|I should respond/i.test(after.slice(0, 80))) {
+        if (/As an AI|don't drink coffee|How can I help|Hello!/i.test(after)) {
+          const afterClean = after.replace(/^\s*\d+\.\s*/, "").trim().replace(/^["']|["']$/g, "").trim();
+          if (afterClean) return afterClean;
+        }
+      }
+      return mEx[1].trim();
+    }
+    let mLove: RegExpMatchArray | null = null;
+    for (const mm of t.matchAll(/I'd love to, but as an AI.*/gi)) mLove = mm as unknown as RegExpMatchArray;
+    if (mLove && mLove.index !== undefined) {
+      const cand = t.slice(mLove.index).trim().replace(/^["']|["']$/g, "").trim();
+      if (cand.length > 20) return cand;
     }
     let last: RegExpMatchArray | null = null;
     for (const mm of t.matchAll(/I(?:'m| am) an AI assistant/gi)) last = mm;
     if (last && last.index !== undefined) return t.slice(last.index).trim().replace(/^:\*\*\s*/, "").trim();
     for (let i = parts.length - 1; i >= 0; i--)
-      if (parts[i].trim() && !/Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,/i.test(parts[i])) {
+      if (parts[i].trim() && !/Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal/i.test(parts[i])) {
         const cleaned = parts[i].trim().replace(/^\s*\d+\.\s*/, "");
         if (cleaned) return cleaned;
       }
+    if (/Acknowledge the friendly|I should acknowledge/i.test(t)) {
+      const mFinal = t.match(/(I'd love to, but as an AI.*|Hello! How can I help.*)/i);
+      if (mFinal) return mFinal[1].trim().replace(/^["']|["']$/g, "").trim();
+    }
   }
   if (/I need to keep it tight/i.test(t)) {
     let last: RegExpMatchArray | null = null;
@@ -262,6 +285,7 @@ export class ReasoningFilter {
   private sawPlanning = false;
 
   private isPlanPrefix(line: string): boolean {
+    if (/:\*\*|I should|Acknowledge the friendly|Follow Constraints|Final Output Generation/i.test(line)) return true;
     let t = line.trim().replace(/^[*#\s\-]+/, "");
     t = t.replace(/^\d+\.\s*/, "").trim();
     t = t.replace(/^[-*]\s*/, "").trim();
@@ -288,6 +312,9 @@ export class ReasoningFilter {
       "planning text",
       "check against guidelines",
       "checks against guidelines",
+      "follow constraints",
+      "constraints",
+      "final output generation",
       "final polish",
       "output generation",
       "thought process",
@@ -324,7 +351,15 @@ export class ReasoningFilter {
       const line = this.planBuf.slice(0, idx + 1);
       this.planBuf = this.planBuf.slice(idx + 1);
       if (PLANNING_HEADING_RE.test(line.replace(/\r?\n$/, ""))) continue;
+      if (/:\*\*|I should respond|I should acknowledge|Acknowledge the friendly/i.test(line)) {
+        this.sawPlanning = true;
+        continue;
+      }
       out += line;
+    }
+    if (this.sawPlanning) {
+      if (out) this.planBuf = out + this.planBuf;
+      return "";
     }
     if (this.planBuf && this.isPlanPrefix(this.planBuf)) return out;
     if (this.planBuf) {
@@ -352,6 +387,7 @@ export class ReasoningFilter {
         }
         const answerHeadings = new Set([
           "output generation",
+          "final output generation",
           "final polish",
           "decision",
           "final choice",
