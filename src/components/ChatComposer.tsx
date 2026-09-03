@@ -5,6 +5,7 @@ import { useChatStore } from "@/store";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { PROVIDER_LABELS } from "@/utils/providerLabels";
+import { isProductionWeb, isDesktop } from "@/types/localModels";
 import {
   getModelLabel,
   PROVIDER_LIST,
@@ -251,6 +252,10 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
   const setProvider = useChatStore((s) => s.setProvider);
   const setModel = useChatStore((s) => s.setModel);
   const localModels = useLocalModelStore((s) => s.models.filter((m) => m.enabled));
+  const discoveredOllamaModels = useLocalModelStore((s) => s.discoveredOllamaModels);
+  const ollamaStatus = useLocalModelStore((s) => s.ollamaStatus);
+  const ollamaError = useLocalModelStore((s) => s.ollamaError);
+  const refreshOllamaModels = useLocalModelStore((s) => s.refreshOllamaModels);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -271,7 +276,42 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
     };
   }, [open]);
 
-  const handleSelect = (p: ProviderType, m: string) => {
+  useEffect(() => {
+    if (!open) return;
+    // Auto-discover Ollama models when Local section is opened
+    // Do not fetch in production web (will return production message)
+    void refreshOllamaModels();
+  }, [open, refreshOllamaModels]);
+
+  const handleSelect = async (p: ProviderType, m: string) => {
+    if (p === "local") {
+      // Ensure the selected discovered model is persisted as a LocalModel for future
+      const discovered = useLocalModelStore.getState().discoveredOllamaModels.find((d) => d.modelId === m);
+      const existing = useLocalModelStore.getState().models.find((mod) => mod.modelId === m);
+      if (discovered && !existing) {
+        const ollamaProvider = useLocalModelStore.getState().providers.find((pr) => pr.providerType === "ollama");
+        if (ollamaProvider) {
+          try {
+            await useLocalModelStore.getState().addModel(ollamaProvider.id, m, m);
+          } catch {}
+        } else {
+          // No Ollama provider yet, create one and add model
+          try {
+            const newProv = await useLocalModelStore.getState().addProvider({
+              name: "Ollama",
+              providerType: "ollama",
+              endpoint: "http://localhost:11434/v1",
+            });
+            await useLocalModelStore.getState().addModel(newProv.id, m, m);
+          } catch {}
+        }
+      }
+      // If selected model is not in discovered list, clear invalid selection
+      const stillExists = useLocalModelStore.getState().discoveredOllamaModels.some((d) => d.modelId === m) || useLocalModelStore.getState().models.some((mod) => mod.modelId === m);
+      if (!stillExists && m) {
+        // Keep the invalid selection but show warning; do not silently switch
+      }
+    }
     if (p !== provider) setProvider(p);
     setModel(m);
     setOpen(false);
@@ -302,35 +342,83 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
           aria-label="Choose model"
           className="absolute bottom-full left-0 z-50 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-2xl animate-fade-in text-popover-foreground"
         >
-          {/* Local models first-class */}
+          {/* Local models first-class — dynamic Ollama discovery */}
           <div className="mb-1">
             <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground font-mono flex items-center gap-1.5">
-              Local <span className="rounded bg-muted px-1 py-0.5 text-[9px] font-normal">On-device • No API key</span>
+              Ollama
+              {ollamaStatus === "connected" && <span className="flex items-center gap-1 text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Connected</span>}
+              {ollamaStatus === "loading" && <span className="text-muted-foreground">Loading…</span>}
             </div>
-            <div className="space-y-0.5">
-              {localModels.length === 0 ? (
-                <div className="px-2.5 py-2 text-[11px] text-muted-foreground">No local models. Add one in Settings → Models.</div>
-              ) : (
-                localModels.map((m) => {
-                  const selected = provider === "local" && m.modelId === model;
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      onClick={() => handleSelect("local", m.modelId)}
-                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors cursor-pointer ${
-                        selected ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                      }`}
-                    >
-                      <span className="min-w-0 truncate">{m.displayName}</span>
-                      {selected && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-primary" />}
-                    </button>
-                  );
-                })
-              )}
-            </div>
+            {isProductionWeb() && !isDesktop() ? (
+              <div className="px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground border border-amber-500/20 bg-amber-500/10 rounded-lg">
+                <p className="font-medium text-amber-600 dark:text-amber-400">ℹ Local models are available through Nexuss Desktop / local connector.</p>
+                <p className="mt-1">Ollama runs on your own machine. Use Nexuss Desktop or run Nexuss locally at http://localhost:3000 to chat with Ollama at http://localhost:11434.</p>
+              </div>
+            ) : ollamaStatus === "not_connected" || ollamaStatus === "error" ? (
+              <div className="px-2.5 py-2 space-y-1.5">
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">⚠ Ollama is not connected</p>
+                <p className="text-[11px] text-muted-foreground">Start Ollama and try again. {ollamaError ? `(${ollamaError})` : ""}</p>
+                <button
+                  type="button"
+                  onClick={() => void refreshOllamaModels()}
+                  className="rounded-lg border border-border bg-muted px-2.5 py-1 text-[11px] font-mono hover:bg-card cursor-pointer"
+                >
+                  Refresh Models
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-0.5">
+                <div className="flex items-center justify-between px-2.5 py-1">
+                  <span className="text-[11px] font-mono text-muted-foreground">
+                    {discoveredOllamaModels.length > 0 ? `Models: ${discoveredOllamaModels.length}` : ollamaStatus === "loading" ? "Discovering…" : `Local • ${localModels.length} saved`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void refreshOllamaModels()}
+                    className="rounded-lg border border-border bg-muted px-2 py-0.5 text-[10px] font-mono hover:bg-card cursor-pointer"
+                  >
+                    Refresh Models
+                  </button>
+                </div>
+                {(discoveredOllamaModels.length > 0 ? discoveredOllamaModels : localModels.map((m) => ({ id: m.id, modelId: m.modelId, size: m.size, family: m.family, parameterSize: m.parameterSize }))).length === 0 ? (
+                  <div className="px-2.5 py-2 text-[11px] text-muted-foreground">No local models. Add one in Settings → Models or start Ollama.</div>
+                ) : (
+                  (discoveredOllamaModels.length > 0 ? discoveredOllamaModels : localModels.map((m) => ({ id: m.id, modelId: m.modelId, size: m.size, family: m.family, parameterSize: m.parameterSize }))).map((m) => {
+                    const modelId = (m as { modelId: string }).modelId;
+                    const selected = provider === "local" && modelId === model;
+                    const isStale = provider === "local" && model === modelId && !discoveredOllamaModels.some((d) => d.modelId === model) && discoveredOllamaModels.length > 0;
+                    return (
+                      <button
+                        key={modelId}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        onClick={() => void handleSelect("local", modelId)}
+                        className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors cursor-pointer ${
+                          selected ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        }`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate">{modelId}</span>
+                          {(m as { size?: number; family?: string; parameterSize?: string }).size || (m as { family?: string }).family ? (
+                            <span className="block truncate text-[10px] font-mono text-muted-foreground">
+                              {(m as { family?: string }).family ? `${(m as { family?: string }).family} ` : ""}
+                              {(m as { parameterSize?: string }).parameterSize ? `${(m as { parameterSize?: string }).parameterSize} ` : ""}
+                              {(m as { size?: number }).size ? `${(((m as { size?: number }).size as number) / 1e9).toFixed(1)}GB` : ""}
+                            </span>
+                          ) : null}
+                          {isStale && <span className="block text-[10px] text-amber-600">Selected model no longer installed – pick another.</span>}
+                        </span>
+                        {selected && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-primary" />}
+                      </button>
+                    );
+                  })
+                )}
+                {provider === "local" && model && discoveredOllamaModels.length > 0 && !discoveredOllamaModels.some((d) => d.modelId === model) && (
+                  <div className="px-2.5 py-1 text-[11px] text-amber-600">Selected model “{model}” no longer installed. Please select another.</div>
+                )}
+              </div>
+            )}
           </div>
           {PROVIDER_LIST.filter((p) => p !== "local").map((p) => (
             <div key={p} className="mb-1">

@@ -165,6 +165,107 @@ export async function discoverLocalModels(endpoint: string, apiKey?: string): Pr
   return result.models ?? [];
 }
 
+export interface DiscoveredOllamaModelDetailed {
+  id: string;
+  modelId: string;
+  size?: number;
+  modified?: string;
+  family?: string;
+  parameterSize?: string;
+  quantization?: string;
+  created?: number;
+}
+
+/** For Ollama, fetch both /v1/models and /api/tags to enrich metadata. */
+export async function discoverOllamaModelsDetailed(
+  rawEndpoint: string,
+  providerType: string = "ollama",
+  apiKey?: string
+): Promise<{ models: DiscoveredOllamaModelDetailed[]; endpointReachable: boolean }> {
+  if (isProductionWeb()) {
+    return { models: [], endpointReachable: false };
+  }
+  const endpoint = normalizeEndpoint(rawEndpoint, providerType as never);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey?.trim()) headers["Authorization"] = `Bearer ${apiKey.trim()}`;
+
+  // Try desktop IPC first
+  const desktopOllama = (typeof window !== "undefined"
+    ? (window as unknown as { nexussDesktop?: { ollama?: { test?: (url: string, key?: string) => Promise<{ models?: string[] }> } } }).nexussDesktop?.ollama
+    : undefined) as { test?: (url: string, key?: string) => Promise<{ models?: string[] }> } | undefined;
+  if (isDesktop() && desktopOllama?.test) {
+    try {
+      const res = await desktopOllama.test(endpoint, apiKey);
+      if (res.models && res.models.length > 0) {
+        return {
+          models: res.models.map((id) => ({ id, modelId: id })),
+          endpointReachable: true,
+        };
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // Browser-direct: try /v1/models for IDs, then /api/tags for metadata (Ollama native)
+  const modelIds: string[] = [];
+  let endpointReachable = false;
+  try {
+    const modelsUrl = `${endpoint.replace(/\/$/, "")}/models`;
+    const res = await timeoutFetch(modelsUrl, { method: "GET", headers }, MODEL_DISCOVERY_TIMEOUT_MS);
+    if (res.ok) {
+      endpointReachable = true;
+      const data = await res.json().catch(() => null) as { data?: { id: string; created?: number }[]; models?: unknown[] } | null;
+      const rawList = data ? (Array.isArray(data) ? data : data.data || (data as { models?: unknown[] }).models || []) : [];
+      for (const m of rawList as unknown[]) {
+        if (typeof m === "string") modelIds.push(m);
+        else if (m && typeof (m as { id?: string }).id === "string") modelIds.push((m as { id: string }).id);
+      }
+    } else if (res.status === 404 || res.status === 405) {
+      endpointReachable = true;
+    } else {
+      endpointReachable = res.ok;
+    }
+  } catch {
+    // not reachable
+  }
+
+  // Try to enrich with /api/tags for Ollama (only for ollama provider)
+  if (providerType === "ollama") {
+    try {
+      const base = endpoint.replace(/\/v1\/?$/, "");
+      const tagsUrl = `${base.replace(/\/$/, "")}/api/tags`;
+      const res = await timeoutFetch(tagsUrl, { method: "GET", headers }, MODEL_DISCOVERY_TIMEOUT_MS);
+      if (res.ok) {
+        endpointReachable = true;
+        const data = await res.json().catch(() => null) as { models?: { name: string; size?: number; modified_at?: string; details?: { family?: string; parameter_size?: string; quantization_level?: string } }[] } | null;
+        if (data?.models && Array.isArray(data.models)) {
+          const detailed: DiscoveredOllamaModelDetailed[] = data.models.map((m) => ({
+            id: m.name,
+            modelId: m.name,
+            size: m.size,
+            modified: m.modified_at,
+            family: m.details?.family,
+            parameterSize: m.details?.parameter_size,
+            quantization: m.details?.quantization_level,
+          }));
+          // Merge with modelIds: prefer detailed list if available
+          if (detailed.length > 0) {
+            return { models: detailed, endpointReachable: true };
+          }
+        }
+      }
+    } catch {
+      // ignore, use modelIds
+    }
+  }
+
+  if (modelIds.length > 0) {
+    return { models: modelIds.map((id) => ({ id, modelId: id })), endpointReachable };
+  }
+  return { models: [], endpointReachable };
+}
+
 /** OpenAI-compatible streaming directly from browser to local endpoint.
  * In production (https://www.nexuss.in) this will throw with a clear message
  * because https cannot fetch http://localhost and the cloud server cannot reach

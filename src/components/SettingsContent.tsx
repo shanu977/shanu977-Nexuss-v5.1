@@ -69,6 +69,11 @@ export default function SettingsContent() {
   const addLocalModel = useLocalModelStore((s) => s.addModel);
   const removeLocalModel = useLocalModelStore((s) => s.removeModel);
   const toggleLocalModel = useLocalModelStore((s) => s.toggleModel);
+  const discoveredOllamaModels = useLocalModelStore((s) => s.discoveredOllamaModels);
+  const ollamaStatus = useLocalModelStore((s) => s.ollamaStatus);
+  const ollamaError = useLocalModelStore((s) => s.ollamaError);
+  const ollamaLastRefresh = useLocalModelStore((s) => s.ollamaLastRefresh);
+  const refreshOllamaModels = useLocalModelStore((s) => s.refreshOllamaModels);
 
   const [showAddLocal, setShowAddLocal] = useState(false);
   const [localProviderType, setLocalProviderType] = useState<LocalProviderType>("ollama");
@@ -88,6 +93,23 @@ export default function SettingsContent() {
   useEffect(() => {
     if (activeTab === "models" && !localHydrated) void hydrateLocal();
   }, [activeTab, localHydrated, hydrateLocal]);
+
+  useEffect(() => {
+    if (activeTab !== "models") return;
+    if (isProductionWeb() && !isDesktop()) return;
+    void refreshOllamaModels();
+  }, [activeTab, refreshOllamaModels]);
+
+  // Keep selected model valid: if the selected Ollama model was deleted, clear it
+  useEffect(() => {
+    if (provider !== "local") return;
+    if (ollamaStatus !== "connected" || discoveredOllamaModels.length === 0) return;
+    const stillExists = discoveredOllamaModels.some((m) => m.modelId === model) || localModels.some((m) => m.modelId === model && m.enabled);
+    if (!stillExists && model) {
+      // Do not silently switch; clear and ask user to pick
+      setModel("");
+    }
+  }, [discoveredOllamaModels, localModels, provider, model, ollamaStatus, setModel]);
 
   useEffect(() => {
     setLocalEndpoint(LOCAL_PROVIDER_DEFAULT_ENDPOINTS[localProviderType]);
@@ -603,6 +625,96 @@ export default function SettingsContent() {
                 </div>
               </div>
             )}
+
+            {/* Ollama auto-discovery — shows actually installed models */}
+            <section className="rounded-xl border border-border bg-card p-3.5 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <h4 className="text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  Ollama
+                  {ollamaStatus === "connected" && <span className="flex items-center gap-1 text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Connected</span>}
+                  {ollamaStatus === "loading" && <span className="text-muted-foreground">Loading…</span>}
+                  {ollamaStatus === "not_connected" && <span className="text-amber-600">⚠ Not connected</span>}
+                  {ollamaStatus === "error" && <span className="text-destructive">Error</span>}
+                  {isProductionWeb() && !isDesktop() && <span className="text-amber-600">ℹ Unavailable</span>}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => void refreshOllamaModels()}
+                  disabled={ollamaStatus === "loading" || (isProductionWeb() && !isDesktop())}
+                  className="rounded-lg border border-border bg-muted px-2.5 py-1 text-[11px] font-mono hover:bg-card disabled:opacity-50 cursor-pointer"
+                >
+                  Refresh Models
+                </button>
+              </div>
+              {isProductionWeb() && !isDesktop() ? (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                  <p className="font-medium text-amber-600 dark:text-amber-400">ℹ Local models are available through Nexuss Desktop / local connector.</p>
+                  <p className="mt-1">Ollama runs locally on your computer. Use Nexuss Desktop or run Nexuss locally at http://localhost:3000 to see your installed Ollama models here and chat with them.</p>
+                </div>
+              ) : ollamaStatus === "not_connected" ? (
+                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                  <p className="font-medium text-amber-600">⚠ Ollama is not connected</p>
+                  <p className="mt-1">Start Ollama and try again. Ensure Ollama is running at http://localhost:11434 and allows CORS (OLLAMA_ORIGINS=*).</p>
+                  {ollamaError && <p className="mt-1 font-mono text-[10px] text-muted-foreground">{ollamaError}</p>}
+                </div>
+              ) : ollamaStatus === "error" ? (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-2.5 text-[11px] text-destructive">
+                  <p>{ollamaError || "Failed to connect to Ollama."}</p>
+                  <p className="mt-1 text-muted-foreground">Check that Ollama is running and the endpoint is correct.</p>
+                </div>
+              ) : ollamaStatus === "loading" ? (
+                <p className="text-[11px] font-mono text-muted-foreground">Discovering installed models…</p>
+              ) : discoveredOllamaModels.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">No Ollama models found. Pull a model with <code className="rounded bg-muted border border-border px-1 py-0.5 font-mono text-[10px]">ollama pull qwen2.5:3b</code></p>
+              ) : (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-mono text-muted-foreground">Models: {discoveredOllamaModels.length} {ollamaLastRefresh ? `• Refreshed ${new Date(ollamaLastRefresh).toLocaleTimeString()}` : ""}</p>
+                  {discoveredOllamaModels.map((m) => {
+                    const isSelected = provider === "local" && model === m.modelId;
+                    const sizeStr = m.size ? `${(m.size / 1e9).toFixed(1)}GB` : "";
+                    return (
+                      <div key={m.id} className={`flex items-center justify-between rounded-lg border px-2.5 py-2 ${isSelected ? "border-primary bg-primary/5" : "border-border bg-card"}`}>
+                        <div className="min-w-0">
+                          <p className="text-xs font-mono font-medium truncate">{m.modelId}</p>
+                          <p className="text-[10px] font-mono text-muted-foreground truncate">
+                            {[m.family, m.parameterSize, sizeStr].filter(Boolean).join(" • ") || `created ${m.created ? new Date(m.created * 1000).toLocaleDateString() : ""}`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isSelected ? (
+                            <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-mono text-primary-foreground">Selected</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                // Ensure provider is local and model is set; also ensure LocalModel exists
+                                if (provider !== "local") setProvider("local");
+                                setModel(m.modelId);
+                                // Ensure persisted LocalModel exists for this discovered model
+                                const exists = localModels.some((lm) => lm.modelId === m.modelId);
+                                if (!exists) {
+                                  let ollamaProvider = localProviders.find((p) => p.providerType === "ollama");
+                                  if (!ollamaProvider) {
+                                    ollamaProvider = await addLocalProvider({ name: "Ollama", providerType: "ollama", endpoint: "http://localhost:11434/v1" });
+                                  }
+                                  await addLocalModel(ollamaProvider.id, m.modelId, m.modelId);
+                                }
+                              }}
+                              className="rounded-lg bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-mono hover:opacity-90 cursor-pointer"
+                            >
+                              Select
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {provider === "local" && model && !discoveredOllamaModels.some((d) => d.modelId === model) && (
+                    <p className="text-[11px] text-amber-600">Selected model “{model}” no longer installed. Please select another.</p>
+                  )}
+                </div>
+              )}
+            </section>
 
             {!localHydrated ? (
               <p className="text-[11px] font-mono text-muted-foreground">Loading local models...</p>

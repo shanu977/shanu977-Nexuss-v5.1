@@ -35,6 +35,24 @@ export interface LocalModel {
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
+  // Optional metadata from Ollama /api/tags or /v1/models
+  size?: number;
+  modifiedAt?: number;
+  family?: string;
+  parameterSize?: string;
+  quantization?: string;
+}
+
+export interface DiscoveredOllamaModel {
+  id: string;
+  modelId: string;
+  size?: number;
+  modified?: string;
+  modifiedAt?: number;
+  family?: string;
+  parameterSize?: string;
+  quantization?: string;
+  created?: number;
 }
 
 export type LocalHealthStatus = "connected" | "not_connected" | "error" | "disabled";

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { isProductionWeb, isDesktop, isLocalDev, getLocalModelProductionMessage } from "@/types/localModels";
 import { testLocalEndpoint, streamLocalChat } from "@/services/localModels";
 
@@ -10,34 +10,34 @@ describe("production vs local routing", () => {
   });
 
   it("isLocalDev true for http://localhost:3000", () => {
-    // @ts-expect-error jsdom
+    // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "localhost", protocol: "http:" } } as unknown as Window;
     expect(isLocalDev()).toBe(true);
     expect(isProductionWeb()).toBe(false);
   });
 
   it("isProductionWeb true for https://www.nexuss.in", () => {
-    // @ts-expect-error
+    // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "www.nexuss.in", protocol: "https:" } } as unknown as Window;
     expect(isProductionWeb()).toBe(true);
     expect(isLocalDev()).toBe(false);
   });
 
   it("isProductionWeb false for http://localhost:3000", () => {
-    // @ts-expect-error
+    // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "localhost", protocol: "http:" } } as unknown as Window;
     expect(isProductionWeb()).toBe(false);
   });
 
   it("isDesktop true when window.nexussDesktop exists", () => {
-    // @ts-expect-error
+    // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "www.nexuss.in", protocol: "https:" }, nexussDesktop: {} } as unknown as Window;
     expect(isDesktop()).toBe(true);
     expect(isProductionWeb()).toBe(false); // desktop overrides production
   });
 
   it("testLocalEndpoint in production returns production message without fetching", async () => {
-    // @ts-expect-error
+    // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "www.nexuss.in", protocol: "https:" } } as unknown as Window;
     global.fetch = vi.fn() as unknown as typeof fetch;
     const res = await testLocalEndpoint("http://localhost:11434/v1", "ollama");
@@ -47,7 +47,7 @@ describe("production vs local routing", () => {
   });
 
   it("testLocalEndpoint in local dev still fetches", async () => {
-    // @ts-expect-error
+    // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "localhost", protocol: "http:" } } as unknown as Window;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -59,7 +59,7 @@ describe("production vs local routing", () => {
   });
 
   it("streamLocalChat in production throws production message", async () => {
-    // @ts-expect-error
+    // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "www.nexuss.in", protocol: "https:" } } as unknown as Window;
     const stream = streamLocalChat({
       endpoint: "http://localhost:11434/v1",
@@ -70,7 +70,7 @@ describe("production vs local routing", () => {
   });
 
   it("streamLocalChat in local dev fetches", async () => {
-    // @ts-expect-error
+    // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "localhost", protocol: "http:" } } as unknown as Window;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
