@@ -2,7 +2,6 @@ import { create } from "zustand";
 import db from "@/lib/db/db";
 import { useAuthStore } from "@/store/useAuthStore";
 import { LocalProvider, LocalModel, LocalProviderType, normalizeEndpoint } from "@/types/localModels";
-import Dexie from "dexie";
 
 function currentUid(): string | null {
   return useAuthStore.getState().user?.uid ?? null;

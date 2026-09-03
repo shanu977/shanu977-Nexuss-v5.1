@@ -571,7 +571,6 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const measureLog = (label: string, start: number) => {
       const dur = performance.now() - start;
       if (process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console
         console.debug(`[hydrate] ${label}: ${dur.toFixed(1)}ms`);
       }
     };

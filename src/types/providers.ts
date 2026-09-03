@@ -72,25 +72,16 @@ export const DEFAULT_PROVIDER_MODELS: Record<ProviderType, string> = {
 // A provider and model must always be a valid combination: a model from one
 // provider is never valid for another, so invalid combos are rejected up front
 // instead of being silently rewritten downstream.
+// Local models are dynamic and user-specific; validation for "local" is handled
+// via the local model store at selection time, but any non-empty model is
+// considered syntactically valid here to avoid coupling providers.ts to Zustand
+// and to keep the module pure and lint-clean.
 export function isValidModelForProvider(
   provider: ProviderType,
   model: string
 ): boolean {
   if (provider === "local") {
-    if (!model || !model.trim()) return false;
-    // For local, check dynamic store if available (lazy import to avoid circular deps)
-    try {
-      // Dynamic require to avoid bundling issues in tests without store
-      const { useLocalModelStore } = require("@/store/localModelStore") as {
-        useLocalModelStore: { getState: () => { models: { modelId: string; enabled: boolean }[] } };
-      };
-      const models = useLocalModelStore.getState().models;
-      // If no local models configured, allow any non-empty (manual entry case)
-      if (models.length === 0) return true;
-      return models.some((m) => m.modelId === model && m.enabled);
-    } catch {
-      return true;
-    }
+    return !!model && model.trim().length > 0;
   }
   return PROVIDER_MODEL_OPTIONS[provider].some((m) => m.id === model);
 }

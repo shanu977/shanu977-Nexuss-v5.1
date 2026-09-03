@@ -50,7 +50,6 @@ export default function Hydrate({ children }: { children: React.ReactNode }) {
         if (mounted.current) setReady(true);
         if (process.env.NODE_ENV !== "production") {
           const dur = typeof performance !== "undefined" ? performance.now() - t0 : 0;
-          // eslint-disable-next-line no-console
           console.debug(`[Hydrate] uid=${uid ?? "null"} ready in ${dur.toFixed(1)}ms`);
         }
         if (typeof performance !== "undefined" && performance.mark) {

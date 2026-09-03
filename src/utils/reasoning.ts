@@ -128,10 +128,6 @@ const LEADING_WHITESPACE = /^[\t \r\n]+/;
 const PLANNING_HEADING_RE =
   /^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*(Final Output Generation|Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Follow Constraints?|Constraints|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$|^\s*\[.*(?:Done|Proceeds).*?\]\s*$|^\s*[-*]?\s*(?:Ready|Proceeds)\.?\s*[✅]*\s*$/im;
 
-function isPlanningHeading(line: string): boolean {
-  return PLANNING_HEADING_RE.test(line.trim());
-}
-
 function stripPlanningHeadings(text: string): string {
   if (!text || !PLANNING_HEADING_RE.test(text)) return text;
   const rawLines: string[] = [];

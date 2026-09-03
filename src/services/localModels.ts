@@ -15,22 +15,16 @@ export interface LocalChatMessage {
   content: string;
 }
 
-const FETCH_TIMEOUT_MS = 8000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 6000;
 
 function timeoutFetch(url: string, opts: RequestInit, ms: number): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), ms);
-  const signal = opts.signal ? (AbortSignal as unknown as { any: (s: AbortSignal[]) => AbortSignal }).any([opts.signal as AbortSignal, controller.signal]) : controller.signal;
-  // Fallback for browsers without AbortSignal.any
-  let finalSignal: AbortSignal = controller.signal;
+  const finalSignal: AbortSignal = controller.signal;
   if (opts.signal) {
-    // composite abort
     const orig = opts.signal as AbortSignal;
     if (orig.aborted) controller.abort();
     else orig.addEventListener("abort", () => controller.abort(), { once: true });
-  } else {
-    finalSignal = controller.signal;
   }
   return fetch(url, { ...opts, signal: finalSignal }).finally(() => clearTimeout(id));
 }
