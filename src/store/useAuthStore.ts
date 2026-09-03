@@ -3,6 +3,7 @@ import { User, onAuthStateChanged, signOut as firebaseSignOut } from "firebase/a
 import { auth } from "@/lib/firebase";
 import { useChatStore } from "@/store/chatStore";
 import { useUsageStore } from "@/store/usageStore";
+import { useLocalModelStore } from "@/store/localModelStore";
 
 interface AuthState {
   user: User | null;
@@ -53,6 +54,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       // local chats and usage history across logout/login.
       useChatStore.getState().reset(true);
       useUsageStore.getState().resetUsage();
+      useLocalModelStore.getState().reset();
     }
   },
 }));

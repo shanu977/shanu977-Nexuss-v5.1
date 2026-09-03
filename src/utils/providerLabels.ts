@@ -3,13 +3,15 @@ import { ProviderType } from "@/types";
 export const PROVIDER_LABELS: Record<ProviderType, string> = {
   groq: "Groq",
   gemini: "Gemini",
-  openrouter: "OpenRouter"
+  openrouter: "OpenRouter",
+  local: "Local"
 };
 
 export const PROVIDER_MODELS: Record<ProviderType, string> = {
   groq: "openai/gpt-oss-120b",
   gemini: "gemini-3.6-flash",
-  openrouter: "openai/gpt-oss-120b"
+  openrouter: "openai/gpt-oss-120b",
+  local: ""
 };
 
 export function generateTitle(firstMessage: string): string {

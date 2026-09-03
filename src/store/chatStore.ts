@@ -24,7 +24,10 @@ import { ReasoningFilter } from "@/utils/reasoning";
 import db from "@/lib/db/db";
 import { useUsageStore } from "@/store/usageStore";
 import { useAuthStore } from "@/store/useAuthStore";
+import { useLocalModelStore } from "@/store/localModelStore";
 import { useWorkspaceStore } from "@/workspace/store";
+import { streamLocalChat } from "@/services/localModels";
+import { SYSTEM_PROMPT } from "@/services/localSystemPrompt";
 import {
   extractChangeBlock,
   stripChangeBlock,
@@ -79,7 +82,15 @@ async function messagesForChat(uid: string, chatId: string): Promise<Message[]> 
   // Verify ownership before reading any message content.
   const chat = await db.chats.get(chatId);
   if (!chat || chat.userId !== uid) return [];
-  return db.messages.where("chatId").equals(chatId).sortBy("timestamp");
+  // Use compound index when available for sorted, indexed retrieval. Falls back to sortBy if needed.
+  try {
+    return await db.messages
+      .where("[chatId+timestamp]")
+      .between([chatId, Dexie.minKey], [chatId, Dexie.maxKey])
+      .toArray();
+  } catch {
+    return db.messages.where("chatId").equals(chatId).sortBy("timestamp");
+  }
 }
 
 // Persist the selection to Supabase so the backend /chat (which resolves
@@ -192,33 +203,7 @@ async function requestAssistant(
 
   try {
     const startTime = performance.now();
-    // When the user has connected a Path workspace, the engine selects the most
-    // relevant local files/sections for THIS question and attaches them as
-    // optional context. The full project is never sent.
-    const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
-    const events = chatService.sendStream(
-      {
-        message: text,
-        history,
-        provider,
-        model,
-        image,
-        workspaceContext: workspaceResult?.contextText
-      },
-      { signal: abortController.signal }
-    );
-    const responseTime = performance.now() - startTime;
-
-    // The model may attach fenced `workspace-change` / `workspace-command`
-    // blocks proposing edits or runs. They are staged for approval and always
-    // stripped from the transcript; nothing is ever executed or written
-    // without the user approving it first (the validated tool layer enforces
-    // the workspace boundary).
     const reasoner = new ReasoningFilter();
-
-    // Incremental in-place update: only the streaming message object is
-    // replaced (its content grows); every other message keeps its identity so
-    // memoized MessageItems do not re-render on every token.
     const updateMessage = () => {
       useChatStore.setState((s) => ({
         messages: s.messages.map((m) =>
@@ -227,90 +212,138 @@ async function requestAssistant(
       }));
     };
 
-    for await (const event of events) {
-      if (event.type === "chunk") {
-        const visible = reasoner.push(event.content);
-        if (!visible) continue;
-        display += visible;
+    if (provider === "local") {
+      if (image) throw new Error("Local models do not support screen-share images yet. Please select a cloud vision model for image analysis.");
+      const localState = useLocalModelStore.getState();
+      let localModel = localState.models.find((m) => m.modelId === model && m.enabled);
+      if (!localModel) localModel = localState.models.find((m) => m.enabled);
+      if (!localModel) throw new Error("No local model configured. Add one in Settings → Models. No cloud API key is required for local chat.");
+      const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
+      if (!localProvider || !localProvider.enabled) throw new Error("Local provider not found or disabled. Check Settings → Models.");
+      const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
+      const allMessages: { role: string; content: string }[] = [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
+        ...history,
+        { role: "user", content: text },
+      ];
+      const stream = streamLocalChat({
+        endpoint: localProvider.endpoint,
+        modelId: localModel.modelId,
+        messages: allMessages,
+        apiKey: localProvider.apiKey,
+        signal: abortController.signal,
+      });
+      for await (const evt of stream) {
+        if (evt.type === "chunk") {
+          const visible = reasoner.push(evt.content);
+          if (!visible) continue;
+          display += visible;
+          updateMessage();
+        } else if (evt.type === "done") {
+          const tail = reasoner.flush();
+          if (tail) {
+            display += tail;
+            updateMessage();
+          }
+        }
+      }
+      // Ensure tail is flushed even if stream ended without explicit done
+      const tail = reasoner.flush();
+      if (tail) {
+        display += tail;
         updateMessage();
-      } else if (event.type === "usage") {
-        usageEvent = event;
-        if (event.fallback_used) {
-          useChatStore.setState({ fallbackNotice: event.fallback_used });
-        }
-      } else if (event.type === "error") {
-        errorEvent = event;
       }
-    }
-
-    // Release any answer text the reasoning filter was holding back (e.g. a
-    // marker split right before the stream ended) so nothing is lost.
-    const tail = reasoner.flush();
-    if (tail) {
-      display += tail;
-      updateMessage();
-    }
-
-    // Record usage for EVERY attempted request (primary + fallbacks). The
-    // successful attempt carries the actual provider/model that answered.
-    const attempts = usageEvent?.attempts ?? errorEvent?.attempts ?? [];
-    if (attempts.length > 0) {
-      await recordAttempts(
-        attempts.map((a) => ({
-          provider: a.provider as ProviderType,
-          model: a.model,
-          inputTokens: a.input_tokens ?? 0,
-          outputTokens: a.output_tokens ?? 0,
-          totalTokens: a.total_tokens ?? 0,
-          responseTime: a.response_time_ms ?? 0,
-          success: a.status === "success"
-        }))
-      );
-    } else if (usageEvent) {
-      // Older backend without an attempt log: fall back to a single record.
-      await recordAttempts([
+    } else {
+      // Cloud path: via backend
+      const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
+      const events = chatService.sendStream(
         {
-          provider: (usageEvent.provider || provider) as ProviderType,
-          model: usageEvent.model || model,
-          inputTokens: usageEvent.usage?.input_tokens ?? 0,
-          outputTokens: usageEvent.usage?.output_tokens ?? 0,
-          totalTokens: usageEvent.usage?.total_tokens ?? 0,
-          responseTime: Math.round(responseTime),
-          success: true
-        }
-      ]);
-    } else if (errorEvent) {
-      await recordAttempts([
-        {
-          provider,
+          message: text,
+          history,
+          provider: provider as Exclude<ProviderType, "local">,
           model,
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-          responseTime: 0,
-          success: false
+          image,
+          workspaceContext: workspaceResult?.contextText
+        },
+        { signal: abortController.signal }
+      );
+      const responseTime = performance.now() - startTime;
+
+      for await (const event of events) {
+        if (event.type === "chunk") {
+          const visible = reasoner.push(event.content);
+          if (!visible) continue;
+          display += visible;
+          updateMessage();
+        } else if (event.type === "usage") {
+          usageEvent = event;
+          if (event.fallback_used) {
+            useChatStore.setState({ fallbackNotice: event.fallback_used });
+          }
+        } else if (event.type === "error") {
+          errorEvent = event;
         }
-      ]);
-    }
-
-    // A mid-stream failure keeps the partial text on screen but tells the user
-    // the answer was interrupted (the regenerate button is the retry path).
-    if (errorEvent) {
-      useChatStore.setState({ error: errorEvent.message });
-    }
-
-    // Echo the exact provider/model the backend used so the on-screen
-    // indicator can never drift from reality. Screen-share requests are
-    // temporarily routed to a server-side vision model the user never picked;
-    // keep the user's selection untouched there so the dropdown stays valid
-    // for subsequent normal chat.
-    if (usageEvent && !image) {
-      const latest = useChatStore.getState();
-      if (usageEvent.provider && usageEvent.provider !== latest.provider) {
-        useChatStore.setState({ provider: usageEvent.provider as ProviderType });
       }
-      if (usageEvent.model && usageEvent.model !== latest.model) {
-        useChatStore.setState({ model: usageEvent.model });
+
+      const tail = reasoner.flush();
+      if (tail) {
+        display += tail;
+        updateMessage();
+      }
+
+      // Record usage for EVERY attempted request (primary + fallbacks).
+      const attempts = usageEvent?.attempts ?? errorEvent?.attempts ?? [];
+      if (attempts.length > 0) {
+        await recordAttempts(
+          attempts.map((a) => ({
+            provider: a.provider as ProviderType,
+            model: a.model,
+            inputTokens: a.input_tokens ?? 0,
+            outputTokens: a.output_tokens ?? 0,
+            totalTokens: a.total_tokens ?? 0,
+            responseTime: a.response_time_ms ?? 0,
+            success: a.status === "success"
+          }))
+        );
+      } else if (usageEvent) {
+        await recordAttempts([
+          {
+            provider: (usageEvent.provider || provider) as ProviderType,
+            model: usageEvent.model || model,
+            inputTokens: usageEvent.usage?.input_tokens ?? 0,
+            outputTokens: usageEvent.usage?.output_tokens ?? 0,
+            totalTokens: usageEvent.usage?.total_tokens ?? 0,
+            responseTime: Math.round(responseTime),
+            success: true
+          }
+        ]);
+      } else if (errorEvent) {
+        await recordAttempts([
+          {
+            provider: provider as ProviderType,
+            model,
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            responseTime: 0,
+            success: false
+          }
+        ]);
+      }
+
+      if (errorEvent) {
+        useChatStore.setState({ error: errorEvent.message });
+      }
+
+      if (usageEvent && !image) {
+        const latest = useChatStore.getState();
+        if (usageEvent.provider && usageEvent.provider !== latest.provider) {
+          useChatStore.setState({ provider: usageEvent.provider as ProviderType });
+        }
+        if (usageEvent.model && usageEvent.model !== latest.model) {
+          useChatStore.setState({ model: usageEvent.model });
+        }
       }
     }
 
@@ -494,11 +527,15 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
 
   setProvider: (provider) => {
     if (!PROVIDER_LIST.includes(provider)) return;
-    const model = DEFAULT_PROVIDER_MODELS[provider];
+    let model = DEFAULT_PROVIDER_MODELS[provider];
+    if (provider === "local") {
+      const enabled = useLocalModelStore.getState().models.filter((m) => m.enabled);
+      if (enabled.length > 0) model = enabled[0].modelId;
+    }
     set({ provider, model });
     setLocalProvider(provider);
     setLocalModel(model);
-    syncSettings({ provider, model });
+    if (provider !== "local") syncSettings({ provider, model });
   },
 
   setModel: (model) => {
@@ -508,7 +545,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     if (!isValidModelForProvider(provider, model)) return;
     set({ model });
     setLocalModel(model);
-    syncSettings({ model });
+    if (provider !== "local") syncSettings({ model });
   },
 
   setTheme: async (theme) => {
@@ -519,74 +556,181 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
   },
 
   hydrate: async () => {
-    try {
-      const uid = currentUid();
-      const theme = getLocalTheme();
-      let chats: Chat[] = [];
-      let currentChat: Chat | null = null;
-      let messages: Message[] = [];
-
-      // If no authenticated user exists, load ZERO account-owned chats.
-      if (uid) {
-        chats = await db.chats
-          .where("[userId+updatedAt]")
-          .between([uid, Dexie.minKey], [uid, Dexie.maxKey])
-          .reverse()
-          .toArray();
-        const lastChat = getLastChatId(uid);
-        const target = lastChat
-          ? chats.find((c) => c.id === lastChat)
-          : chats[0] || null;
-        if (target) {
-          currentChat = target;
-          messages = await messagesForChat(uid, target.id);
-        }
+    // Guard against duplicate concurrent hydration (StrictMode double-mount,
+    // auth token refresh, or multiple components calling hydrate). Returns the
+    // in-flight promise for the same UID so only one DB query runs.
+    const uid = currentUid();
+    // Performance instrumentation: measure total hydration and sub-steps.
+    const mark = (name: string) => {
+      if (typeof performance !== "undefined" && performance.mark) {
+        try {
+          performance.mark(name);
+        } catch {}
       }
-      let provider = (getLocalProvider() as ProviderType) || "groq";
-      if (!PROVIDER_LIST.includes(provider)) provider = "groq";
-      let model = getLocalModel() || DEFAULT_PROVIDER_MODELS[provider];
-      if (!isValidModelForProvider(provider, model)) {
-        model = DEFAULT_PROVIDER_MODELS[provider];
+    };
+    const measureLog = (label: string, start: number) => {
+      const dur = performance.now() - start;
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.debug(`[hydrate] ${label}: ${dur.toFixed(1)}ms`);
       }
-      set({
-        chats,
-        currentChat,
-        messages,
-        provider,
-        model,
-        fallbackNotice: null,
-        theme
-      });
-      applyTheme(theme);
-      setLocalTheme(theme);
+    };
 
-      if (!uid) return;
+    // Use module-level guard
+    const g = globalThis as unknown as {
+      __nexussHydratePromise?: Promise<void> | null;
+      __nexussHydrateUid?: string | null;
+    };
+    if (g.__nexussHydratePromise && g.__nexussHydrateUid === (uid ?? null)) {
+      return g.__nexussHydratePromise;
+    }
 
-      // Best-effort: reconcile UI selection with the user's saved Supabase
-      // settings (source of truth for provider/model/theme). If the request
-      // fails (offline, token issue) the local values stay.
+    const promise = (async () => {
+      const t0 = performance.now();
+      mark("chat-hydration-start");
       try {
-        const remote = await settingsService.get();
-        let remoteProvider = (remote.provider as ProviderType) || provider;
-        if (!PROVIDER_LIST.includes(remoteProvider)) remoteProvider = provider;
-        let remoteModel = remote.model || DEFAULT_PROVIDER_MODELS[remoteProvider];
-        if (!isValidModelForProvider(remoteProvider, remoteModel)) {
-          remoteModel = DEFAULT_PROVIDER_MODELS[remoteProvider];
+        const theme = getLocalTheme();
+        let chats: Chat[] = [];
+        let currentChat: Chat | null = null;
+        let messages: Message[] = [];
+
+        // If no authenticated user exists, load ZERO account-owned chats.
+        if (uid) {
+          const tChats = performance.now();
+          chats = await db.chats
+            .where("[userId+updatedAt]")
+            .between([uid, Dexie.minKey], [uid, Dexie.maxKey])
+            .reverse()
+            .toArray();
+          measureLog(`chats query (${chats.length} chats)`, tChats);
+
+          const lastChat = getLastChatId(uid);
+          const target = lastChat
+            ? chats.find((c) => c.id === lastChat)
+            : chats[0] || null;
+          if (target) {
+            currentChat = target;
+            const tMsgs = performance.now();
+            messages = await messagesForChat(uid, target.id);
+            measureLog(`messages query (${messages.length} msgs)`, tMsgs);
+          }
+        } else {
+          // Ensure unauthenticated users never see stale state from previous account
+          chats = [];
+          currentChat = null;
+          messages = [];
         }
+        let provider = (getLocalProvider() as ProviderType) || "groq";
+        if (!PROVIDER_LIST.includes(provider)) provider = "groq";
+        let model = getLocalModel() || DEFAULT_PROVIDER_MODELS[provider];
+        if (!isValidModelForProvider(provider, model)) {
+          model = DEFAULT_PROVIDER_MODELS[provider];
+        }
+        // Critical: update UI immediately with local data (metadata + selected messages).
+        // Do not block on remote settings fetch.
         set({
-          provider: remoteProvider,
-          model: remoteModel,
-          theme: remote.theme || theme
+          chats,
+          currentChat,
+          messages,
+          provider,
+          model,
+          fallbackNotice: null,
+          theme
         });
-        applyTheme(remote.theme || theme);
-        setLocalTheme(remote.theme || theme);
-        setLocalProvider(remoteProvider);
-        setLocalModel(remoteModel);
-      } catch {
-        // Local values already applied; nothing to surface.
+        applyTheme(theme);
+        setLocalTheme(theme);
+        measureLog("local hydration (chats+messages+theme)", t0);
+        mark("chat-hydration-local-end");
+
+        if (!uid) {
+          mark("chat-hydration-end");
+          return;
+        }
+
+        // Non-critical: reconcile UI selection with Supabase settings in background.
+        // Must not block "Loading your chats..." spinner.
+        const tRemote = performance.now();
+        const initialProvider = provider;
+        const initialModel = model;
+        const initialTheme = theme;
+        void (async () => {
+          try {
+            const remote = await settingsService.get();
+            let remoteProvider = (remote.provider as ProviderType) || provider;
+            if (!PROVIDER_LIST.includes(remoteProvider)) remoteProvider = provider;
+            let remoteModel = remote.model || DEFAULT_PROVIDER_MODELS[remoteProvider];
+            if (!isValidModelForProvider(remoteProvider, remoteModel)) {
+              remoteModel = DEFAULT_PROVIDER_MODELS[remoteProvider];
+            }
+            // Only apply if the same user is still signed in (prevents race on account switch)
+            // And don't overwrite if user has already changed provider/model (e.g., fallback or local selection)
+            if (currentUid() === uid) {
+              const cur = useChatStore.getState();
+              const shouldUpdateProvider = cur.provider === initialProvider && cur.model === initialModel;
+              if (cur.provider === "local") {
+                measureLog("remote settings fetch (skipped for local)", tRemote);
+                // Still sync theme if remote has one and user hasn't changed theme
+                if (cur.theme === initialTheme && remote.theme && remote.theme !== cur.theme) {
+                  set({ theme: remote.theme });
+                  applyTheme(remote.theme);
+                  setLocalTheme(remote.theme);
+                }
+              } else if (shouldUpdateProvider) {
+                set({
+                  provider: remoteProvider,
+                  model: remoteModel,
+                  theme: remote.theme || theme
+                });
+                applyTheme(remote.theme || theme);
+                setLocalTheme(remote.theme || theme);
+                setLocalProvider(remoteProvider);
+                setLocalModel(remoteModel);
+              } else {
+                // Provider/model already changed (e.g., fallback), don't overwrite — only sync theme if needed
+                if (remote.theme && remote.theme !== cur.theme) {
+                  set({ theme: remote.theme });
+                  applyTheme(remote.theme);
+                  setLocalTheme(remote.theme);
+                }
+              }
+            }
+            measureLog("remote settings fetch", tRemote);
+          } catch {
+            // Local values already applied; nothing to surface.
+            measureLog("remote settings fetch (failed)", tRemote);
+          } finally {
+            mark("chat-hydration-end");
+            try {
+              if (performance.measure) {
+                performance.measure("chat-hydration", "chat-hydration-start", "chat-hydration-end");
+                performance.measure("chat-hydration-local", "chat-hydration-start", "chat-hydration-local-end");
+              }
+            } catch {}
+          }
+        })();
+
+        // Mark local hydration as complete for measurement; remote will complete separately.
+        try {
+          if (performance.measure) {
+            performance.measure("chat-hydration-local", "chat-hydration-start", "chat-hydration-local-end");
+          }
+        } catch {}
+      } catch (e) {
+        set({ error: getErrorMessage(e) });
+        mark("chat-hydration-end");
       }
-    } catch (e) {
-      set({ error: getErrorMessage(e) });
+    })();
+
+    g.__nexussHydratePromise = promise;
+    g.__nexussHydrateUid = uid ?? null;
+    try {
+      await promise;
+    } finally {
+      // Clear guard after completion so next user switch can hydrate again.
+      // We keep uid to dedupe rapid duplicate calls for same user.
+      if (g.__nexussHydrateUid === (uid ?? null)) {
+        g.__nexussHydratePromise = null;
+      }
     }
   },
 

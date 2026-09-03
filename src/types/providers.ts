@@ -13,12 +13,17 @@ export const PROVIDERS = {
     name: "OpenRouter",
     model: "openai/gpt-oss-120b",
     icon: "openrouter"
+  },
+  local: {
+    name: "Local",
+    model: "",
+    icon: "local"
   }
 } as const;
 
 export type ProviderType = keyof typeof PROVIDERS;
 
-export const PROVIDER_LIST: ProviderType[] = ["groq", "gemini", "openrouter"];
+export const PROVIDER_LIST: ProviderType[] = ["groq", "gemini", "openrouter", "local"];
 
 export interface ProviderModelOption {
   id: string;
@@ -53,13 +58,15 @@ export const PROVIDER_MODEL_OPTIONS: Record<ProviderType, readonly ProviderModel
     { id: "nex-agi/nex-n2-pro:free", label: "Nex-N2-Pro", badge: "FREE" },
     { id: "liquid/lfm2.5-1.2b-instruct:free", label: "LFM2.5 1.2B Instruct", badge: "FREE" },
     { id: "openrouter/free", label: "OpenRouter Free Router", badge: "FREE" }
-  ]
+  ],
+  local: []
 };
 
 export const DEFAULT_PROVIDER_MODELS: Record<ProviderType, string> = {
   groq: "openai/gpt-oss-120b",
   gemini: "gemini-3.6-flash",
-  openrouter: "openai/gpt-oss-120b"
+  openrouter: "openai/gpt-oss-120b",
+  local: ""
 };
 
 // A provider and model must always be a valid combination: a model from one
@@ -69,6 +76,22 @@ export function isValidModelForProvider(
   provider: ProviderType,
   model: string
 ): boolean {
+  if (provider === "local") {
+    if (!model || !model.trim()) return false;
+    // For local, check dynamic store if available (lazy import to avoid circular deps)
+    try {
+      // Dynamic require to avoid bundling issues in tests without store
+      const { useLocalModelStore } = require("@/store/localModelStore") as {
+        useLocalModelStore: { getState: () => { models: { modelId: string; enabled: boolean }[] } };
+      };
+      const models = useLocalModelStore.getState().models;
+      // If no local models configured, allow any non-empty (manual entry case)
+      if (models.length === 0) return true;
+      return models.some((m) => m.modelId === model && m.enabled);
+    } catch {
+      return true;
+    }
+  }
   return PROVIDER_MODEL_OPTIONS[provider].some((m) => m.id === model);
 }
 
@@ -77,6 +100,8 @@ export function getModelLabel(
   model: string
 ): string {
   const option = PROVIDER_MODEL_OPTIONS[provider].find((m) => m.id === model);
-  if (!option) return model;
-  return option.badge ? `${option.label} (${option.badge})` : option.label;
+  if (option) return option.badge ? `${option.label} (${option.badge})` : option.label;
+  // For local, return modelId as label
+  if (model) return model;
+  return model;
 }
