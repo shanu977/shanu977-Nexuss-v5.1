@@ -1,14 +1,7 @@
 import { create } from "zustand";
 import db from "@/lib/db/db";
 import { useAuthStore } from "@/store/useAuthStore";
-import {
-  LocalProvider,
-  LocalModel,
-  LocalProviderType,
-  normalizeEndpoint,
-  isProductionWeb,
-  getLocalModelProductionMessage,
-} from "@/types/localModels";
+import { LocalProvider, LocalModel, LocalProviderType, normalizeEndpoint } from "@/types/localModels";
 import { discoverOllamaModelsDetailed, DiscoveredOllamaModelDetailed } from "@/services/localModels";
 
 function currentUid(): string | null {
@@ -177,15 +170,6 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
     const uid = currentUid();
     if (!uid) {
       set({ discoveredOllamaModels: [], ollamaStatus: "error", ollamaError: "Not authenticated" });
-      return;
-    }
-    if (isProductionWeb()) {
-      set({
-        discoveredOllamaModels: [],
-        ollamaStatus: "error",
-        ollamaError: getLocalModelProductionMessage(),
-        ollamaLastRefresh: Date.now(),
-      });
       return;
     }
     set({ ollamaStatus: "loading", ollamaError: null });

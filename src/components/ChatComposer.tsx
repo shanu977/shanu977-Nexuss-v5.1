@@ -5,7 +5,6 @@ import { useChatStore } from "@/store";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { PROVIDER_LABELS } from "@/utils/providerLabels";
-import { isProductionWeb, isDesktop } from "@/types/localModels";
 import {
   getModelLabel,
   PROVIDER_LIST,
@@ -349,12 +348,7 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
               {ollamaStatus === "connected" && <span className="flex items-center gap-1 text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Connected</span>}
               {ollamaStatus === "loading" && <span className="text-muted-foreground">Loading…</span>}
             </div>
-            {isProductionWeb() && !isDesktop() ? (
-              <div className="px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground border border-amber-500/20 bg-amber-500/10 rounded-lg">
-                <p className="font-medium text-amber-600 dark:text-amber-400">ℹ Local models are available through Nexuss Desktop / local connector.</p>
-                <p className="mt-1">Ollama runs on your own machine. Use Nexuss Desktop or run Nexuss locally at http://localhost:3000 to chat with Ollama at http://localhost:11434.</p>
-              </div>
-            ) : ollamaStatus === "not_connected" || ollamaStatus === "error" ? (
+            {ollamaStatus === "not_connected" || ollamaStatus === "error" ? (
               <div className="px-2.5 py-2 space-y-1.5">
                 <p className="text-[11px] text-amber-600 dark:text-amber-400">⚠ Ollama is not connected</p>
                 <p className="text-[11px] text-muted-foreground">Start Ollama and try again. {ollamaError ? `(${ollamaError})` : ""}</p>

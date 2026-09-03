@@ -10,7 +10,9 @@
     "lint:fix": "eslint --fix \"src/**/*.{ts,tsx}\" \"native/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "desktop:test": "vitest run --testTimeout 30000"
+    "desktop:test": "vitest run --testTimeout 30000",
+    "connector": "node local-connector/server.js",
+    "connector:dev": "node local-connector/server.js"
   },
   "dependencies": {
     "dexie": "^4.0.0",

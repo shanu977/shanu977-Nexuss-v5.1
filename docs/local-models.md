@@ -17,13 +17,30 @@ Architecture is extensible: add any OpenAI-compatible server by entering its URL
 
 1. Install from https://ollama.com
 2. Pull a model: `ollama pull llama3.2:3b` or `ollama pull qwen2.5:7b`
-3. Allow CORS for the browser (required):
+3. Allow CORS for the browser (required for both local dev and production):
    ```bash
-   OLLAMA_ORIGINS=* ollama serve
-   # or on Windows: set OLLAMA_ORIGINS=* && ollama serve
+   # Explicit allowlist (recommended):
+   OLLAMA_ORIGINS=https://www.nexuss.in,https://nexuss.in,http://localhost:3000,http://localhost:3001 ollama serve
+   # or on Windows: set OLLAMA_ORIGINS=https://www.nexuss.in,https://nexuss.in,http://localhost:3000 && ollama serve
+   # For quick test, allow all (less secure):
+   # OLLAMA_ORIGINS=* ollama serve
    ```
+   For `https://www.nexuss.in` → `http://localhost:11434` the browser requires Private Network Access. Ollama 0.33+ handles `Access-Control-Allow-Private-Network: true` when `OLLAMA_ORIGINS` allows the origin. If direct `https` → `http://localhost` is still blocked, use the lightweight **Nexuss Local Connector** (see below).
 4. In Nexuss: Settings → Models → + Add Local Model → Provider Ollama → Endpoint `http://localhost:11434/v1` → Test Connection → Select model → Add Model
 5. Select `Local • llama3.2:3b` in the composer model selector and chat. No Groq/Gemini/OpenRouter key needed.
+
+#### Nexuss Local Connector (for https://www.nexuss.in)
+
+Production `https://www.nexuss.in` (public) → `http://localhost:11434` (private) requires PNA and correct CORS. If Ollama alone does not handle it, run the lightweight connector that binds only to loopback and proxies with correct headers:
+
+```bash
+# From the Nexuss project root
+npm run connector
+# or: node local-connector/server.js
+# Listens on http://127.0.0.1:11435, forwards only to Ollama on 127.0.0.1:11434, allows only Nexuss origins
+```
+
+Nexuss Web will automatically detect the connector at `http://127.0.0.1:11435` for Ollama (`http://localhost:11434/v1` → `http://127.0.0.1:11435/v1`) and use it for both `GET /v1/models` and `POST /v1/chat/completions`. Keep it running while using local models from `https://www.nexuss.in`. No cloud proxy, no SSRF, binds only to `127.0.0.1`, validates `localhost` only, and rejects `169.254.169.254`.
 
 ### LM Studio
 
@@ -100,16 +117,24 @@ User-friendly messages, no stack traces:
 - CORS → “Failed to fetch / CORS. For Ollama, set OLLAMA_ORIGINS=*.”
 - Timeout, malformed data, unsupported streaming → appropriate retrieval.
 
-## Security
+## Security & Browser Networking (Production)
 
-**Browser-direct, not backend proxy.** Local endpoints are at `localhost` / `127.0.0.1` / `::1`. The cloud backend cannot reach your laptop’s localhost, so proxying would fail and would introduce SSRF risk (fetching `169.254.169.254`, internal metadata). Nexuss therefore fetches local models **only from the browser**.
+**Browser-direct, not cloud proxy.** Local endpoints are at `localhost` / `127.0.0.1` / `::1`. The cloud backend (`https://shanu977-nexuss-v51-production.up.railway.app`) cannot reach your laptop’s `localhost:11434`, so proxying would fail and would be SSRF (fetching `169.254.169.254`). Nexuss therefore fetches local models **only from the browser** (or via the local connector below).
 
 - Frontend validates URL (`http://`/`https://`, not `169.254.169.254` or `*.internal`).
-- No SSRF via backend: local requests never go through `/chat`.
+- No SSRF via backend: local requests never go through `/chat` or any `/api/proxy?url=http://localhost`.
+- Connector (if used) binds only to `127.0.0.1:11435`, allows only `https://www.nexuss.in,https://nexuss.in,http://localhost:3000` etc., and only proxies to `127.0.0.1:11434` (`/v1/models`, `/v1/chat/completions`, `/api/tags`). It rejects `169.254.169.254`, `0.0.0.0`, private ranges, and arbitrary URLs.
 - API keys for local endpoints (if needed) are stored per-user in IndexedDB (Dexie) alongside `localProviders`, never logged, never sent to cloud.
-- User isolation: all Dexie queries are `where("userId").equals(uid)`; User A never sees User B’s endpoints/models.
+- User isolation: all Dexie queries are `where("userId").equals(uid)`; desktop IPC also validates `localhost` only.
 
-**CORS:** Local servers must send `Access-Control-Allow-Origin`. For Ollama: `OLLAMA_ORIGINS=*` (or your Nexuss origin). LM Studio: enable CORS in server settings. vLLM: `--enable-cors-allow-origins`.
+**CORS & Private Network Access (PNA):** `https://www.nexuss.in` (public) → `http://localhost:11434` (private/loopback) is a **private network request**. Browser sends `OPTIONS` with `Origin: https://www.nexuss.in` + `Access-Control-Request-Private-Network: true`. Server must reply `Access-Control-Allow-Origin: https://www.nexuss.in` + `Access-Control-Allow-Private-Network: true`. Ollama does this when `OLLAMA_ORIGINS` includes the origin. For `http://localhost:3000` → `http://localhost:11434` (same private), PNA not required and `http://localhost:3000` already works.
+
+- Ollama: `OLLAMA_ORIGINS=https://www.nexuss.in,https://nexuss.in,http://localhost:3000` (explicit allowlist, not `*` unless needed). Restart `ollama serve`.
+- If `https` → `http://localhost` is still blocked (browser mixed-content/PNA even with CORS), use the **Nexuss Local Connector** (`http://127.0.0.1:11435`) which is `http` loopback but correctly handles PNA for `https://www.nexuss.in` (sends `Allow-Private-Network: true`). Nexuss Web auto-detects `http://127.0.0.1:11435/health` and uses it for Ollama `http://localhost:11434/v1`.
+- LM Studio: enable CORS in server settings. vLLM: `--enable-cors-allow-origins https://www.nexuss.in --enable-cors-allow-private-network`.
+- Mixed content: `http://localhost` is *potentially trustworthy* and exempt from mixed-content blocking when fetched from `https`, so direct `https`→`http://localhost` is allowed if CORS/PNA pass.
+
+**Why no cloud proxy:** `https://www.nexuss.in` cannot fetch user's `localhost` via the cloud—`localhost` on the server is the server's own loopback, not the user's PC, and would let one user access another's if it were a generic proxy. Hence browser-direct (or local connector) is the only correct, user-isolated path.
 
 ## API Key Handling
 

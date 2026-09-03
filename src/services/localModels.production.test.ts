@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { isProductionWeb, isDesktop, isLocalDev, getLocalModelProductionMessage } from "@/types/localModels";
+import { isProductionWeb, isDesktop, isLocalDev } from "@/types/localModels";
 import { testLocalEndpoint, streamLocalChat } from "@/services/localModels";
 
 describe("production vs local routing", () => {
@@ -36,14 +36,16 @@ describe("production vs local routing", () => {
     expect(isProductionWeb()).toBe(false); // desktop overrides production
   });
 
-  it("testLocalEndpoint in production returns production message without fetching", async () => {
+  it("testLocalEndpoint in production now attempts direct fetch (CORS/PNA handled)", async () => {
     // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "www.nexuss.in", protocol: "https:" } } as unknown as Window;
-    global.fetch = vi.fn() as unknown as typeof fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "qwen2.5:3b" }] }),
+    } as unknown as Response);
     const res = await testLocalEndpoint("http://localhost:11434/v1", "ollama");
-    expect(res.ok).toBe(false);
-    expect(res.message).toBe(getLocalModelProductionMessage());
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(res.ok).toBe(true);
+    expect(global.fetch).toHaveBeenCalled();
   });
 
   it("testLocalEndpoint in local dev still fetches", async () => {
@@ -58,15 +60,26 @@ describe("production vs local routing", () => {
     expect(global.fetch).toHaveBeenCalled();
   });
 
-  it("streamLocalChat in production throws production message", async () => {
+  it("streamLocalChat in production now attempts direct fetch (CORS handled)", async () => {
     // @ts-expect-error -- mock window for test
     global.window = { location: { hostname: "www.nexuss.in", protocol: "https:" } } as unknown as Window;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: async () => ({ done: true, value: undefined }),
+          releaseLock: () => {},
+        }),
+      },
+    } as unknown as Response);
     const stream = streamLocalChat({
       endpoint: "http://localhost:11434/v1",
       modelId: "qwen2.5:3b",
       messages: [{ role: "user", content: "hi" }],
     });
-    await expect(stream.next()).rejects.toThrow(getLocalModelProductionMessage());
+    const result = await stream.next();
+    expect(result.done).toBe(false);
+    expect(global.fetch).toHaveBeenCalled();
   });
 
   it("streamLocalChat in local dev fetches", async () => {

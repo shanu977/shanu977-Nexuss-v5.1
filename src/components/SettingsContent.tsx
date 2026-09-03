@@ -11,7 +11,7 @@ import { useChatStore } from "@/store";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { apiKeyService, ApiKeyStatus } from "@/services/apiKeys";
 import { testLocalEndpoint } from "@/services/localModels";
-import { LOCAL_PROVIDER_LABELS, LocalProviderType, LOCAL_PROVIDER_DEFAULT_ENDPOINTS, validateEndpoint, normalizeEndpoint, isProductionWeb, getLocalModelProductionMessage, isDesktop } from "@/types/localModels";
+import { LOCAL_PROVIDER_LABELS, LocalProviderType, LOCAL_PROVIDER_DEFAULT_ENDPOINTS, validateEndpoint, normalizeEndpoint } from "@/types/localModels";
 import { getErrorMessage } from "@/utils";
 import UsageDashboard from "@/components/UsageDashboard";
 
@@ -96,7 +96,6 @@ export default function SettingsContent() {
 
   useEffect(() => {
     if (activeTab !== "models") return;
-    if (isProductionWeb() && !isDesktop()) return;
     void refreshOllamaModels();
   }, [activeTab, refreshOllamaModels]);
 
@@ -524,13 +523,6 @@ export default function SettingsContent() {
             </div>
             <p className="text-[11px] leading-relaxed text-muted-foreground">Connect Nexuss to an AI model running on your computer via Ollama, LM Studio, vLLM or any OpenAI-compatible endpoint. No cloud API key required.</p>
 
-            {isProductionWeb() && !isDesktop() && (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-1.5">
-                <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">Local models are not available on this site</p>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">{getLocalModelProductionMessage()}</p>
-              </div>
-            )}
-
             {showAddLocal && (
               <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-3">
                 <div className="space-y-1.5">
@@ -635,23 +627,17 @@ export default function SettingsContent() {
                   {ollamaStatus === "loading" && <span className="text-muted-foreground">Loading…</span>}
                   {ollamaStatus === "not_connected" && <span className="text-amber-600">⚠ Not connected</span>}
                   {ollamaStatus === "error" && <span className="text-destructive">Error</span>}
-                  {isProductionWeb() && !isDesktop() && <span className="text-amber-600">ℹ Unavailable</span>}
                 </h4>
                 <button
                   type="button"
                   onClick={() => void refreshOllamaModels()}
-                  disabled={ollamaStatus === "loading" || (isProductionWeb() && !isDesktop())}
+                  disabled={ollamaStatus === "loading"}
                   className="rounded-lg border border-border bg-muted px-2.5 py-1 text-[11px] font-mono hover:bg-card disabled:opacity-50 cursor-pointer"
                 >
                   Refresh Models
                 </button>
               </div>
-              {isProductionWeb() && !isDesktop() ? (
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
-                  <p className="font-medium text-amber-600 dark:text-amber-400">ℹ Local models are available through Nexuss Desktop / local connector.</p>
-                  <p className="mt-1">Ollama runs locally on your computer. Use Nexuss Desktop or run Nexuss locally at http://localhost:3000 to see your installed Ollama models here and chat with them.</p>
-                </div>
-              ) : ollamaStatus === "not_connected" ? (
+              {ollamaStatus === "not_connected" ? (
                 <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
                   <p className="font-medium text-amber-600">⚠ Ollama is not connected</p>
                   <p className="mt-1">Start Ollama and try again. Ensure Ollama is running at http://localhost:11434 and allows CORS (OLLAMA_ORIGINS=*).</p>

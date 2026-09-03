@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  normalizeEndpoint,
-  validateEndpoint,
-  isProductionWeb,
-  getLocalModelProductionMessage,
-  isDesktop,
-} from "@/types/localModels";
+import { normalizeEndpoint, validateEndpoint, isDesktop } from "@/types/localModels";
 
 export interface LocalTestResult {
   ok: boolean;
@@ -35,6 +29,20 @@ function timeoutFetch(url: string, opts: RequestInit, ms: number): Promise<Respo
   return fetch(url, { ...opts, signal: finalSignal }).finally(() => clearTimeout(id));
 }
 
+const CONNECTOR_ENDPOINT = "http://127.0.0.1:11435/v1";
+const CONNECTOR_HEALTH_TIMEOUT_MS = 1500;
+
+async function isConnectorAvailable(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  // Only try connector for Ollama on localhost:11434
+  try {
+    const res = await timeoutFetch(`http://127.0.0.1:11435/health`, { method: "GET" }, CONNECTOR_HEALTH_TIMEOUT_MS);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function testLocalEndpoint(
   rawEndpoint: string,
   providerType: string = "generic",
@@ -44,18 +52,16 @@ export async function testLocalEndpoint(
   if (err) {
     return { ok: false, message: err, endpointReachable: false, modelsDiscoverable: false };
   }
-  // Production web (https://www.nexuss.in) cannot fetch http://localhost:11434
-  // (mixed content + CORS + user's localhost is not server's localhost).
-  // Only allow direct localhost fetch in local dev (http://localhost:3000) or Desktop.
-  if (isProductionWeb()) {
-    return {
-      ok: false,
-      message: getLocalModelProductionMessage(),
-      endpointReachable: false,
-      modelsDiscoverable: false,
-    };
+  let endpoint = normalizeEndpoint(rawEndpoint, providerType as never);
+  // For Ollama on localhost:11434, try the Nexuss Local Connector first (handles CORS/PNA for https://www.nexuss.in)
+  if (providerType === "ollama" && (endpoint === "http://localhost:11434/v1" || endpoint === "http://127.0.0.1:11434/v1")) {
+    try {
+      const connectorAvailable = await isConnectorAvailable();
+      if (connectorAvailable) {
+        endpoint = CONNECTOR_ENDPOINT;
+      }
+    } catch {}
   }
-  const endpoint = normalizeEndpoint(rawEndpoint, providerType as never);
 
   // Try desktop IPC first if available (Electron main process fetches without CORS/mixed-content)
   const desktopOllama = (typeof window !== "undefined"
@@ -182,10 +188,16 @@ export async function discoverOllamaModelsDetailed(
   providerType: string = "ollama",
   apiKey?: string
 ): Promise<{ models: DiscoveredOllamaModelDetailed[]; endpointReachable: boolean }> {
-  if (isProductionWeb()) {
-    return { models: [], endpointReachable: false };
+  let endpoint = normalizeEndpoint(rawEndpoint, providerType as never);
+  // For Ollama on localhost:11434, try the Nexuss Local Connector first (handles CORS/PNA for https://www.nexuss.in)
+  if (providerType === "ollama" && (endpoint === "http://localhost:11434/v1" || endpoint === "http://127.0.0.1:11434/v1")) {
+    try {
+      const connectorAvailable = await isConnectorAvailable();
+      if (connectorAvailable) {
+        endpoint = CONNECTOR_ENDPOINT;
+      }
+    } catch {}
   }
-  const endpoint = normalizeEndpoint(rawEndpoint, providerType as never);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (apiKey?.trim()) headers["Authorization"] = `Bearer ${apiKey.trim()}`;
 
@@ -267,9 +279,9 @@ export async function discoverOllamaModelsDetailed(
 }
 
 /** OpenAI-compatible streaming directly from browser to local endpoint.
- * In production (https://www.nexuss.in) this will throw with a clear message
- * because https cannot fetch http://localhost and the cloud server cannot reach
- * the user's localhost. Use Nexuss Desktop or http://localhost:3000 locally.
+ * Works from both http://localhost:3000 (local dev) and https://www.nexuss.in
+ * (production) to http://localhost:11434. Requires Ollama CORS to allow the
+ * Nexuss origin and Private Network Access. See docs/local-models.md.
  */
 export async function* streamLocalChat(params: {
   endpoint: string;
@@ -278,10 +290,16 @@ export async function* streamLocalChat(params: {
   apiKey?: string;
   signal?: AbortSignal;
 }): AsyncGenerator<{ type: "chunk"; content: string } | { type: "done" }> {
-  if (isProductionWeb()) {
-    throw new Error(getLocalModelProductionMessage());
+  let endpoint = normalizeEndpoint(params.endpoint);
+  // For Ollama, try connector first (production https → http localhost needs PNA handling)
+  if (endpoint === "http://localhost:11434/v1" || endpoint === "http://127.0.0.1:11434/v1") {
+    try {
+      const connectorAvailable = await isConnectorAvailable();
+      if (connectorAvailable) {
+        endpoint = CONNECTOR_ENDPOINT;
+      }
+    } catch {}
   }
-  const endpoint = normalizeEndpoint(params.endpoint);
   // Try desktop IPC first (Electron main process fetches without CORS/mixed-content)
   const desktopOllama = (typeof window !== "undefined"
     ? (window as unknown as {
