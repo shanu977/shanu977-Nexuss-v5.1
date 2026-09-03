@@ -11,7 +11,7 @@ import { useChatStore } from "@/store";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { apiKeyService, ApiKeyStatus } from "@/services/apiKeys";
 import { testLocalEndpoint } from "@/services/localModels";
-import { LOCAL_PROVIDER_LABELS, LocalProviderType, LOCAL_PROVIDER_DEFAULT_ENDPOINTS, validateEndpoint, normalizeEndpoint } from "@/types/localModels";
+import { LOCAL_PROVIDER_LABELS, LocalProviderType, LOCAL_PROVIDER_DEFAULT_ENDPOINTS, validateEndpoint, normalizeEndpoint, isProductionWeb, getLocalModelProductionMessage, isDesktop } from "@/types/localModels";
 import { getErrorMessage } from "@/utils";
 import UsageDashboard from "@/components/UsageDashboard";
 
@@ -501,6 +501,13 @@ export default function SettingsContent() {
               </button>
             </div>
             <p className="text-[11px] leading-relaxed text-muted-foreground">Connect Nexuss to an AI model running on your computer via Ollama, LM Studio, vLLM or any OpenAI-compatible endpoint. No cloud API key required.</p>
+
+            {isProductionWeb() && !isDesktop() && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">Local models are not available on this site</p>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">{getLocalModelProductionMessage()}</p>
+              </div>
+            )}
 
             {showAddLocal && (
               <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-3">

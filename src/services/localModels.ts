@@ -1,6 +1,12 @@
 "use client";
 
-import { normalizeEndpoint, validateEndpoint } from "@/types/localModels";
+import {
+  normalizeEndpoint,
+  validateEndpoint,
+  isProductionWeb,
+  getLocalModelProductionMessage,
+  isDesktop,
+} from "@/types/localModels";
 
 export interface LocalTestResult {
   ok: boolean;
@@ -38,7 +44,31 @@ export async function testLocalEndpoint(
   if (err) {
     return { ok: false, message: err, endpointReachable: false, modelsDiscoverable: false };
   }
+  // Production web (https://www.nexuss.in) cannot fetch http://localhost:11434
+  // (mixed content + CORS + user's localhost is not server's localhost).
+  // Only allow direct localhost fetch in local dev (http://localhost:3000) or Desktop.
+  if (isProductionWeb()) {
+    return {
+      ok: false,
+      message: getLocalModelProductionMessage(),
+      endpointReachable: false,
+      modelsDiscoverable: false,
+    };
+  }
   const endpoint = normalizeEndpoint(rawEndpoint, providerType as never);
+
+  // Try desktop IPC first if available (Electron main process fetches without CORS/mixed-content)
+  const desktopOllama = (typeof window !== "undefined"
+    ? (window as unknown as { nexussDesktop?: { ollama?: { test?: (url: string, key?: string) => Promise<LocalTestResult> } } }).nexussDesktop?.ollama
+    : undefined) as { test?: (url: string, key?: string) => Promise<LocalTestResult> } | undefined;
+  if (isDesktop() && desktopOllama?.test) {
+    try {
+      const res = await desktopOllama.test(endpoint, apiKey);
+      return res;
+    } catch {
+      // Fall through to direct fetch
+    }
+  }
   // 1. Try /models discovery
   const modelsUrl = `${endpoint.replace(/\/$/, "")}/models`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -135,7 +165,11 @@ export async function discoverLocalModels(endpoint: string, apiKey?: string): Pr
   return result.models ?? [];
 }
 
-/** OpenAI-compatible streaming directly from browser to local endpoint. */
+/** OpenAI-compatible streaming directly from browser to local endpoint.
+ * In production (https://www.nexuss.in) this will throw with a clear message
+ * because https cannot fetch http://localhost and the cloud server cannot reach
+ * the user's localhost. Use Nexuss Desktop or http://localhost:3000 locally.
+ */
 export async function* streamLocalChat(params: {
   endpoint: string;
   modelId: string;
@@ -143,7 +177,49 @@ export async function* streamLocalChat(params: {
   apiKey?: string;
   signal?: AbortSignal;
 }): AsyncGenerator<{ type: "chunk"; content: string } | { type: "done" }> {
+  if (isProductionWeb()) {
+    throw new Error(getLocalModelProductionMessage());
+  }
   const endpoint = normalizeEndpoint(params.endpoint);
+  // Try desktop IPC first (Electron main process fetches without CORS/mixed-content)
+  const desktopOllama = (typeof window !== "undefined"
+    ? (window as unknown as {
+        nexussDesktop?: {
+          ollama?: {
+            chat?: (p: {
+              endpoint: string;
+              modelId: string;
+              messages: LocalChatMessage[];
+              apiKey?: string;
+            }) => Promise<{ content: string }>;
+          };
+        };
+      }).nexussDesktop?.ollama
+    : undefined) as
+    | { chat?: (p: { endpoint: string; modelId: string; messages: LocalChatMessage[]; apiKey?: string }) => Promise<{ content: string }> }
+    | undefined;
+  if (isDesktop() && desktopOllama?.chat) {
+    try {
+      const result = await desktopOllama.chat({
+        endpoint,
+        modelId: params.modelId,
+        messages: params.messages,
+        apiKey: params.apiKey,
+      });
+      if (result?.content) {
+        // Simulate streaming by yielding in ~20 char chunks to keep incremental UX
+        const content = result.content;
+        for (let i = 0; i < content.length; i += 20) {
+          if (params.signal?.aborted) throw new Error("Request aborted.");
+          yield { type: "chunk", content: content.slice(i, i + 20) };
+        }
+      }
+      yield { type: "done" };
+      return;
+    } catch (e) {
+      throw e instanceof Error ? e : new Error(String(e));
+    }
+  }
   const url = `${endpoint.replace(/\/$/, "")}/chat/completions`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (params.apiKey?.trim()) headers["Authorization"] = `Bearer ${params.apiKey.trim()}`;

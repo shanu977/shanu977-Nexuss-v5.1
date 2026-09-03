@@ -13,7 +13,7 @@ import type {
   NativeCommandResult,
   NativeTestResult
 } from "../native/types";
-import { RUNTIME_CHANNELS, WORKSPACE_CHANNELS } from "./types";
+import { OLLAMA_CHANNELS, RUNTIME_CHANNELS, WORKSPACE_CHANNELS } from "./types";
 import type { WorkspaceSnapshot } from "./types";
 
 export interface FileSourceLike {
@@ -60,6 +60,21 @@ export interface NexussDesktopApi {
     test(req: { cwd?: string; timeoutMs?: number }): Promise<NativeTestResult>;
     capabilities(): NativeCapabilities;
     cancel(): Promise<void>;
+  };
+  ollama: {
+    test(req: { endpoint: string; apiKey?: string }): Promise<{
+      ok: boolean;
+      message: string;
+      models?: string[];
+      endpointReachable: boolean;
+      modelsDiscoverable: boolean;
+    }>;
+    chat(req: {
+      endpoint: string;
+      modelId: string;
+      messages: { role: string; content: string }[];
+      apiKey?: string;
+    }): Promise<{ content: string }>;
   };
 }
 
@@ -115,6 +130,17 @@ export function createDesktopApi(invoke: InvokeFn): NexussDesktopApi {
       test: (req) => invoke(RUNTIME_CHANNELS.test, req) as Promise<NativeTestResult>,
       capabilities: () => capabilities,
       cancel: () => invoke(RUNTIME_CHANNELS.cancel) as Promise<void>
+    },
+    ollama: {
+      test: (req) => invoke(OLLAMA_CHANNELS.test, req) as Promise<{
+        ok: boolean;
+        message: string;
+        models?: string[];
+        endpointReachable: boolean;
+        modelsDiscoverable: boolean;
+      }>,
+      chat: (req) =>
+        invoke(OLLAMA_CHANNELS.chat, req) as Promise<{ content: string }>
     }
   };
 }

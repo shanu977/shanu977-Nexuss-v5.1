@@ -16,7 +16,8 @@ import path from "node:path";
 import { createNativeRuntime } from "../native/runtime";
 import { createRuntimeHandlers } from "./runtime-ipc";
 import { createWorkspaceService } from "./workspace-service";
-import { RUNTIME_CHANNELS, WORKSPACE_CHANNELS } from "./types";
+import { RUNTIME_CHANNELS, WORKSPACE_CHANNELS, OLLAMA_CHANNELS } from "./types";
+import { handleOllamaTest, handleOllamaChat } from "./ollama-service";
 
 const isProd = app.isPackaged || process.env.NEXUSS_MODE === "prod";
 const appRoot = app.getAppPath();
@@ -117,6 +118,10 @@ function registerIpc(): void {
     workspace.rename(payload.from, payload.to)
   );
   ipcMain.handle(WORKSPACE_CHANNELS.close, () => workspace.close());
+
+  // Ollama local gateway: main-process fetch for http://localhost:11434 (no CORS/mixed-content)
+  ipcMain.handle(OLLAMA_CHANNELS.test, (_e, req) => handleOllamaTest(req as { endpoint: string; apiKey?: string }));
+  ipcMain.handle(OLLAMA_CHANNELS.chat, (_e, req) => handleOllamaChat(req as { endpoint: string; modelId: string; messages: { role: string; content: string }[]; apiKey?: string }));
 }
 
 // ---------------------------------------------------------------------------

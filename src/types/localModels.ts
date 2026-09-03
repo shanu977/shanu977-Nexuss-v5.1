@@ -92,3 +92,42 @@ export function validateEndpoint(input: string): string | null {
     return "Invalid endpoint URL.";
   }
 }
+
+// --- Environment helpers for Ollama local vs production ---
+
+/** True when running inside Nexuss Desktop (Electron) where window.nexussDesktop is exposed. */
+export function isDesktop(): boolean {
+  if (typeof window === "undefined") return false;
+  return !!(window as unknown as { nexussDesktop?: unknown }).nexussDesktop;
+}
+
+/** True when running on http://localhost:3000 or http://127.0.0.1:3000 (local dev). */
+export function isLocalDev(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+/** True when running on production web (https://www.nexuss.in, https://nexuss.in, https://*.vercel.app). */
+export function isProductionWeb(): boolean {
+  if (typeof window === "undefined") return false;
+  if (isDesktop()) return false;
+  if (isLocalDev()) return false;
+  const protocol = window.location.protocol;
+  const host = window.location.hostname;
+  // Any https host that is not localhost is considered production web
+  if (protocol === "https:") return true;
+  // Also treat vercel preview and nexuss.in as production even if http (should not happen)
+  if (host.includes("nexuss.in") || host.includes("vercel.app")) return true;
+  return false;
+}
+
+/** Whether the browser can directly fetch http://localhost:11434 (local dev or desktop). */
+export function canUseLocalModelsDirect(): boolean {
+  if (typeof window === "undefined") return true; // for tests/SSR, allow
+  return isDesktop() || isLocalDev();
+}
+
+export function getLocalModelProductionMessage(): string {
+  return "Ollama runs locally on your own machine. Local models are only available when using Nexuss Desktop or running Nexuss locally at http://localhost:3000. Production https://www.nexuss.in cannot directly access your localhost Ollama. Please use Nexuss Desktop or run npm run dev locally to chat with Ollama at http://localhost:11434.";
+}

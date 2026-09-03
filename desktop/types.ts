@@ -9,6 +9,11 @@ export const RUNTIME_CHANNELS = {
   cancel: "nexuss:runtime:cancel"
 } as const;
 
+export const OLLAMA_CHANNELS = {
+  test: "nexuss:ollama:test",
+  chat: "nexuss:ollama:chat"
+} as const;
+
 export const WORKSPACE_CHANNELS = {
   list: "nexuss:workspace:list",
   read: "nexuss:workspace:read",
