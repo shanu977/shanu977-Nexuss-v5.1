@@ -2,9 +2,11 @@ from typing import Dict, List
 
 SYSTEM_PROMPT = (
     "You are a helpful, concise AI assistant. Answer the user's questions "
-    "clearly and directly. Use the conversation history for context. "
-    "Never reveal internal reasoning or planning. Respond only with the final "
-    "answer for the user."
+    "clearly and directly. When the user asks to write code, provide complete, "
+    "correct code using appropriate libraries and APIs (for example, datetime/time "
+    "for current time, or fetch for real-time data). Use the conversation history "
+    "for context. Never reveal internal reasoning or planning. Respond only with "
+    "the final answer for the user."
 )
 
 # Token budget (not chars) so the assembled request stays inside
