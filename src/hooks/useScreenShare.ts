@@ -128,6 +128,38 @@ export function useScreenShare(): UseScreenShare {
     cleanupStream();
   }, [cleanupStream]);
 
+  // Restore Nexuss as the active UI after the native picker resolves. The
+  // browser/OS may briefly activate the selected source (tab/window/screen).
+  // This is a browser/platform behavior outside JS control; we can only make
+  // a best-effort request to re-focus our window. The stream itself is never
+  // affected — capture continues in the background regardless of focus.
+  const restoreNexussFocus = useCallback(() => {
+    // Best-effort synchronous focus restore. Browsers may have moved
+    // activation to the picked tab/window during the native picker — this
+    // is platform behavior, not Nexuss code. window.focus() is the only
+    // spec-compliant way to request focus back; it never navigates and never
+    // touches the MediaStream. If the platform denies it (no transient
+    // activation), the stream still continues in the background.
+    if (typeof window !== "undefined" && typeof window.focus === "function") {
+      try {
+        window.focus();
+      } catch {
+        // Ignore — focus may be denied without transient activation.
+      }
+    }
+    // Ensure the document regains hasFocus where possible; jsdom returns
+    // false until focused, real browsers return true after window.focus().
+    if (typeof document !== "undefined" && document.hasFocus?.() === false) {
+      try {
+        // No navigation: just nudge focus to body if nothing else is focused
+        const active = document.activeElement as HTMLElement | null;
+        if (!active || active === document.body) {
+          (document.body as HTMLElement).focus?.();
+        }
+      } catch {}
+    }
+  }, []);
+
   // Open the browser's native screen/window/tab selector. We never build our
   // own fake list of windows: the OS/browser controls source selection.
   const openPicker = useCallback(async (): Promise<MediaStream | null> => {
@@ -141,10 +173,31 @@ export function useScreenShare(): UseScreenShare {
       return null;
     }
     try {
+      // Use the smallest safe modern option set. `video:true` is the only
+      // required constraint; the remaining hints are optional best-effort
+      // flags supported by Chrome/Edge (ignored by Firefox/Safari):
+      // - preferCurrentTab:false keeps the chooser unbiased (user may pick any
+      //   tab/window/screen, including the current tab).
+      // - selfBrowserSurface:"include" allows capturing the current tab if the
+      //   user wants it, without forcing it.
+      // - surfaceSwitching:"include" lets the user switch sources via the
+      //   browser's "Share this tab instead" button without a new prompt.
+      // - systemAudio:"exclude" and monitorTypeSurfaces:"include" preserve the
+      //   existing audio/screen defaults.
+      // None of these trigger navigation — the track label is surfaced only as
+      // UI text and is never used as a navigation target.
       return await navigator.mediaDevices.getDisplayMedia({
         video: true,
-        audio: false
-      });
+        audio: false,
+        // Modern Chrome options (cast to any for cross-browser TS compat)
+        ...({
+          preferCurrentTab: false,
+          selfBrowserSurface: "include",
+          systemAudio: "exclude",
+          surfaceSwitching: "include",
+          monitorTypeSurfaces: "include"
+        } as unknown as MediaStreamConstraints)
+      } as MediaStreamConstraints);
     } catch {
       // The user cancelled the picker or the browser/OS denied permission.
       // This is an expected outcome, not an app error: stay quiet so no
@@ -162,8 +215,11 @@ export function useScreenShare(): UseScreenShare {
       setIsActive(true);
       setIsExpanded(true);
       clearError();
+      // Best-effort: bring Nexuss back to foreground after selection.
+      // Capture continues in background; this never touches the stream.
+      restoreNexussFocus();
     },
-    [cleanupStream, clearError]
+    [cleanupStream, clearError, restoreNexussFocus]
   );
 
   const startSharing = useCallback(async (): Promise<boolean> => {
@@ -176,13 +232,18 @@ export function useScreenShare(): UseScreenShare {
       return true;
     } finally {
       setIsStarting(false);
+      // If picker was cancelled or denied we still ensure Nexuss retains focus
+      // (adoptStream already restores on success; this covers the no-stream
+      // path and any browser that moved focus during the picker).
+      restoreNexussFocus();
     }
-  }, [openPicker, adoptStream]);
+  }, [openPicker, adoptStream, restoreNexussFocus]);
 
   const changeScreen = useCallback(async () => {
     cleanupStream();
     await startSharing();
-  }, [cleanupStream, startSharing]);
+    restoreNexussFocus();
+  }, [cleanupStream, startSharing, restoreNexussFocus]);
 
   // Capture ONE current frame from the live preview. Downscaled JPEG keeps the
   // payload small; the frame is transient and never stored. Each call reads the
