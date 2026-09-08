@@ -241,6 +241,14 @@ interface WorkspaceState {
   agentLog: AgentLogEntry[];
   /** Last error from staging/applying a change, if any. */
   changeError: { code: string; message: string } | null;
+  /** Long-running processes (dev servers etc.) */
+  processes: { id: string; command: string; cwd: string; status: string; exitCode: number | null; durationMs: number }[];
+  /** Incremental streaming output for the currently running command */
+  streamingOutput: { stdout: string; stderr: string } | null;
+  /** Path toggle — single capability for workspace + terminal */
+  pathEnabled: boolean;
+  /** Discovered active project within workspace (e.g. Nexuss) */
+  activeProject: string | null;
 
   openPanel: () => void;
   closePanel: () => void;
@@ -274,6 +282,13 @@ interface WorkspaceState {
   refreshPendingChanges: () => Promise<void>;
   clearChangeError: () => void;
   clearAgentLog: () => void;
+  processStart: (command: string, cwd?: string) => Promise<void>;
+  processStop: (id: string) => Promise<void>;
+  processList: () => Promise<void>;
+  togglePath: () => void;
+  setPathEnabled: (enabled: boolean) => void;
+  discoverProject: (name: string) => string | null;
+  setActiveProject: (project: string | null) => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
@@ -302,6 +317,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   commandError: null,
   agentLog: [],
   changeError: null,
+  processes: [],
+  streamingOutput: null,
+  pathEnabled: false,
+  activeProject: null,
   workspacePath: null,
 
   openPanel: () => set({ panelOpen: true }),
@@ -448,9 +467,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       manifest,
       contextBudget,
       lastSearchResults,
-      lastReferencedFile
+      lastReferencedFile,
+      pathEnabled
     } = get();
 
+    if (!pathEnabled) return null;
     if (!workspace) {
       const intent = classifyWorkspaceIntent(question);
       if (intent === "status" || intent === "manifest" || intent === "summary") {
@@ -532,7 +553,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // BEFORE touching the bridge; the index is refreshed so the next request
   // reflects the change.
   applyOperation: async (op) => {
-    const { bridge, index } = get();
+    const { bridge, index, pathEnabled } = get();
+    if (!pathEnabled) return { ok: false, error: "Path is OFF — enable Path to perform file operations." };
     if (!bridge) return { ok: false, error: "No workspace connected." };
     try {
       switch (op.type) {
@@ -550,6 +572,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
           assertInsideRoot("", op.from);
           assertInsideRoot("", op.to);
           await bridge.rename(op.from, op.to);
+          break;
+        case "mkdir":
+          assertInsideRoot("", op.path);
+          await bridge.mkdir(op.path);
           break;
       }
       if (index) {
@@ -576,8 +602,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // Writes/creates/deletes/renames all flow through applyOperation, which
   // re-validates the path and refreshes the index on success.
   proposeChangeFromBlock: async (changes) => {
-    const { connected } = get();
+    const { connected, pathEnabled } = get();
     if (!connected) return;
+    if (!pathEnabled) {
+      set((s) => ({ changeError: { code: "PATH_DISABLED", message: "Path is OFF — enable Path to allow file edits." }, agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked file edit: Path is OFF", at: Date.now() }) }));
+      return;
+    }
     const proposals: ProposedChange[] = [];
     const errors: string[] = [];
     for (const op of changes) {
@@ -678,6 +708,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
           const to = normalizeRelativePath(change.toPath);
           const r = await get().applyOperation({ type: "rename", from: path, to });
           if (!r.ok) throw new Error(r.error ?? "Rename failed.");
+        } else if (change.kind === "mkdir") {
+          const r = await get().applyOperation({ type: "mkdir", path });
+          if (!r.ok) throw new Error(r.error ?? "Mkdir failed.");
         }
         applied.push(change.path);
       } catch (e) {
@@ -743,6 +776,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // --- Native command execution (run/test) ----------------------------------
 
   proposeCommandFromBlock: async (block) => {
+    const { pathEnabled } = get();
+    if (!pathEnabled) {
+      set((s) => ({ commandError: "Path is OFF — enable Path to run commands.", agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked command: Path is OFF", at: Date.now() }) }));
+      return;
+    }
     const { runtime, agentLog } = get();
     if (!runtime) {
       set({
@@ -808,7 +846,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   runPendingCommand: async () => {
-    const { pendingCommand, runtime } = get();
+    const { pendingCommand, runtime, pathEnabled } = get();
+    if (!pathEnabled) {
+      set({ commandError: "Path is OFF — enable Path to run commands." });
+      return;
+    }
     if (!pendingCommand || !runtime) return;
     if (get().runningCommand) return;
     const { kind, command, cwd } = pendingCommand;
@@ -880,5 +922,106 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   clearCommandError: () => set({ commandError: null }),
 
-  clearLastCommandResult: () => set({ lastCommandResult: null })
+  clearLastCommandResult: () => set({ lastCommandResult: null }),
+
+  processStart: async (command, cwd) => {
+    const { runtime } = get();
+    if (!runtime?.processStart) {
+      set({ commandError: "Long-running processes require the desktop runtime." });
+      return;
+    }
+    try {
+      const info = await runtime.processStart!({ command, cwd: cwd || "" });
+      set((s) => ({ processes: [...s.processes, { id: info.id, command: info.command, cwd: info.cwd, status: info.status, exitCode: info.exitCode, durationMs: 0 }], agentLog: withLog(s.agentLog, { kind: "run", message: `Started ${command} (${info.id})`, at: Date.now() }) }));
+    } catch (e) {
+      set({ commandError: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  processStop: async (id) => {
+    const { runtime } = get();
+    if (!runtime?.processStop) return;
+    try {
+      await runtime.processStop!(id);
+      set((s) => ({ processes: s.processes.map((p) => p.id === id ? { ...p, status: "killed" } : p) }));
+    } catch (e) {
+      set({ commandError: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  processList: async () => {
+    const { runtime } = get();
+    if (!runtime?.processList) return;
+    try {
+      const list = await runtime.processList!();
+      set({ processes: list.map((p) => ({ id: p.id, command: p.command, cwd: (p as unknown as { cwd: string }).cwd || "", status: p.status, exitCode: (p as unknown as { exitCode: number | null }).exitCode ?? null, durationMs: (p as unknown as { durationMs: number }).durationMs ?? 0 })) });
+    } catch {}
+  },
+
+  togglePath: () => {
+    const enabled = !get().pathEnabled;
+    get().setPathEnabled(enabled);
+  },
+
+  setPathEnabled: (enabled) => {
+    if (!enabled) {
+      // Disable: cancel any staged commands, clear capability, keep workspace for session but block tools
+      const { runtime, processes } = get();
+      // Do not kill unrelated user processes abruptly; just clear agent-owned pending state
+      if (runtime?.cancel) {
+        try { runtime.cancel(); } catch {}
+      }
+      set({
+        pathEnabled: false,
+        activeProject: null,
+        pendingCommand: null,
+        runningCommand: false,
+        processes: processes.map((p) => p.status === "running" ? { ...p, status: "killed" } : p),
+        agentLog: withLog(get().agentLog, { kind: "reject", message: "Path disabled — workspace access revoked.", at: Date.now() })
+      });
+    } else {
+      set({
+        pathEnabled: true,
+        agentLog: withLog(get().agentLog, { kind: "apply", message: "Path enabled — agent workspace access granted.", at: Date.now() })
+      });
+      // Auto-open panel to show authorized workspace
+      set({ panelOpen: true });
+    }
+  },
+
+  discoverProject: (name) => {
+    const { index } = get();
+    if (!index) return null;
+    const lower = name.toLowerCase();
+    // Find directory that matches project name
+    const dirs = new Set<string>();
+    for (const f of index.files) {
+      const dir = f.dir;
+      if (dir) dirs.add(dir.split("/")[0]);
+      if (f.path.toLowerCase().includes(lower)) {
+        const top = f.path.split("/")[0].toLowerCase();
+        if (top === lower) {
+          set({ activeProject: f.path.split("/")[0] });
+          return f.path.split("/")[0];
+        }
+      }
+    }
+    for (const d of dirs) {
+      if (d.toLowerCase() === lower) {
+        set({ activeProject: d });
+        return d;
+      }
+    }
+    // Heuristic: look for marker files
+    for (const d of dirs) {
+      const hasMarker = index.files.some((f) => f.dir === d && ["package.json","pyproject.toml","Cargo.toml","go.mod",".git"].includes(f.name));
+      if (hasMarker && d.toLowerCase().includes(lower.slice(0,3))) {
+        set({ activeProject: d });
+        return d;
+      }
+    }
+    return null;
+  },
+
+  setActiveProject: (project) => set({ activeProject: project })
 }));

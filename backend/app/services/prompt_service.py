@@ -122,6 +122,15 @@ AGENT_CHANGE_GUIDANCE = (
     '{"changes":[{"path":"src/example.py","content":"<full new file content>"}]}. '
     "The client shows a diff and only applies it after the user approves. "
     "Never claim you edited files yourself."
+    "\n\nFor directory creation, include the path in a mkdir proposal via "
+    '{"changes":[{"path":"new/folder/.keep","content":""}]} or rely on parent '
+    "dirs being auto-created when you create a file inside them."
+    "\n\nFor terminal execution, you may propose a command with a fenced block "
+    "tagged `workspace-command` like: "
+    '{"run":{"command":"npm test","cwd":""},"test":{"cwd":""} }. '
+    "Commands are validated against a policy (npm/pnpm/yarn/bun, python -m pytest, "
+    "go test, cargo, make) and require user approval before execution. "
+    "Output is returned to you on the next turn."
 )
 
 

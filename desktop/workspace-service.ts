@@ -63,6 +63,7 @@ export interface WorkspaceService {
   write(rel: string, content: string): Promise<void>;
   delete(rel: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  mkdir(rel: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -198,6 +199,11 @@ export function createWorkspaceService(
       const absFrom = resolveExisting(from);
       const absTo = resolveForWrite(to);
       await fsp.rename(absFrom, absTo);
+    },
+
+    mkdir: async (rel) => {
+      const abs = resolveForWrite(rel);
+      await fsp.mkdir(abs, { recursive: true });
     },
 
     close: async () => {

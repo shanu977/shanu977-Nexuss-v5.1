@@ -104,6 +104,11 @@ function registerIpc(): void {
   ipcMain.handle(RUNTIME_CHANNELS.test, (_e, req) => runtimeHandlers.test(req));
   ipcMain.handle(RUNTIME_CHANNELS.capabilities, () => runtimeHandlers.capabilities());
   ipcMain.handle(RUNTIME_CHANNELS.cancel, () => runtimeHandlers.cancel());
+  ipcMain.handle(RUNTIME_CHANNELS.processStart, (_e, req) => runtimeHandlers.processStart(req));
+  ipcMain.handle(RUNTIME_CHANNELS.processStatus, (_e, id) => runtimeHandlers.processStatus(id));
+  ipcMain.handle(RUNTIME_CHANNELS.processOutput, (_e, id) => runtimeHandlers.processOutput(id));
+  ipcMain.handle(RUNTIME_CHANNELS.processStop, (_e, payload) => runtimeHandlers.processStop(payload.id, payload.force));
+  ipcMain.handle(RUNTIME_CHANNELS.processList, () => runtimeHandlers.processList());
 
   ipcMain.handle(WORKSPACE_CHANNELS.list, () => workspace.list());
   ipcMain.handle(WORKSPACE_CHANNELS.read, (_e, p) => workspace.read(p));
@@ -117,6 +122,7 @@ function registerIpc(): void {
   ipcMain.handle(WORKSPACE_CHANNELS.rename, (_e, payload) =>
     workspace.rename(payload.from, payload.to)
   );
+  ipcMain.handle(WORKSPACE_CHANNELS.mkdir, (_e, p) => workspace.mkdir(p));
   ipcMain.handle(WORKSPACE_CHANNELS.close, () => workspace.close());
 
   // Ollama local gateway: main-process fetch for http://localhost:11434 (no CORS/mixed-content)

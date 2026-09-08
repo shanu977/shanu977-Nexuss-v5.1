@@ -30,6 +30,7 @@ const DEFAULT_CAPS: NativeCapabilities = {
   rename: true,
   move: true,
   delete: true,
+  mkdir: true,
   run: true,
   test: true
 };

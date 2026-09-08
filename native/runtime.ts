@@ -12,6 +12,8 @@ import { runCommand } from "./exec";
 import type { RunningCommand } from "./exec";
 import { assertCwdInsideRoot } from "./boundary";
 import { discoverTestCommand } from "./discover";
+import { createProcessManager } from "./process-manager";
+import type { ProcessInfo, ProcessStartRequest } from "./process-manager";
 import type {
   NativeCapabilities,
   NativeCommandResult,
@@ -31,11 +33,17 @@ export interface NativeRuntime {
   test: (req: TestRequest) => Promise<NativeTestResult>;
   discoverTest: (cwd?: string) => TestPlan | null;
   cancel: () => void;
+  processStart: (req: ProcessStartRequest) => Promise<ProcessInfo>;
+  processStatus: (id: string) => ProcessInfo;
+  processOutput: (id: string) => { stdout: string; stderr: string; outputTruncated: boolean; redacted: boolean };
+  processStop: (id: string, force?: boolean) => ProcessInfo;
+  processList: () => ProcessInfo[];
 }
 
 export function createNativeRuntime(): NativeRuntime {
   let root: string | null = null;
   let active: RunningCommand | null = null;
+  const pm = createProcessManager();
 
   return {
     get workspaceRoot() {
@@ -59,6 +67,7 @@ export function createNativeRuntime(): NativeRuntime {
       rename: true,
       move: true,
       delete: true,
+      mkdir: true,
       run: root !== null,
       test: root !== null
     }),
@@ -134,6 +143,17 @@ export function createNativeRuntime(): NativeRuntime {
         active.terminate();
         active = null;
       }
-    }
+    },
+
+    processStart: async (req) => {
+      const workspaceRoot = root;
+      if (!workspaceRoot) throw new NativeError("WORKSPACE_NOT_CONNECTED");
+      const cwd = assertCwdInsideRoot(workspaceRoot, req.cwd);
+      return pm.start(req, { cwd, workspaceRoot });
+    },
+    processStatus: (id) => pm.status(id),
+    processOutput: (id) => pm.output(id),
+    processStop: (id, force) => pm.stop(id, force),
+    processList: () => pm.list()
   };
 }

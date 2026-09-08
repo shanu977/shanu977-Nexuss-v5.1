@@ -11,6 +11,7 @@ import type { WorkspaceIndex } from "../types";
 /** Shared context a tool needs to run. Built from the store by the caller. */
 export interface ToolContext {
   connected: boolean;
+  pathEnabled?: boolean;
   bridge: WorkspaceBridgeLike | null;
   index: WorkspaceIndex | null;
   /** Native execution surface (window.nexussDesktop.runtime) or null. */
@@ -24,6 +25,8 @@ export interface WorkspaceBridgeLike {
   write: (path: string, content: string) => Promise<void>;
   delete: (path: string) => Promise<void>;
   rename: (from: string, to: string) => Promise<void>;
+  mkdir: (path: string) => Promise<void>;
+  list: () => Promise<{ path: string; size: number; mtime: number; content?: string }[]>;
   rootLabel: string;
 }
 
@@ -49,7 +52,8 @@ export type ProposedChangeKind =
   | "create"
   | "delete"
   | "rename"
-  | "move";
+  | "move"
+  | "mkdir";
 
 export interface ProposedChange {
   id: string;
@@ -144,6 +148,7 @@ export interface NativeCapabilities {
   rename: boolean;
   move: boolean;
   delete: boolean;
+  mkdir: boolean;
   run: boolean;
   test: boolean;
 }
@@ -161,6 +166,11 @@ export interface NativeRuntimeBridge {
   capabilities: () => NativeCapabilities;
   /** Terminate any in-flight command (optional; absent means no cancellation). */
   cancel?: () => void;
+  processStart?: (req: { command: string; cwd?: string; timeoutMs?: number | null }) => Promise<{ id: string; command: string; cwd: string; pid?: number; startedAt: number; status: string; exitCode: number | null }>;
+  processStatus?: (id: string) => { id: string; status: string; exitCode: number | null; durationMs: number };
+  processOutput?: (id: string) => { stdout: string; stderr: string; outputTruncated: boolean; redacted: boolean };
+  processStop?: (id: string, force?: boolean) => { id: string; status: string };
+  processList?: () => { id: string; command: string; status: string }[];
 }
 
 /** A command staged for the user to approve before it is executed. */

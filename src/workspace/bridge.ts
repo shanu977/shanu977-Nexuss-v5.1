@@ -34,6 +34,7 @@ export interface WorkspaceBridge {
   write(path: string, content: string): Promise<void>;
   delete(path: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  mkdir(path: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -96,10 +97,10 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
   private closed = false;
   private scanned = 0;
 
-  constructor(root: FsHandleLike, rootPath: string) {
+  constructor(root: FsHandleLike, rootPath?: string) {
     this.root = root;
     this.rootLabel = root.name;
-    this.rootPath = rootPath;
+    this.rootPath = rootPath ?? root.toURL?.() ?? root.name;
   }
 
   static async pick(): Promise<FileSystemAccessBridge> {
@@ -224,6 +225,16 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
     await this.delete(from);
   }
 
+  async mkdir(path: string): Promise<void> {
+    const segments = path.split("/").filter(Boolean);
+    let handle = this.root;
+    for (const seg of segments) {
+      const next = await handle.getDirectoryHandle?.(seg, { create: true });
+      if (!next) throw new Error(`Could not create directory: ${path}`);
+      handle = next;
+    }
+  }
+
   async close(): Promise<void> {
     this.closed = true;
   }
@@ -236,11 +247,18 @@ export class InMemoryBridge implements WorkspaceBridge {
   readonly lastScan = { entries: 0, files: 0 };
   private readonly files = new Map<string, string>();
 
-  constructor(name: string, rootPath = name, files: Record<string, string> = {}) {
+  constructor(name: string, rootPathOrFiles: string | Record<string, string> = name, files: Record<string, string> = {}) {
     this.rootLabel = name;
-    this.rootPath = rootPath;
-    for (const [path, content] of Object.entries(files)) {
-      this.files.set(path, content);
+    if (typeof rootPathOrFiles === "string") {
+      this.rootPath = rootPathOrFiles;
+      for (const [path, content] of Object.entries(files)) {
+        this.files.set(path, content);
+      }
+    } else {
+      this.rootPath = name;
+      for (const [path, content] of Object.entries(rootPathOrFiles)) {
+        this.files.set(path, content);
+      }
     }
   }
 
@@ -279,6 +297,12 @@ export class InMemoryBridge implements WorkspaceBridge {
     if (content === undefined) throw new Error(`File not found: ${from}`);
     this.files.delete(from);
     this.files.set(to, content);
+  }
+
+  async mkdir(path: string): Promise<void> {
+    const normalized = path.replace(/\/+$/, "");
+    if (!normalized) return;
+    this.files.set(`__dir__:${normalized}`, "");
   }
 
   async close(): Promise<void> {}

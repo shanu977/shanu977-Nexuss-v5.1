@@ -16,7 +16,8 @@ export type NativeErrorCode =
   | "OUTPUT_LIMIT"
   | "TEST_COMMAND_NOT_FOUND"
   | "TEST_TIMEOUT"
-  | "TEST_FAILED";
+  | "TEST_FAILED"
+  | "PROCESS_NOT_FOUND";
 
 const MESSAGES: Record<NativeErrorCode, string> = {
   NATIVE_BRIDGE_UNAVAILABLE: "Command execution requires the Nexuss desktop runtime.",
@@ -31,7 +32,8 @@ const MESSAGES: Record<NativeErrorCode, string> = {
   OUTPUT_LIMIT: "The command produced too much output and was terminated.",
   TEST_COMMAND_NOT_FOUND: "No test command could be discovered for this project.",
   TEST_TIMEOUT: "The test run timed out and was terminated.",
-  TEST_FAILED: "The test run failed."
+  TEST_FAILED: "The test run failed.",
+  PROCESS_NOT_FOUND: "The requested process does not exist or has already exited."
 };
 
 export class NativeError extends Error {

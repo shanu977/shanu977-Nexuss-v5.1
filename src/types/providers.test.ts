@@ -19,10 +19,12 @@ const BACKEND_ALLOWED_MODELS_PATH = join(
   "settings.py"
 );
 
+const CLOUD_PROVIDERS = PROVIDER_LIST.filter((p) => p !== "local") as ProviderType[];
+
 function backendModelsByProvider(): Record<ProviderType, string[]> {
   const source = readFileSync(BACKEND_ALLOWED_MODELS_PATH, "utf8");
   const result = {} as Record<ProviderType, string[]>;
-  for (const provider of PROVIDER_LIST) {
+  for (const provider of CLOUD_PROVIDERS) {
     const entry = source.match(
       new RegExp(`"${provider}"\\s*:\\s*\\{(.*?)\\}`, "s")
     );
@@ -39,7 +41,7 @@ function frontendModelIds(provider: ProviderType): string[] {
 
 describe("provider model catalog", () => {
   it("exposes a non-empty, unique model list for every provider", () => {
-    for (const provider of PROVIDER_LIST) {
+    for (const provider of CLOUD_PROVIDERS) {
       const ids = frontendModelIds(provider);
       expect(ids.length).toBeGreaterThan(0);
       expect(new Set(ids).size).toBe(ids.length);
@@ -50,28 +52,31 @@ describe("provider model catalog", () => {
   });
 
   it("never exposes the same model under two providers", () => {
-    for (let i = 0; i < PROVIDER_LIST.length; i++) {
-      for (let j = i + 1; j < PROVIDER_LIST.length; j++) {
-        const a = frontendModelIds(PROVIDER_LIST[i]);
-        const b = frontendModelIds(PROVIDER_LIST[j]);
+    for (let i = 0; i < CLOUD_PROVIDERS.length; i++) {
+      for (let j = i + 1; j < CLOUD_PROVIDERS.length; j++) {
+        const a = frontendModelIds(CLOUD_PROVIDERS[i]);
+        const b = frontendModelIds(CLOUD_PROVIDERS[j]);
         expect(a.filter((id) => b.includes(id))).toEqual([]);
       }
     }
   });
 
   it("keeps defaults valid and in the catalog for their provider", () => {
-    for (const provider of PROVIDER_LIST) {
+    for (const provider of CLOUD_PROVIDERS) {
       expect(isValidModelForProvider(provider, DEFAULT_PROVIDER_MODELS[provider])).toBe(true);
       expect(isValidModelForProvider(provider, PROVIDERS[provider].model)).toBe(true);
     }
+    // local: any non-empty model is syntactically valid
+    expect(isValidModelForProvider("local", "llama3.1:8b")).toBe(true);
+    expect(isValidModelForProvider("local", "")).toBe(false);
   });
 
   it("isValidModelForProvider accepts only the provider's own models", () => {
-    for (const provider of PROVIDER_LIST) {
+    for (const provider of CLOUD_PROVIDERS) {
       for (const id of frontendModelIds(provider)) {
         expect(isValidModelForProvider(provider, id)).toBe(true);
       }
-      for (const other of PROVIDER_LIST) {
+      for (const other of CLOUD_PROVIDERS) {
         if (other === provider) continue;
         for (const id of frontendModelIds(other)) {
           expect(isValidModelForProvider(provider, id)).toBe(false);
@@ -89,7 +94,7 @@ describe("provider model catalog", () => {
 describe("backend sync", () => {
   it("frontend model lists match backend ALLOWED_MODELS exactly", () => {
     const backend = backendModelsByProvider();
-    for (const provider of PROVIDER_LIST) {
+    for (const provider of CLOUD_PROVIDERS) {
       expect(frontendModelIds(provider).sort()).toEqual(backend[provider].sort());
     }
   });
@@ -105,7 +110,7 @@ describe("backend sync", () => {
       "utf8"
     );
     void source;
-    for (const provider of PROVIDER_LIST) {
+    for (const provider of CLOUD_PROVIDERS) {
       const expected = DEFAULT_PROVIDER_MODELS[provider];
       expect(serviceSource).toMatch(
         new RegExp(`"${provider}"\\s*:\\s*"${expected}"`)

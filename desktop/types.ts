@@ -6,7 +6,12 @@ export const RUNTIME_CHANNELS = {
   run: "nexuss:runtime:run",
   test: "nexuss:runtime:test",
   capabilities: "nexuss:runtime:capabilities",
-  cancel: "nexuss:runtime:cancel"
+  cancel: "nexuss:runtime:cancel",
+  processStart: "nexuss:runtime:processStart",
+  processStatus: "nexuss:runtime:processStatus",
+  processOutput: "nexuss:runtime:processOutput",
+  processStop: "nexuss:runtime:processStop",
+  processList: "nexuss:runtime:processList"
 } as const;
 
 export const OLLAMA_CHANNELS = {
@@ -21,6 +26,7 @@ export const WORKSPACE_CHANNELS = {
   write: "nexuss:workspace:write",
   delete: "nexuss:workspace:delete",
   rename: "nexuss:workspace:rename",
+  mkdir: "nexuss:workspace:mkdir",
   close: "nexuss:workspace:close"
 } as const;
 

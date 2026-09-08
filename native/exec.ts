@@ -35,6 +35,8 @@ interface RunOptions {
   allowedExact?: string[];
   /** Hook used by the runtime to track/kill the active child (cancellation). */
   onStart?: (handle: RunningCommand) => void;
+  /** Streaming callback per data chunk (for incremental UI). */
+  onChunk?: (stream: "stdout" | "stderr", text: string) => void;
 }
 
 function clampTimeout(ms: number | undefined): number {
@@ -202,6 +204,7 @@ export async function runCommand(
     const text = chunk.toString("utf8");
     totalBytes += Buffer.byteLength(text, "utf8");
     appendCapped(stdout, text, maxStdout);
+    opts.onChunk?.("stdout", text);
     if (totalBytes > (maxStdout + maxStderr) * 40) {
       hardCapExceeded = true;
       killTree(child, true);
@@ -211,6 +214,7 @@ export async function runCommand(
     const text = chunk.toString("utf8");
     totalBytes += Buffer.byteLength(text, "utf8");
     appendCapped(stderr, text, maxStderr);
+    opts.onChunk?.("stderr", text);
     if (totalBytes > (maxStdout + maxStderr) * 40) {
       hardCapExceeded = true;
       killTree(child, true);

@@ -31,6 +31,9 @@ import { assertInsideRoot, normalizeRelativePath } from "../path";
 import { searchIndex } from "../search";
 
 function requireWorkspace(ctx: ToolContext): WorkspaceBridgeLike {
+  if (ctx.pathEnabled === false) {
+    throw new ToolError("PATH_DISABLED" as unknown as ToolError["code"], "Path is OFF — enable Path to use workspace tools.");
+  }
   if (!ctx.connected || !ctx.bridge) {
     throw new ToolError("WORKSPACE_NOT_CONNECTED");
   }
@@ -111,6 +114,60 @@ export function toolSearch(
     if (refs.length >= limit) break;
   }
   return refs;
+}
+
+/** workspace_list: list directory contents (files + subdirectories) under a workspace-relative dir. */
+export async function toolList(
+  ctx: ToolContext,
+  dirPath?: string
+): Promise<AgentFileRef[]> {
+  const bridge = requireWorkspace(ctx);
+  const dir = dirPath ? assertValidPath(dirPath) : "";
+  const all = await bridge.list();
+  const prefix = dir ? `${dir}/` : "";
+  const seen = new Map<string, AgentFileRef>();
+  for (const f of all) {
+    if (f.path.startsWith("__dir__:")) {
+      const d = f.path.slice("__dir__:".length);
+      if (dir === "") {
+        const top = d.split("/")[0];
+        if (!seen.has(top)) seen.set(top, { path: top, name: top, type: "directory" });
+      } else if (d === dir || d.startsWith(prefix)) {
+        const rest = d === dir ? "" : d.slice(prefix.length);
+        if (rest && !rest.includes("/")) {
+          if (!seen.has(d)) seen.set(d, { path: d, name: rest, type: "directory" });
+        } else if (rest.includes("/")) {
+          const child = rest.split("/")[0];
+          const childPath = dir ? `${dir}/${child}` : child;
+          if (!seen.has(childPath)) seen.set(childPath, { path: childPath, name: child, type: "directory" });
+        }
+      }
+      continue;
+    }
+    if (dir === "") {
+      const top = f.path.split("/")[0];
+      const isTopFile = !f.path.includes("/");
+      if (isTopFile) {
+        if (!seen.has(f.path)) seen.set(f.path, { path: f.path, name: f.path, type: "file" });
+      } else {
+        if (!seen.has(top)) seen.set(top, { path: top, name: top, type: "directory" });
+      }
+    } else {
+      if (f.path === dir) {
+        if (!seen.has(f.path)) seen.set(f.path, { path: f.path, name: f.path.split("/").pop()!, type: "file" });
+      } else if (f.path.startsWith(prefix)) {
+        const rest = f.path.slice(prefix.length);
+        if (!rest.includes("/")) {
+          if (!seen.has(f.path)) seen.set(f.path, { path: f.path, name: rest, type: "file" });
+        } else {
+          const child = rest.split("/")[0];
+          const childPath = `${dir}/${child}`;
+          if (!seen.has(childPath)) seen.set(childPath, { path: childPath, name: child, type: "directory" });
+        }
+      }
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.type === b.type ? a.path.localeCompare(b.path) : a.type === "directory" ? -1 : 1);
 }
 
 /** workspace_read: read a file through the bridge (never the raw filesystem). */
@@ -302,6 +359,82 @@ export async function toolProposeMove(
     toPath: to,
     before,
     after: before,
+    originalHash: contentHash(before)
+  });
+}
+
+/**
+ * workspace_mkdir (staged): propose creating a directory. Validated and shown
+ * as a diff; nothing is created until approval. Empty dirs are safe.
+ */
+export async function toolProposeMkdir(
+  ctx: ToolContext,
+  rawPath: string
+): Promise<ProposedChange> {
+  const bridge = requireWorkspace(ctx);
+  const path = assertValidPath(rawPath);
+  const all = await bridge.list();
+  const existsAsFile = all.some((f) => f.path === path && !f.path.startsWith("__dir__:"));
+  const existsAsDir = all.some((f) => f.path === `__dir__:${path}` || f.path.startsWith(`${path}/`));
+  if (existsAsFile || existsAsDir) {
+    throw new ToolError("FILE_EXISTS", `Path already exists: ${path}`);
+  }
+  return buildProposal({
+    kind: "mkdir",
+    path,
+    before: "",
+    after: "",
+    originalHash: null
+  });
+}
+
+/** workspace_mkdir immediate: create directory via bridge (low-risk, used for agent scaffolding). */
+export async function toolMkdir(
+  ctx: ToolContext,
+  rawPath: string
+): Promise<void> {
+  const bridge = requireWorkspace(ctx);
+  const path = assertValidPath(rawPath);
+  await bridge.mkdir(path);
+}
+
+/**
+ * workspace_edit (staged): targeted replacement. Reads file, verifies `oldText`
+ * exists exactly once (or as provided), replaces first occurrence with `newText`,
+ * returns diff. Prevents blind full-file overwrite.
+ */
+export async function toolProposeEdit(
+  ctx: ToolContext,
+  rawPath: string,
+  oldText: string,
+  newText: string
+): Promise<ProposedChange> {
+  const bridge = requireWorkspace(ctx);
+  const path = assertValidPath(rawPath);
+  assertEditable(path);
+  if (typeof oldText !== "string" || typeof newText !== "string") {
+    throw new ToolError("INVALID_INPUT", "oldText and newText must be strings.");
+  }
+  if (oldText.length === 0) throw new ToolError("INVALID_INPUT", "oldText is empty; use write/create instead.");
+  let before: string;
+  try {
+    before = await bridge.read(path);
+  } catch {
+    throw new ToolError("FILE_NOT_FOUND");
+  }
+  const idx = before.indexOf(oldText);
+  if (idx === -1) {
+    throw new ToolError("EDIT_CONFLICT", `oldText not found in ${path}. File may have changed. Re-read before editing.`);
+  }
+  if (before.indexOf(oldText, idx + 1) !== -1) {
+    throw new ToolError("EDIT_CONFLICT", `oldText matches multiple locations in ${path}. Provide more surrounding context to make it unique.`);
+  }
+  const after = before.slice(0, idx) + newText + before.slice(idx + oldText.length);
+  return buildProposal({
+    kind: "write",
+    path,
+    before,
+    after,
     originalHash: contentHash(before)
   });
 }

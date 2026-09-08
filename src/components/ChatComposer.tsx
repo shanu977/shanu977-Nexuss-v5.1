@@ -20,6 +20,7 @@ import {
   FolderIcon,
   MonitorIcon
 } from "@/components/icons";
+import { useWorkspaceStore } from "@/workspace/store";
 
 interface ChatComposerProps {
   onSend: (content: string) => Promise<void>;
@@ -165,6 +166,8 @@ interface AttachMenuProps {
 function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const pathEnabled = useWorkspaceStore((s) => s.pathEnabled);
+  const togglePath = useWorkspaceStore((s) => s.togglePath);
 
   useEffect(() => {
     if (!open) return;
@@ -191,7 +194,12 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
 
   const handleOpenWorkspace = () => {
     setOpen(false);
-    onOpenWorkspace?.();
+    // Path is a capability toggle — clicking enables/disables agent workspace access
+    togglePath();
+    if (!pathEnabled) {
+      // Turning ON: open panel to show authorized workspace
+      onOpenWorkspace?.();
+    }
   };
 
   return (
@@ -214,16 +222,17 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
           aria-label="Add attachment"
           className="absolute bottom-full left-0 z-50 mb-2 w-56 overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-2xl animate-fade-in text-popover-foreground"
         >
-          {/* Path opens the workspace interface: connect a local folder and the
-              engine attaches the most relevant files to your questions. */}
+          {/* Path is the single toggle for agent workspace/terminal access */}
           <button
             type="button"
             role="menuitem"
             onClick={handleOpenWorkspace}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs text-foreground transition-colors hover:bg-muted cursor-pointer"
+            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs transition-colors cursor-pointer ${pathEnabled ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}
+            aria-pressed={pathEnabled}
           >
             <FolderIcon className="h-4 w-4 shrink-0 text-primary" />
             <span className="min-w-0 flex-1">Path</span>
+            {pathEnabled && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-primary" />}
           </button>
           <button
             type="button"

@@ -55,7 +55,7 @@ function fakeRuntime(overrides?: Partial<NativeRuntimeBridge>): NativeRuntimeBri
       redacted: false,
       plan: { command: "npm test", source: "package.json#scripts.test", confidence: "high" as const }
     })),
-    capabilities: () => ({ read: true, search: true, write: true, create: true, rename: true, move: true, delete: true, run: true, test: true }),
+    capabilities: () => ({ read: true, search: true, write: true, create: true, rename: true, move: true, delete: true, mkdir: true, run: true, test: true }),
     cancel: vi.fn(),
     ...overrides
   };
@@ -282,7 +282,7 @@ describe("workspace agent: run/test command staging and execution", () => {
 
   it("refuses to stage a command the runtime cannot run", async () => {
     const runtime = fakeRuntime({
-      capabilities: () => ({ read: true, search: true, write: true, create: true, rename: true, move: true, delete: true, run: false, test: false })
+      capabilities: () => ({ read: true, search: true, write: true, create: true, rename: true, move: true, delete: true, mkdir: true, run: false, test: false })
     });
     await connectWithRuntime(runtime);
     await useWorkspaceStore.getState().proposeCommandFromBlock({

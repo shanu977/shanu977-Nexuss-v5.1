@@ -71,7 +71,8 @@ export type FileOperation =
   | { type: "create"; path: string; content: string }
   | { type: "write"; path: string; content: string }
   | { type: "delete"; path: string }
-  | { type: "rename"; from: string; to: string };
+  | { type: "rename"; from: string; to: string }
+  | { type: "mkdir"; path: string };
 
 export interface OperationResult {
   ok: boolean;

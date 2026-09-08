@@ -26,7 +26,10 @@ export type ToolErrorCode =
   | "OUTPUT_LIMIT"
   | "TEST_COMMAND_NOT_FOUND"
   | "TEST_TIMEOUT"
-  | "TEST_FAILED";
+  | "TEST_FAILED"
+  | "EDIT_CONFLICT"
+  | "PROCESS_NOT_FOUND"
+  | "PATH_DISABLED";
 
 export const DEFAULT_MESSAGES: Record<ToolErrorCode, string> = {
   WORKSPACE_NOT_CONNECTED:
@@ -56,7 +59,10 @@ export const DEFAULT_MESSAGES: Record<ToolErrorCode, string> = {
   OUTPUT_LIMIT: "The command produced too much output and was terminated.",
   TEST_COMMAND_NOT_FOUND: "No test command could be discovered for this project.",
   TEST_TIMEOUT: "The test run timed out and was terminated.",
-  TEST_FAILED: "The test run failed."
+  TEST_FAILED: "The test run failed.",
+  EDIT_CONFLICT: "The edit target was not found or matched multiple locations. Provide unique surrounding context.",
+  PROCESS_NOT_FOUND: "The requested process does not exist or has already exited.",
+  PATH_DISABLED: "Path is OFF — enable Path to use workspace capabilities."
 };
 
 export class ToolError extends Error {
