@@ -35,6 +35,7 @@ import {
   stripCommandBlock,
   hasCommandFence
 } from "@/workspace/agent/parse";
+import { stripAllFences, hasAnyFence, formatToolResults, executeFencedTools, MAX_AGENT_STEPS } from "@/workspace/agent/loop";
 import Dexie from "dexie";
 
 interface ChatStore extends ChatState {
@@ -347,56 +348,153 @@ async function requestAssistant(
       }
     }
 
-    const filtered = display.trim();
-    // Shown (and persisted) when a model reply is entirely internal reasoning
-    // with no recoverable answer. Storing an empty string would corrupt the
-    // next request's history (backend ChatTurn.content requires at least 1
-    // char -> 422).
-    const changeBlock = extractChangeBlock(filtered);
-    let finalContent =
-      filtered.length > 0 ? stripChangeBlock(filtered) : EMPTY_REPLY_FALLBACK;
-    if (changeBlock) {
-      void useWorkspaceStore
-        .getState()
-        .proposeChangeFromBlock(changeBlock.changes)
-        .catch(() => {
-          // Staging is best-effort; the reply is still shown either way.
-        });
-    }
-    // The model may also attach a fenced `workspace-command` block proposing a
-    // run/test. It is always stripped from the transcript (even when its
-    // payload is invalid); a valid block is staged in the workspace panel for
-    // approval. A command is only ever executed after the user runs it, and
-    // only via the native runtime's validation layer.
-    const commandBlock = extractCommandBlock(finalContent);
-    if (commandBlock || hasCommandFence(finalContent)) {
-      finalContent = stripCommandBlock(finalContent) || EMPTY_REPLY_FALLBACK;
-      if (commandBlock) {
+    // — Autonomous agent loop: when Path is ON and model emits fences,
+    // execute tools and feed results back to the model within the SAME
+    // assistant turn (up to MAX_AGENT_STEPS). For in-memory/demo workspaces
+    // tools auto-apply so ONE user message can complete discover→read→edit→run→fix→verify.
+    // For native workspaces tools stage for approval and loop pauses (existing UX).
+    const wsForLoop = useWorkspaceStore.getState();
+    const shouldAutonomousLoop = wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && hasAnyFence(display);
+    let finalContent: string;
+    const loopDisplay = display;
+    const loopHistory = [...history];
+    // Preserve original single-shot behavior for native or Path OFF
+    if (shouldAutonomousLoop && !abortController.signal.aborted) {
+      let steps = 0;
+      let currentDisplay = loopDisplay;
+      let currentHistory = [...loopHistory];
+      while (steps < MAX_AGENT_STEPS && hasAnyFence(currentDisplay) && !abortController.signal.aborted) {
+        const exec = await executeFencedTools(currentDisplay);
+        if (exec.results.length === 0) break;
+        if (exec.needsApproval) {
+          // Native-like pause not expected for in-memory; fall back to staging
+          break;
+        }
+        const toolText = formatToolResults(exec.results);
+        // Show tool progress in the streaming message
+        display = `${exec.stripped}\n\n${toolText}`;
+        updateMessage();
+        // Feed stripped assistant + tool results to next LLM call
+        currentHistory = [...currentHistory, { role: "assistant", content: exec.stripped }, { role: "system", content: toolText }];
+        // Fetch next model iteration with updated history (reuse same provider/model/reasoner)
+        // Reset for next fetch
+        const nextReasoner = new ReasoningFilter();
+        let nextDisplay = "";
+        const nextUpdate = () => {
+          useChatStore.setState((s) => ({
+            messages: s.messages.map((m) => (m.id === asstId ? { ...m, content: nextDisplay } : m))
+          }));
+        };
+        // Duplicate provider branching for next iteration using currentHistory as context
+        if (provider === "local") {
+          const localState = useLocalModelStore.getState();
+          let localModel = localState.models.find((m) => m.modelId === model && m.enabled);
+          if (!localModel) localModel = localState.models.find((m) => m.enabled);
+          if (!localModel) { nextDisplay = exec.stripped; break; }
+          const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
+          if (!localProvider) { nextDisplay = exec.stripped; break; }
+          const wsRes = useWorkspaceStore.getState().buildContextFor(text);
+          const allMessages: { role: string; content: string }[] = [
+            { role: "system", content: SYSTEM_PROMPT },
+            ...(wsRes?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${wsRes.contextText}` }] : []),
+            ...currentHistory,
+            { role: "user", content: text }
+          ];
+          // Also inject toolText as additional system for immediate next turn visibility
+          allMessages.splice(allMessages.length - 1, 0, { role: "system", content: toolText });
+          try {
+            const stream = streamLocalChat({ endpoint: localProvider.endpoint, modelId: localModel.modelId, messages: allMessages, apiKey: localProvider.apiKey, signal: abortController.signal });
+            for await (const evt of stream) {
+              if (evt.type === "chunk") {
+                const v = nextReasoner.push(evt.content);
+                if (!v) continue;
+                nextDisplay += v;
+                nextUpdate();
+              } else if (evt.type === "done") {
+                const t = nextReasoner.flush();
+                if (t) { nextDisplay += t; nextUpdate(); }
+              }
+            }
+            const t = nextReasoner.flush();
+            if (t) { nextDisplay += t; nextUpdate(); }
+          } catch {
+            nextDisplay = exec.stripped;
+            break;
+          }
+        } else {
+          const wsRes = useWorkspaceStore.getState().buildContextFor(text);
+          try {
+            const events = chatService.sendStream({ message: `${text}\n\n${toolText}`, history: currentHistory, provider: provider as Exclude<ProviderType, "local">, model, workspaceContext: wsRes?.contextText }, { signal: abortController.signal });
+            for await (const event of events) {
+              if (event.type === "chunk") {
+                const v = nextReasoner.push(event.content);
+                if (!v) continue;
+                nextDisplay += v;
+                nextUpdate();
+              }
+            }
+            const t = nextReasoner.flush();
+            if (t) { nextDisplay += t; nextUpdate(); }
+          } catch {
+            nextDisplay = exec.stripped;
+            break;
+          }
+        }
+        display = nextDisplay;
+        currentDisplay = nextDisplay;
+        steps++;
+        if (!hasAnyFence(currentDisplay)) break;
+      }
+      finalContent = stripAllFences(currentDisplay).trim() || EMPTY_REPLY_FALLBACK;
+      // Also append lastCommandResult if one exists from auto-applied commands (rare for in-memory)
+      if (useWorkspaceStore.getState().lastCommandResult) {
+        const last = useWorkspaceStore.getState().lastCommandResult;
+        if (last) {
+          const resultText = [`## Last command result`, `Command: \`${last.command}\``, `Exit: ${last.exitCode ?? "n/a"}`, ...(last.stdout ? [`\`\`\`\n${last.stdout}\n\`\`\``] : []), ...(last.stderr ? [`Stderr:\n\`\`\`\n${last.stderr}\n\`\`\``] : [])].join("\n");
+          useWorkspaceStore.getState().clearLastCommandResult();
+          finalContent = `${finalContent}\n\n${resultText}`;
+        }
+      }
+    } else {
+      const filtered = loopDisplay.trim();
+      const changeBlock = extractChangeBlock(filtered);
+      let stagedContent =
+        filtered.length > 0 ? stripChangeBlock(filtered) : EMPTY_REPLY_FALLBACK;
+      if (changeBlock) {
         void useWorkspaceStore
           .getState()
-          .proposeCommandFromBlock(commandBlock)
-          .catch(() => {
-            // Staging is best-effort; the reply is still shown either way.
-          });
+          .proposeChangeFromBlock(changeBlock.changes)
+          .catch(() => {});
       }
-    }
-    // Feed the last command result into the NEXT request so the model can
-    // diagnose a failed run/test without needing a second prompt.
-    if (useWorkspaceStore.getState().lastCommandResult) {
-      const last = useWorkspaceStore.getState().lastCommandResult;
-      if (last) {
-        const resultText = [
-          `## Last command result (previous turn)`,
-          `Command: \`${last.command}\``,
-          `Cwd: \`${last.cwd || "(workspace root)"}\``,
-          `Exit: ${last.exitCode ?? "n/a"} (${last.timedOut ? "timed out" : last.killed ? "killed" : "completed"})`,
-          `Duration: ${last.durationMs}ms`,
-          ...(last.stdout ? [`\`\`\`\n${last.stdout}\n\`\`\``] : []),
-          ...(last.stderr ? [`Stderr:\n\`\`\`\n${last.stderr}\n\`\`\``] : [])
-        ].join("\n");
-        useWorkspaceStore.getState().clearLastCommandResult();
-        finalContent = `${finalContent}\n\n${resultText}`;
+      const commandBlock = extractCommandBlock(stagedContent);
+      if (commandBlock || hasCommandFence(stagedContent)) {
+        stagedContent = stripCommandBlock(stagedContent) || EMPTY_REPLY_FALLBACK;
+        if (commandBlock) {
+          void useWorkspaceStore
+            .getState()
+            .proposeCommandFromBlock(commandBlock)
+            .catch(() => {});
+        }
       }
+      finalContent = stagedContent;
+      if (useWorkspaceStore.getState().lastCommandResult) {
+        const last = useWorkspaceStore.getState().lastCommandResult;
+        if (last) {
+          const resultText = [
+            `## Last command result (previous turn)`,
+            `Command: \`${last.command}\``,
+            `Cwd: \`${last.cwd || "(workspace root)"}\``,
+            `Exit: ${last.exitCode ?? "n/a"} (${last.timedOut ? "timed out" : last.killed ? "killed" : "completed"})`,
+            `Duration: ${last.durationMs}ms`,
+            ...(last.stdout ? [`\`\`\`\n${last.stdout}\n\`\`\``] : []),
+            ...(last.stderr ? [`Stderr:\n\`\`\`\n${last.stderr}\n\`\`\``] : [])
+          ].join("\n");
+          useWorkspaceStore.getState().clearLastCommandResult();
+          finalContent = `${finalContent}\n\n${resultText}`;
+        }
+      }
+      display = finalContent;
+      updateMessage();
     }
 
     const asstMsg: Message = {

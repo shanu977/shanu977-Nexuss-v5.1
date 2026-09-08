@@ -15,7 +15,9 @@ beforeEach(async () => {
     pendingCommand: null,
     runningCommand: false,
     lastCommandResult: null,
-    commandError: null
+    commandError: null,
+    pathEnabled: true,
+    activeProject: null
   });
 });
 
@@ -67,6 +69,7 @@ async function connectWithRuntime(runtime: NativeRuntimeBridge): Promise<void> {
   };
   await useWorkspaceStore.getState().disconnect();
   await useWorkspaceStore.getState().connectDemo();
+  useWorkspaceStore.setState({ pathEnabled: true });
 }
 
 function bridge(): InMemoryBridge {

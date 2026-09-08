@@ -101,7 +101,7 @@ describe("WorkspacePanel", () => {
 describe("WorkspacePanel agent section", () => {
   beforeEach(async () => {
     await useWorkspaceStore.getState().connectDemo();
-    useWorkspaceStore.setState({ pendingChanges: [], agentLog: [], changeError: null });
+    useWorkspaceStore.setState({ pathEnabled: true, pendingChanges: [], agentLog: [], changeError: null });
   });
 
   it("shows a staged change with its diff and approval controls", async () => {
@@ -202,6 +202,7 @@ describe("WorkspacePanel command execution card", () => {
     await useWorkspaceStore.getState().disconnect();
     await useWorkspaceStore.getState().connectDemo();
     useWorkspaceStore.setState({
+      pathEnabled: true,
       pendingChanges: [],
       agentLog: [],
       changeError: null,
