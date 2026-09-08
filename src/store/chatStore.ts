@@ -354,7 +354,7 @@ async function requestAssistant(
     // tools auto-apply so ONE user message can complete discover→read→edit→run→fix→verify.
     // For native workspaces tools stage for approval and loop pauses (existing UX).
     const wsForLoop = useWorkspaceStore.getState();
-    const shouldAutonomousLoop = wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && hasAnyFence(display);
+    const shouldAutonomousLoop = wsForLoop.pathEnabled && wsForLoop.agentAutoLoop && wsForLoop.workspace?.kind === "in-memory" && hasAnyFence(display);
     let finalContent: string;
     const loopDisplay = display;
     const loopHistory = [...history];

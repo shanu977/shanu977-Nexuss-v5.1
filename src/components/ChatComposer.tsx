@@ -167,6 +167,7 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const pathEnabled = useWorkspaceStore((s) => s.pathEnabled);
+  const connected = useWorkspaceStore((s) => s.connected);
   const togglePath = useWorkspaceStore((s) => s.togglePath);
 
   useEffect(() => {
@@ -194,13 +195,19 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
 
   const handleOpenWorkspace = () => {
     setOpen(false);
-    // Path is a capability toggle — clicking enables/disables agent workspace access
-    togglePath();
-    if (!pathEnabled) {
-      // Turning ON: open panel to show authorized workspace
+    // Path is a persistent capability: if already connected, toggle OFF/ON.
+    // If not connected, open panel to allow folder selection — don't pretend enabled.
+    if (connected) {
+      togglePath();
+      if (!pathEnabled) {
+        onOpenWorkspace?.();
+      }
+    } else {
+      // No workspace yet — open panel so user can Connect a folder / Try sample
       onOpenWorkspace?.();
     }
   };
+  const pathActive = pathEnabled && connected;
 
   return (
     <div className="relative shrink-0" ref={ref}>
@@ -227,12 +234,12 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
             type="button"
             role="menuitem"
             onClick={handleOpenWorkspace}
-            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs transition-colors cursor-pointer ${pathEnabled ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}
-            aria-pressed={pathEnabled}
+            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs transition-colors cursor-pointer ${pathActive ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}
+            aria-pressed={pathActive}
           >
             <FolderIcon className="h-4 w-4 shrink-0 text-primary" />
             <span className="min-w-0 flex-1">Path</span>
-            {pathEnabled && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-primary" />}
+            {pathActive && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-primary" />}
           </button>
           <button
             type="button"

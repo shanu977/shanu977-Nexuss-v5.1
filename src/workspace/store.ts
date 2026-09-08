@@ -199,7 +199,12 @@ async function initializeWorkspace(
     runningCommand: false,
     lastCommandResult: null,
     commandError: null,
-    workspacePath: bridge.rootPath
+    workspacePath: bridge.rootPath,
+    // Successful connection automatically enables Path capability
+    pathEnabled: true,
+    activeProject: null,
+    panelOpen: true,
+    agentLog: withLog(useWorkspaceStore.getState().agentLog, { kind: "apply", message: `Path enabled — connected to ${bridge.rootLabel}`, at: Date.now() })
   });
 }
 
@@ -249,6 +254,8 @@ interface WorkspaceState {
   pathEnabled: boolean;
   /** Discovered active project within workspace (e.g. Nexuss) */
   activeProject: string | null;
+  /** When true, agent loop auto-applies safe writes for autonomous demo/E2E */
+  agentAutoLoop: boolean;
 
   openPanel: () => void;
   closePanel: () => void;
@@ -289,6 +296,7 @@ interface WorkspaceState {
   setPathEnabled: (enabled: boolean) => void;
   discoverProject: (name: string) => string | null;
   setActiveProject: (project: string | null) => void;
+  setAgentAutoLoop: (enabled: boolean) => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
@@ -321,6 +329,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   streamingOutput: null,
   pathEnabled: false,
   activeProject: null,
+  agentAutoLoop: false,
   workspacePath: null,
 
   openPanel: () => set({ panelOpen: true }),
@@ -1023,5 +1032,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     return null;
   },
 
-  setActiveProject: (project) => set({ activeProject: project })
+  setActiveProject: (project) => set({ activeProject: project }),
+
+  setAgentAutoLoop: (enabled) => set({ agentAutoLoop: enabled })
 }));

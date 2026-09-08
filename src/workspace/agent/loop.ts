@@ -82,8 +82,8 @@ export async function executeFencedTools(modelText: string): Promise<{ results: 
   const results: LoopToolResult[] = [];
   let needsApproval = false;
 
-  // Auto-apply for in-memory/demo to allow autonomous test; otherwise stage and pause.
-  const autoApply = s.workspace?.kind === "in-memory";
+  // Auto-apply only when agentAutoLoop is enabled (E2E/autonomous demo); otherwise stage for approval
+  const autoApply = s.agentAutoLoop && s.workspace?.kind === "in-memory";
 
   if (changeBlock) {
     for (const op of changeBlock.changes) {

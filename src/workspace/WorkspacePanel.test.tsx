@@ -36,29 +36,24 @@ describe("WorkspacePanel", () => {
   });
 
   it("runs a hybrid search and lists ranked results", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.setState({ pathEnabled: true });
     render(<WorkspacePanel />);
-    // Sample workspace button has been removed; verify disconnected state UI.
-    expect(
-      screen.getByRole("button", { name: "Connect a folder" })
-    ).toBeInTheDocument();
-
-    const input = screen.getByPlaceholderText("Search files, symbols, error text…");
+    // Expand collapsed panel to reveal search
+    fireEvent.click(screen.getByRole("button", { name: /Path/i }));
+    const input = await screen.findByPlaceholderText("Search files, symbols, error text…");
     fireEvent.change(input, { target: { value: "login" } });
-
     const result = await screen.findByText("src/auth/login.ts");
     expect(result).toBeInTheDocument();
   });
 
   it("shows no-matches feedback for an unmatched query", async () => {
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.setState({ pathEnabled: true });
     render(<WorkspacePanel />);
-    // Sample workspace button has been removed
-    expect(
-      screen.getByRole("button", { name: "Connect a folder" })
-    ).toBeInTheDocument();
-
-    const input = screen.getByPlaceholderText("Search files, symbols, error text…");
+    fireEvent.click(screen.getByRole("button", { name: /Path/i }));
+    const input = await screen.findByPlaceholderText("Search files, symbols, error text…");
     fireEvent.change(input, { target: { value: "zzzznothing" } });
-
     expect(await screen.findByText("No matches.")).toBeInTheDocument();
   });
 
