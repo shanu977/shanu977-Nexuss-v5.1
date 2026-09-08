@@ -109,11 +109,16 @@ export class FileSystemAccessBridge implements WorkspaceBridge {
         mode?: "read" | "readwrite";
       }) => Promise<FsHandleLike>;
     };
+    console.debug("[Path Bridge] FileSystemAccessBridge.pick() checking showDirectoryPicker", { hasPicker: typeof win.showDirectoryPicker === "function" });
     if (typeof win.showDirectoryPicker !== "function") {
+      console.debug("[Path Bridge] showDirectoryPicker not available — unsupported browser");
       throw new Error("This browser does not support folder access.");
     }
+    console.debug("[Path Bridge] calling showDirectoryPicker({mode:'readwrite'})");
     const handle = await win.showDirectoryPicker({ mode: "readwrite" });
+    console.debug("[Path Bridge] showDirectoryPicker returned", { name: handle.name, hasToURL: !!handle.toURL });
     const rootPath = handle.toURL?.() ?? handle.name;
+    console.debug("[Path Bridge] creating FileSystemAccessBridge", { rootLabel: handle.name, rootPath });
     return new FileSystemAccessBridge(handle, rootPath);
   }
 

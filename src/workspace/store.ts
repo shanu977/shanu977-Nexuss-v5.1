@@ -164,15 +164,21 @@ function classifyError(e: unknown): { kind: WorkspaceErrorKind; message: string 
   return { kind: "unknown", message: raw || "Could not open the workspace." };
 }
 
+const STORE_INSTANCE_ID = Math.random().toString(36).slice(2, 6);
+console.debug(`[Path Store ${STORE_INSTANCE_ID}] initialized`);
+
 async function initializeWorkspace(
   bridge: WorkspaceBridge,
   kind: Workspace["kind"]
 ): Promise<void> {
+  console.debug(`[Path ${STORE_INSTANCE_ID}] initializeWorkspace start`, { kind, rootLabel: bridge.rootLabel, rootPath: bridge.rootPath });
   useWorkspaceStore.setState({ status: "reading" });
   const files = await loadWorkspaceFiles(bridge);
+  console.debug(`[Path ${STORE_INSTANCE_ID}] loadWorkspaceFiles done`, { files: files.length });
   useWorkspaceStore.setState({ status: "indexing" });
   const index = buildIndex(bridge.rootLabel, files);
   const manifest = buildManifest(index);
+  console.debug(`[Path ${STORE_INSTANCE_ID}] buildIndex done`, { files: index.files.length });
   useWorkspaceStore.setState({
     workspace: { name: bridge.rootLabel, root: bridge.rootPath, kind },
     bridge,
@@ -206,6 +212,8 @@ async function initializeWorkspace(
     panelOpen: true,
     agentLog: withLog(useWorkspaceStore.getState().agentLog, { kind: "apply", message: `Path enabled — connected to ${bridge.rootLabel}`, at: Date.now() })
   });
+  const after = useWorkspaceStore.getState();
+  console.debug(`[Path ${STORE_INSTANCE_ID}] initializeWorkspace completed`, { connected: after.connected, pathEnabled: after.pathEnabled, workspace: after.workspace?.name, visibleSelector: { connected: after.connected, pathEnabled: after.pathEnabled } });
 }
 
 interface WorkspaceState {
@@ -342,12 +350,22 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // browser's File System Access picker (a real user gesture). Never falls
   // back to anything that would reach outside the picked directory.
   connectLocal: async () => {
+    console.debug(`[Path ${STORE_INSTANCE_ID}] connectLocal click`, { connecting: get().connecting, hasNative: !!detectNativeBridge(), hasPicker: typeof window !== "undefined" && typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === "function" });
     if (get().connecting) return;
     set({ connecting: true, error: null, errorKind: null, status: "selecting" });
     try {
       const native = detectNativeBridge();
-      const bridge = native ?? (await FileSystemAccessBridge.pick());
+      console.debug(`[Path ${STORE_INSTANCE_ID}] connectLocal native bridge`, { found: !!native });
+      let bridge: WorkspaceBridge;
+      if (native) {
+        bridge = native;
+      } else {
+        console.debug(`[Path ${STORE_INSTANCE_ID}] calling FileSystemAccessBridge.pick() -> showDirectoryPicker`);
+        bridge = await FileSystemAccessBridge.pick();
+        console.debug(`[Path ${STORE_INSTANCE_ID}] FileSystemAccessBridge.pick() succeeded`, { rootLabel: bridge.rootLabel, rootPath: bridge.rootPath });
+      }
       await initializeWorkspace(bridge, native ? "native" : "fs-access");
+      console.debug(`[Path ${STORE_INSTANCE_ID}] connectLocal success`, { connected: get().connected, pathEnabled: get().pathEnabled });
     } catch (e) {
       const { kind, message } = classifyError(e);
       // If already connected, preserve the connection on cancel rather than

@@ -28,6 +28,10 @@ export default function WorkspacePanel() {
   const error = useWorkspaceStore((s) => s.error);
   const clearError = useWorkspaceStore((s) => s.clearError);
   const index = useWorkspaceStore((s) => s.index);
+  // Diagnostic: log Zustand selector values on every render to verify single store instance
+  if (typeof window !== "undefined") {
+    console.debug("[Path Panel] render selectors", { connected, hasWorkspace: !!workspace, workspaceName: workspace?.name, status, hasIndex: !!index, timestamp: Date.now() });
+  }
   const searchResults = useWorkspaceStore((s) => s.searchResults);
   const searching = useWorkspaceStore((s) => s.searching);
   const connectLocal = useWorkspaceStore((s) => s.connectLocal);
