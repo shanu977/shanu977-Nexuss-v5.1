@@ -14,27 +14,20 @@ afterEach(async () => {
 });
 
 describe("WorkspacePanel", () => {
-  it("shows connect controls when no workspace is connected", () => {
+  it("shows terminal workspace when no workspace is connected", () => {
     render(<WorkspacePanel />);
     expect(screen.getByLabelText("Terminal workspace")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Connect workspace" })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Try demo workspace" })
-    ).toBeInTheDocument();
+    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
+    expect(screen.getByText(/Nexuss can execute commands when needed/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try demo workspace" })).not.toBeInTheDocument();
   });
 
-  it("connects a real folder via the file system picker", async () => {
-    // Note: In test environment without File System Access API,
-    // this may trigger a browser support error. The test verifies
-    // the connect controls are present and the flow is set up.
+  it("shows terminal ready immediately without folder picker", async () => {
     render(<WorkspacePanel />);
-    expect(
-      screen.getByRole("button", { name: "Connect workspace" })
-    ).toBeInTheDocument();
-    // In test env without showDirectoryPicker, clicking Connect workspace
-    // may show a browser support error - that's expected behavior.
+    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
+    expect(screen.queryByText(/Connect a folder/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Try sample workspace/)).not.toBeInTheDocument();
   });
 
   it("runs a hybrid search and lists ranked results", async () => {
@@ -66,12 +59,11 @@ describe("WorkspacePanel", () => {
     expect(useWorkspaceStore.getState().panelOpen).toBe(false);
   });
 
-  it("surfaces a browser-support error when folder access is unavailable", async () => {
+  it("shows terminal ready even when folder access is unavailable — no picker required", async () => {
     render(<WorkspacePanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Connect workspace" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      /does not support folder access/i
-    );
+    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/does not support folder access/i)).not.toBeInTheDocument();
   });
 
   it("starts collapsed and expands via the header toggle", () => {
@@ -81,16 +73,15 @@ describe("WorkspacePanel", () => {
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByRole("button", { name: "Connect workspace" })
-    ).toBeInTheDocument();
+    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
+    expect(screen.getByText(/Nexuss can execute commands when needed/)).toBeInTheDocument();
   });
 
-  it("keeps the connection and search query across collapse/expand", async () => {
+  it("keeps the terminal ready across collapse/expand", async () => {
     render(<WorkspacePanel />);
-    expect(
-      screen.getByRole("button", { name: "Connect workspace" })
-    ).toBeInTheDocument();
+    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Terminal/i }));
+    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
   });
 });
 

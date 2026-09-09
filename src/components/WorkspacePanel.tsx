@@ -135,32 +135,16 @@ export default function WorkspacePanel() {
           >
           {!connected ? (
             <div className="border-t border-border p-4 animate-fade-in-up">
-              <p className="text-[11px] font-mono text-muted-foreground">
-                Terminal workspace disconnected. Connect to enable the Nexuss
-                agent to inspect, search, edit and verify your project.
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void connectLocal()}
-                  disabled={connecting}
-                  className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-medium text-primary-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-                >
-                  <TerminalIcon className="h-3.5 w-3.5" />
-                  Connect workspace
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void connectDemo()}
-                  disabled={connecting}
-                  className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-1.5 text-[11px] font-mono font-medium text-foreground transition-colors hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-                >
-                  Try demo workspace
-                </button>
+              <div className="flex items-center gap-2 text-[11px] font-mono font-medium text-muted-foreground">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                Terminal ready
               </div>
-              <p className="mt-3 text-[10px] font-mono text-muted-foreground">
-                Agent runs inside the connected workspace. Works in Chrome/Edge.
+              <p className="mt-2 text-[11px] font-mono text-muted-foreground">
+                Nexuss can execute commands when needed.
               </p>
+              <div className="mt-3 rounded-lg bg-muted/30 p-3 font-mono text-xs text-muted-foreground">
+                <span className="text-primary">›</span> <span className="animate-pulse">_</span>
+              </div>
             </div>
           ) : (
             <div className="border-t border-border p-4 animate-fade-in-up">

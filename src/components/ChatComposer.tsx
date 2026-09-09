@@ -166,7 +166,7 @@ interface AttachMenuProps {
 function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const connected = useWorkspaceStore((s) => s.connected);
+  const panelOpen = useWorkspaceStore((s) => s.panelOpen);
 
   useEffect(() => {
     if (!open) return;
@@ -193,12 +193,12 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
 
   const handleOpenWorkspace = () => {
     setOpen(false);
-    // Terminal workspace: clicking always opens the terminal panel.
-    // Connection state (connected) is the source of truth for active.
+    // Terminal panel: clicking always opens/toggles the terminal workspace.
+    // No folder picker, no connection gate — terminal is ready immediately.
     onOpenWorkspace?.();
   };
-  // Terminal active when a workspace is actually connected (source of truth)
-  const pathActive = connected;
+  // Terminal active when the panel is open (visibility is source of truth)
+  const pathActive = panelOpen;
 
   return (
     <div className="relative shrink-0" ref={ref}>

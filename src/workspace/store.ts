@@ -806,11 +806,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // --- Native command execution (run/test) ----------------------------------
 
   proposeCommandFromBlock: async (block) => {
-    const { pathEnabled } = get();
-    if (!pathEnabled) {
-      set((s) => ({ commandError: "Terminal is not connected — connect workspace to run commands.", agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked command: terminal not connected", at: Date.now() }) }));
-      return;
-    }
     const { runtime, agentLog } = get();
     if (!runtime) {
       set({
@@ -876,11 +871,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   runPendingCommand: async () => {
-    const { pendingCommand, runtime, pathEnabled } = get();
-    if (!pathEnabled) {
-      set({ commandError: "Terminal is not connected — connect workspace to run commands." });
-      return;
-    }
+    const { pendingCommand, runtime } = get();
     if (!pendingCommand || !runtime) return;
     if (get().runningCommand) return;
     const { kind, command, cwd } = pendingCommand;

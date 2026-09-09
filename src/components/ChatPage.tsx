@@ -53,7 +53,7 @@ export default function ChatPage({
   const showScreenSharePanel = screenShareActive || !!screenShareError;
 
   const workspacePanelOpen = useWorkspaceStore((s) => s.panelOpen);
-  const openWorkspacePanel = () => useWorkspaceStore.getState().openPanel();
+  const openWorkspacePanel = () => useWorkspaceStore.getState().togglePanel();
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col bg-background text-foreground font-sans transition-colors duration-200 w-full dark:bg-[#0f0f0f]">
