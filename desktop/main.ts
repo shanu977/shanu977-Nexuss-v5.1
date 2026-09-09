@@ -88,7 +88,7 @@ function registerIpc(): void {
       pick: async () => {
         if (!mainWindow) return { picked: false };
         const result = await dialog.showOpenDialog(mainWindow, {
-          title: "Connect a folder",
+          title: "Connect workspace",
           properties: ["openDirectory"]
         });
         if (result.canceled || result.filePaths.length === 0) {

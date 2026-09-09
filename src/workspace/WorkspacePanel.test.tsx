@@ -16,11 +16,13 @@ afterEach(async () => {
 describe("WorkspacePanel", () => {
   it("shows connect controls when no workspace is connected", () => {
     render(<WorkspacePanel />);
-    expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+    expect(screen.getByLabelText("Terminal workspace")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Connect a folder" })
+      screen.getByRole("button", { name: "Connect workspace" })
     ).toBeInTheDocument();
-    // "Try sample workspace" button has been removed per UI requirements
+    expect(
+      screen.getByRole("button", { name: "Try demo workspace" })
+    ).toBeInTheDocument();
   });
 
   it("connects a real folder via the file system picker", async () => {
@@ -29,9 +31,9 @@ describe("WorkspacePanel", () => {
     // the connect controls are present and the flow is set up.
     render(<WorkspacePanel />);
     expect(
-      screen.getByRole("button", { name: "Connect a folder" })
+      screen.getByRole("button", { name: "Connect workspace" })
     ).toBeInTheDocument();
-    // In test env without showDirectoryPicker, clicking Connect a folder
+    // In test env without showDirectoryPicker, clicking Connect workspace
     // may show a browser support error - that's expected behavior.
   });
 
@@ -40,7 +42,7 @@ describe("WorkspacePanel", () => {
     useWorkspaceStore.setState({ pathEnabled: true });
     render(<WorkspacePanel />);
     // Expand collapsed panel to reveal search
-    fireEvent.click(screen.getByRole("button", { name: /Path/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Terminal/i }));
     const input = await screen.findByPlaceholderText("Search files, symbols, error text…");
     fireEvent.change(input, { target: { value: "login" } });
     const result = await screen.findByText("src/auth/login.ts");
@@ -51,7 +53,7 @@ describe("WorkspacePanel", () => {
     await useWorkspaceStore.getState().connectDemo();
     useWorkspaceStore.setState({ pathEnabled: true });
     render(<WorkspacePanel />);
-    fireEvent.click(screen.getByRole("button", { name: /Path/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Terminal/i }));
     const input = await screen.findByPlaceholderText("Search files, symbols, error text…");
     fireEvent.change(input, { target: { value: "zzzznothing" } });
     expect(await screen.findByText("No matches.")).toBeInTheDocument();
@@ -66,7 +68,7 @@ describe("WorkspacePanel", () => {
 
   it("surfaces a browser-support error when folder access is unavailable", async () => {
     render(<WorkspacePanel />);
-    fireEvent.click(screen.getByRole("button", { name: "Connect a folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect workspace" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /does not support folder access/i
     );
@@ -74,21 +76,20 @@ describe("WorkspacePanel", () => {
 
   it("starts collapsed and expands via the header toggle", () => {
     render(<WorkspacePanel />);
-    const toggle = screen.getByRole("button", { name: /Path/i });
+    const toggle = screen.getByRole("button", { name: /Terminal/i });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
 
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole("button", { name: "Connect a folder" })
+      screen.getByRole("button", { name: "Connect workspace" })
     ).toBeInTheDocument();
   });
 
   it("keeps the connection and search query across collapse/expand", async () => {
     render(<WorkspacePanel />);
-    // Sample workspace button has been removed
     expect(
-      screen.getByRole("button", { name: "Connect a folder" })
+      screen.getByRole("button", { name: "Connect workspace" })
     ).toBeInTheDocument();
   });
 });

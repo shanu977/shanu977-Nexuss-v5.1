@@ -32,7 +32,7 @@ import { searchIndex } from "../search";
 
 function requireWorkspace(ctx: ToolContext): WorkspaceBridgeLike {
   if (ctx.pathEnabled === false) {
-    throw new ToolError("PATH_DISABLED" as unknown as ToolError["code"], "Path is OFF — enable Path to use workspace tools.");
+    throw new ToolError("PATH_DISABLED" as unknown as ToolError["code"], "Terminal is not connected — connect workspace to use terminal tools.");
   }
   if (!ctx.connected || !ctx.bridge) {
     throw new ToolError("WORKSPACE_NOT_CONNECTED");

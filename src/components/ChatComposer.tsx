@@ -17,7 +17,7 @@ import {
   PlusIcon,
   ChevronDownIcon,
   CheckIcon,
-  FolderIcon,
+  TerminalIcon,
   MonitorIcon
 } from "@/components/icons";
 import { useWorkspaceStore } from "@/workspace/store";
@@ -166,9 +166,7 @@ interface AttachMenuProps {
 function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const pathEnabled = useWorkspaceStore((s) => s.pathEnabled);
   const connected = useWorkspaceStore((s) => s.connected);
-  const togglePath = useWorkspaceStore((s) => s.togglePath);
 
   useEffect(() => {
     if (!open) return;
@@ -195,19 +193,12 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
 
   const handleOpenWorkspace = () => {
     setOpen(false);
-    // Path is a persistent capability: if already connected, toggle OFF/ON.
-    // If not connected, open panel to allow folder selection — don't pretend enabled.
-    if (connected) {
-      togglePath();
-      if (!pathEnabled) {
-        onOpenWorkspace?.();
-      }
-    } else {
-      // No workspace yet — open panel so user can Connect a folder / Try sample
-      onOpenWorkspace?.();
-    }
+    // Terminal workspace: clicking always opens the terminal panel.
+    // Connection state (connected) is the source of truth for active.
+    onOpenWorkspace?.();
   };
-  const pathActive = pathEnabled && connected;
+  // Terminal active when a workspace is actually connected (source of truth)
+  const pathActive = connected;
 
   return (
     <div className="relative shrink-0" ref={ref}>
@@ -229,7 +220,7 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
           aria-label="Add attachment"
           className="absolute bottom-full left-0 z-50 mb-2 w-56 overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-2xl animate-fade-in text-popover-foreground"
         >
-          {/* Path is the single toggle for agent workspace/terminal access */}
+          {/* Terminal — single toggle for agent workspace/terminal access */}
           <button
             type="button"
             role="menuitem"
@@ -237,8 +228,8 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
             className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs transition-colors cursor-pointer ${pathActive ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}
             aria-pressed={pathActive}
           >
-            <FolderIcon className="h-4 w-4 shrink-0 text-primary" />
-            <span className="min-w-0 flex-1">Path</span>
+            <TerminalIcon className="h-4 w-4 shrink-0 text-primary" />
+            <span className="min-w-0 flex-1">Terminal</span>
             {pathActive && <CheckIcon className="h-3.5 w-3.5 shrink-0 text-primary" />}
           </button>
           <button

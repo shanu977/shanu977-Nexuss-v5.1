@@ -29,13 +29,13 @@ function renderComposer(overrides: {
   return { onSend, onStartScreenShare, onStop };
 }
 
-describe("ChatComposer Path menu item", () => {
-  it("opens the Path workspace panel from the + menu", () => {
+describe("ChatComposer Terminal menu item", () => {
+  it("opens the Terminal workspace panel from the + menu", () => {
     const onOpenWorkspace = vi.fn();
     renderComposer({ onOpenWorkspace });
 
     fireEvent.click(screen.getByLabelText("Add attachment"));
-    const pathItem = screen.getByRole("menuitem", { name: "Path" });
+    const pathItem = screen.getByRole("menuitem", { name: "Terminal" });
     expect(pathItem).toBeInTheDocument();
     expect(pathItem).not.toBeDisabled();
     expect(pathItem).not.toHaveTextContent("Soon");
@@ -45,7 +45,7 @@ describe("ChatComposer Path menu item", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
-  it("keeps Share Screen working alongside Path", () => {
+  it("keeps Share Screen working alongside Terminal", () => {
     const onStartScreenShare = vi.fn();
     renderComposer({ onStartScreenShare });
 
@@ -54,12 +54,12 @@ describe("ChatComposer Path menu item", () => {
     expect(onStartScreenShare).toHaveBeenCalledTimes(1);
   });
 
-  it("handles an omitted Path callback gracefully", () => {
+  it("handles an omitted Terminal callback gracefully", () => {
     renderComposer({ onOpenWorkspace: undefined });
 
     fireEvent.click(screen.getByLabelText("Add attachment"));
     expect(() => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Path" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
     }).not.toThrow();
   });
 });

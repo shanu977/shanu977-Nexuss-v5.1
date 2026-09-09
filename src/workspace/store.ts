@@ -429,7 +429,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       runningCommand: false,
       lastCommandResult: null,
       commandError: null,
-      workspacePath: null
+      workspacePath: null,
+      pathEnabled: false,
+      activeProject: null,
+      agentAutoLoop: false
     });
   },
 
@@ -498,7 +501,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       pathEnabled
     } = get();
 
-    if (!pathEnabled) return null;
     if (!workspace) {
       const intent = classifyWorkspaceIntent(question);
       if (intent === "status" || intent === "manifest" || intent === "summary") {
@@ -506,6 +508,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       }
       return null;
     }
+    if (!pathEnabled) return null;
 
     const intent = classifyWorkspaceIntent(question);
     if (intent === "status") {
@@ -581,7 +584,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // reflects the change.
   applyOperation: async (op) => {
     const { bridge, index, pathEnabled } = get();
-    if (!pathEnabled) return { ok: false, error: "Path is OFF — enable Path to perform file operations." };
+    if (!pathEnabled) return { ok: false, error: "Terminal is not connected — connect workspace to perform file operations." };
     if (!bridge) return { ok: false, error: "No workspace connected." };
     try {
       switch (op.type) {
@@ -632,7 +635,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const { connected, pathEnabled } = get();
     if (!connected) return;
     if (!pathEnabled) {
-      set((s) => ({ changeError: { code: "PATH_DISABLED", message: "Path is OFF — enable Path to allow file edits." }, agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked file edit: Path is OFF", at: Date.now() }) }));
+      set((s) => ({ changeError: { code: "PATH_DISABLED", message: "Terminal is not connected — connect workspace to allow file edits." }, agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked file edit: terminal not connected", at: Date.now() }) }));
       return;
     }
     const proposals: ProposedChange[] = [];
@@ -805,7 +808,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   proposeCommandFromBlock: async (block) => {
     const { pathEnabled } = get();
     if (!pathEnabled) {
-      set((s) => ({ commandError: "Path is OFF — enable Path to run commands.", agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked command: Path is OFF", at: Date.now() }) }));
+      set((s) => ({ commandError: "Terminal is not connected — connect workspace to run commands.", agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked command: terminal not connected", at: Date.now() }) }));
       return;
     }
     const { runtime, agentLog } = get();
@@ -875,7 +878,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   runPendingCommand: async () => {
     const { pendingCommand, runtime, pathEnabled } = get();
     if (!pathEnabled) {
-      set({ commandError: "Path is OFF — enable Path to run commands." });
+      set({ commandError: "Terminal is not connected — connect workspace to run commands." });
       return;
     }
     if (!pendingCommand || !runtime) return;

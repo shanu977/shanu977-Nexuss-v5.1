@@ -33,7 +33,7 @@ export type ToolErrorCode =
 
 export const DEFAULT_MESSAGES: Record<ToolErrorCode, string> = {
   WORKSPACE_NOT_CONNECTED:
-    "No workspace is connected. Connect a folder before using workspace tools.",
+    "No workspace is connected. Connect workspace before using terminal tools.",
   PERMISSION_REQUIRED:
     "The folder permission has expired. Re-grant read access and try again.",
   PATH_OUTSIDE_WORKSPACE:
@@ -62,7 +62,7 @@ export const DEFAULT_MESSAGES: Record<ToolErrorCode, string> = {
   TEST_FAILED: "The test run failed.",
   EDIT_CONFLICT: "The edit target was not found or matched multiple locations. Provide unique surrounding context.",
   PROCESS_NOT_FOUND: "The requested process does not exist or has already exited.",
-  PATH_DISABLED: "Path is OFF — enable Path to use workspace capabilities."
+  PATH_DISABLED: "Terminal is not connected — connect workspace to use terminal tools."
 };
 
 export class ToolError extends Error {

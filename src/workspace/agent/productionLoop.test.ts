@@ -43,7 +43,7 @@ describe("Production Chat → LLM → Agent → Tools loop", ()=>{
     const modelText = '```workspace-change {"changes":[{"path":"a.ts","content":"x"}]}```';
     const { results } = await executeFencedTools(modelText);
     expect(results[0].success).toBe(false);
-    expect(results[0].error).toContain("Path is OFF");
+    expect(results[0].error).toContain("Terminal is not connected");
   });
 
   it("formatToolResults returns text that would be fed back to LLM and loop continues", async ()=>{

@@ -74,7 +74,7 @@ export function getToolContext(): ToolContext {
 export async function executeFencedTools(modelText: string): Promise<{ results: LoopToolResult[]; needsApproval: boolean; stripped: string }> {
   const s = useWorkspaceStore.getState();
   if (!s.pathEnabled) {
-    return { results: [{ kind: "change", success: false, error: "Path is OFF — enable Path to use workspace tools." }], needsApproval: false, stripped: stripAllFences(modelText) };
+    return { results: [{ kind: "change", success: false, error: "Terminal is not connected — connect workspace to use terminal tools." }], needsApproval: false, stripped: stripAllFences(modelText) };
   }
   const changeBlock = extractChangeBlock(modelText);
   const commandBlock = extractCommandBlock(modelText);

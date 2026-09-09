@@ -6,7 +6,7 @@ import {
   ArrowRightLeftIcon,
   CheckIcon,
   ChevronDownIcon,
-  FolderIcon,
+  TerminalIcon,
   PlusIcon,
   SearchIcon,
   XIcon,
@@ -14,11 +14,12 @@ import {
 } from "@/components/icons";
 
 /**
- * Compact premium details section for the Path workspace. Collapsed to a single
- * header row it only shows the connected workspace name; expanded it shows the
- * connect controls (real folder via the browser picker, or an in-memory sample
- * when the browser cannot access local folders) and, once connected, the file
- * count, live hybrid search, and disconnect. Never a full-screen modal.
+ * Terminal / Agent workspace panel. Collapsed to a single header row it only
+ * shows the connected workspace name; expanded it shows connection controls
+ * and, once connected, the file count, live search, agent activity and terminal
+ * output. The underlying workspace/terminal/agent loop is the same validated
+ * bridge (FileSystemAccessBridge / InMemoryBridge / native) — this component
+ * only presents it as a terminal workspace, not a legacy folder picker.
  */
 export default function WorkspacePanel() {
   const workspace = useWorkspaceStore((s) => s.workspace);
@@ -75,7 +76,7 @@ export default function WorkspacePanel() {
     <div className="shrink-0 bg-background px-3 pb-1 sm:px-4">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
         <section
-          aria-label="Workspace"
+          aria-label="Terminal workspace"
           className="overflow-hidden rounded-2xl border border-border bg-card shadow-lg animate-fade-in-up"
         >
           {/* Header row: the left side toggles collapse/expand (the compact
@@ -91,8 +92,8 @@ export default function WorkspacePanel() {
               className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-muted/50 cursor-pointer"
             >
               <span className="flex min-w-0 items-center gap-2 text-xs font-mono font-semibold text-foreground">
-                <FolderIcon className="h-4 w-4 shrink-0 text-primary" />
-                <span className="truncate">Path</span>
+                <TerminalIcon className="h-4 w-4 shrink-0 text-primary" />
+                <span className="truncate">Terminal</span>
                 {connected && workspace && !isExpanded && (
                   <span className="truncate text-[10px] font-normal text-muted-foreground">
                     • {workspace.name}
@@ -135,8 +136,8 @@ export default function WorkspacePanel() {
           {!connected ? (
             <div className="border-t border-border p-4 animate-fade-in-up">
               <p className="text-[11px] font-mono text-muted-foreground">
-                Give Nexuss a local folder to inspect, search, and fix. Everything
-                stays inside the folder you choose.
+                Terminal workspace disconnected. Connect to enable the Nexuss
+                agent to inspect, search, edit and verify your project.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
@@ -145,8 +146,8 @@ export default function WorkspacePanel() {
                   disabled={connecting}
                   className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-mono font-medium text-primary-foreground transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                 >
-                  <FolderIcon className="h-3.5 w-3.5" />
-                  Connect a folder
+                  <TerminalIcon className="h-3.5 w-3.5" />
+                  Connect workspace
                 </button>
                 <button
                   type="button"
@@ -154,11 +155,11 @@ export default function WorkspacePanel() {
                   disabled={connecting}
                   className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-1.5 text-[11px] font-mono font-medium text-foreground transition-colors hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                 >
-                  Try sample workspace
+                  Try demo workspace
                 </button>
               </div>
               <p className="mt-3 text-[10px] font-mono text-muted-foreground">
-                Works in Chrome/Edge. Other browsers can try the sample workspace.
+                Agent runs inside the connected workspace. Works in Chrome/Edge.
               </p>
             </div>
           ) : (
