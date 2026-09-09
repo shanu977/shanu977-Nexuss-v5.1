@@ -5,6 +5,7 @@ import { buildIndex } from "@/workspace/indexer";
 import { toolRead, toolRun, toolList } from "@/workspace/agent/tools";
 import type { ToolContext } from "@/workspace/agent/types";
 import { workflowMultiStep } from "@/workspace/agent/orchestrator";
+import { executeFencedTools, formatToolResults } from "@/workspace/agent/loop";
 
 function makeCtx(files: Record<string,string>, withRuntime=false, pathEnabled=true): ToolContext {
   const bridge = new InMemoryBridge("ws", files);
@@ -26,9 +27,11 @@ beforeEach(async ()=>{
 });
 
 describe("Path toggle", ()=>{
-  it("Test1 - Path OFF blocks terminal", async ()=>{
+  it("Test1 - Path OFF does NOT block terminal (terminal independent)", async ()=>{
     const ctx = makeCtx({}, true, false);
-    await expect(toolRun(ctx, "npm test")).rejects.toMatchObject({code:"PATH_DISABLED"});
+    const res = await toolRun(ctx, "npm test");
+    expect(res.success).toBe(true);
+    expect(res.stdout).toContain("ok");
   });
 
   it("Test2 - Enable Path allows workspace capability", ()=>{
@@ -83,14 +86,18 @@ describe("Path toggle", ()=>{
     expect(res.steps.length).toBeGreaterThan(4);
   });
 
-  it("Test7 - Disable Path blocks after enabled", async ()=>{
+  it("Test7 - Disable Path does NOT block terminal (filesystem remains blocked)", async ()=>{
     const store = useWorkspaceStore.getState();
     store.setPathEnabled(true);
     const ctxOn = makeCtx({}, true, true);
     await expect(toolRun(ctxOn, "npm test")).resolves.toBeDefined();
     store.setPathEnabled(false);
     const ctxOff = makeCtx({}, true, false);
-    await expect(toolRun(ctxOff, "npm test")).rejects.toMatchObject({code:"PATH_DISABLED"});
+    // Terminal still works
+    const res = await toolRun(ctxOff, "npm test");
+    expect(res.success).toBe(true);
+    // Filesystem is still blocked
+    await expect(toolList(ctxOff, "")).rejects.toMatchObject({code:"PATH_DISABLED"});
   });
 
   it("Test8 - Workspace boundary blocked", async ()=>{
@@ -133,5 +140,50 @@ describe("Path toggle", ()=>{
     expect(after.content).toContain("Hello Nexuss");
     const run = await toolRun(ctx, "npm test", {cwd:"NexussDemo"});
     expect(run.success).toBe(true);
+  });
+
+  it("Test11 - Terminal works with no workspace (connected=false, pathEnabled=false)", async ()=>{
+    await useWorkspaceStore.getState().disconnect();
+    useWorkspaceStore.setState({ pathEnabled:false, agentAutoLoop:true, connected:false, workspace:null, bridge:null, index:null, panelOpen:true });
+    const runtime = makeCtx({}, true, false).runtime;
+    useWorkspaceStore.setState({ runtime: runtime as any, panelOpen:true });
+    const ctx: ToolContext = { connected:false, pathEnabled:false, bridge: null as unknown as ToolContext["bridge"], index:null, runtime };
+    const res = await toolRun(ctx, "npm test");
+    expect(res.success).toBe(true);
+    expect(res.stdout).toContain("ok");
+    const modelText = 'Run tests\n```workspace-command {"run":{"command":"npm test"}}```';
+    const exec = await executeFencedTools(modelText);
+    expect(exec.results.length).toBe(1);
+    expect(exec.results[0].success).toBe(true);
+    expect(exec.results[0].stdout).toContain("ok");
+    expect(formatToolResults(exec.results)).toContain("Tool results");
+  });
+
+  it("Test12 - Multi-step autonomous terminal without workspace (one user message)", async ()=>{
+    await useWorkspaceStore.getState().disconnect();
+    useWorkspaceStore.setState({ pathEnabled:false, agentAutoLoop:true, connected:false, workspace:null, bridge:null, index:null, panelOpen:true });
+    const runtime = makeCtx({}, true, false).runtime;
+    useWorkspaceStore.setState({ runtime: runtime as any, panelOpen:true });
+    // Step 1: agent generates test command
+    const step1 = 'Run tests\n```workspace-command {"run":{"command":"npm test"}}```';
+    const e1 = await executeFencedTools(step1);
+    expect(e1.results[0].success).toBe(true);
+    const tool1 = formatToolResults(e1.results);
+    // Step 2: simulate failure then fix (terminal still works, filesystem would be blocked but not needed)
+    const step2 = 'Tests failed, need to inspect\n```workspace-command {"run":{"command":"npm test"}}```';
+    const e2 = await executeFencedTools(step2);
+    expect(e2.results[0].success).toBe(true);
+    expect(tool1).toContain("Tool results");
+  });
+
+  it("Test13 - Terminal works with agentAutoLoop false (no hidden flag)", async ()=>{
+    await useWorkspaceStore.getState().disconnect();
+    useWorkspaceStore.setState({ pathEnabled:false, agentAutoLoop:false, connected:false, workspace:null, bridge:null, index:null, panelOpen:true });
+    const runtime = makeCtx({}, true, false).runtime;
+    useWorkspaceStore.setState({ runtime: runtime as any, panelOpen:true });
+    const modelText = 'Run\n```workspace-command {"run":{"command":"npm --version"}}```';
+    const exec = await executeFencedTools(modelText);
+    expect(exec.results[0].success).toBe(true);
+    expect(exec.results[0].stdout).toContain("ok");
   });
 });

@@ -354,7 +354,11 @@ async function requestAssistant(
     // tools auto-apply so ONE user message can complete discover→read→edit→run→fix→verify.
     // For native workspaces tools stage for approval and loop pauses (existing UX).
     const wsForLoop = useWorkspaceStore.getState();
-    const shouldAutonomousLoop = wsForLoop.pathEnabled && wsForLoop.agentAutoLoop && wsForLoop.workspace?.kind === "in-memory" && hasAnyFence(display);
+    const hasCommand = !!extractCommandBlock(display) || hasCommandFence(display);
+    const hasChange = !!extractChangeBlock(display);
+    // TERMINAL != FILESYSTEM: terminal is autonomous once Terminal panel is open (panelOpen)
+    // Filesystem changes still require pathEnabled+in-memory+autoLoop
+    const shouldAutonomousLoop = hasAnyFence(display) && wsForLoop.panelOpen && (hasCommand || (hasChange && wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && wsForLoop.agentAutoLoop));
     let finalContent: string;
     const loopDisplay = display;
     const loopHistory = [...history];

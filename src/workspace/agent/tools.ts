@@ -440,7 +440,15 @@ export async function toolProposeEdit(
 }
 
 function nativeRuntime(ctx: ToolContext): NativeRuntimeBridge {
-  requireWorkspace(ctx);
+  const runtime = ctx.runtime;
+  if (!runtime || typeof runtime.run !== "function") {
+    throw new ToolError("NATIVE_BRIDGE_UNAVAILABLE");
+  }
+  return runtime;
+}
+
+function terminalRuntime(ctx: ToolContext): NativeRuntimeBridge {
+  // TERMINAL != FILESYSTEM: terminal does not require pathEnabled/connected
   const runtime = ctx.runtime;
   if (!runtime || typeof runtime.run !== "function") {
     throw new ToolError("NATIVE_BRIDGE_UNAVAILABLE");
@@ -459,7 +467,7 @@ export async function toolRun(
   command: string,
   opts?: { cwd?: string }
 ): Promise<NativeCommandResult> {
-  const runtime = nativeRuntime(ctx);
+  const runtime = terminalRuntime(ctx);
   if (typeof command !== "string" || !command.trim()) {
     throw new ToolError("INVALID_INPUT", "A command is required.");
   }
@@ -483,7 +491,7 @@ export async function toolTest(
   ctx: ToolContext,
   opts?: { cwd?: string }
 ): Promise<NativeTestResult> {
-  const runtime = nativeRuntime(ctx);
+  const runtime = terminalRuntime(ctx);
   const cwd = opts?.cwd ? assertValidPath(opts.cwd) : "";
   const caps = runtime.capabilities();
   if (!caps.test) {

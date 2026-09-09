@@ -837,7 +837,8 @@ describe("sendMessageStream with a workspace-command block", () => {
       pendingCommand: null,
       runningCommand: false,
       lastCommandResult: null,
-      commandError: null
+      commandError: null,
+      panelOpen: false
     });
   });
 

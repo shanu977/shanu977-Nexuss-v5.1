@@ -73,49 +73,58 @@ export function getToolContext(): ToolContext {
  */
 export async function executeFencedTools(modelText: string): Promise<{ results: LoopToolResult[]; needsApproval: boolean; stripped: string }> {
   const s = useWorkspaceStore.getState();
-  if (!s.pathEnabled) {
-    return { results: [{ kind: "change", success: false, error: "Terminal is not connected — connect workspace to use terminal tools." }], needsApproval: false, stripped: stripAllFences(modelText) };
-  }
   const changeBlock = extractChangeBlock(modelText);
   const commandBlock = extractCommandBlock(modelText);
   const stripped = stripAllFences(modelText);
   const results: LoopToolResult[] = [];
   let needsApproval = false;
 
-  // Auto-apply only when agentAutoLoop is enabled (E2E/autonomous demo); otherwise stage for approval
-  const autoApply = s.agentAutoLoop && s.workspace?.kind === "in-memory";
+  // TERMINAL != FILESYSTEM: terminal (workspace-command) does not require pathEnabled/connected
+  // Filesystem changes (workspace-change) still require pathEnabled
+  const canChange = s.pathEnabled;
+  const canCommand = true; // terminal available immediately when panel open
+
+  // Auto-apply: changes require in-memory demo, commands auto-apply when Terminal panel is open
+  const autoApplyChange = s.agentAutoLoop && s.workspace?.kind === "in-memory";
+  const autoApplyCommand = s.panelOpen;
 
   if (changeBlock) {
-    for (const op of changeBlock.changes) {
-      try {
-        if (autoApply) {
-          // Direct apply without staging (in-memory auto-apply)
-          const ctx = getToolContext();
-          await toolProposeUpsert(ctx, op.path, op.content);
-          const { assertInsideRoot } = await import("../path");
-          assertInsideRoot("", op.path);
-          try {
-            await s.bridge!.create(op.path, op.content);
-          } catch {
-            await s.bridge!.write(op.path, op.content);
+    if (!canChange) {
+      for (const op of changeBlock.changes) {
+        results.push({ kind: "change", path: op.path, success: false, error: "Terminal is not connected — connect workspace to use terminal tools." });
+      }
+    } else {
+      for (const op of changeBlock.changes) {
+        try {
+          if (autoApplyChange) {
+            // Direct apply without staging (in-memory auto-apply)
+            const ctx = getToolContext();
+            await toolProposeUpsert(ctx, op.path, op.content);
+            const { assertInsideRoot } = await import("../path");
+            assertInsideRoot("", op.path);
+            try {
+              await s.bridge!.create(op.path, op.content);
+            } catch {
+              await s.bridge!.write(op.path, op.content);
+            }
+            await s.refresh().catch(() => {});
+            results.push({ kind: "change", path: op.path, success: true, content: op.content });
+          } else {
+            // Stage for approval - loop must pause
+            await s.proposeChangeFromBlock([op]);
+            results.push({ kind: "change", path: op.path, success: true, content: "staged for approval" });
+            needsApproval = true;
           }
-          await s.refresh().catch(() => {});
-          results.push({ kind: "change", path: op.path, success: true, content: op.content });
-        } else {
-          // Stage for approval - loop must pause
-          await s.proposeChangeFromBlock([op]);
-          results.push({ kind: "change", path: op.path, success: true, content: "staged for approval" });
-          needsApproval = true;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          results.push({ kind: "change", path: op.path, success: false, error: msg });
         }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        results.push({ kind: "change", path: op.path, success: false, error: msg });
       }
     }
   }
 
   if (commandBlock) {
-    if (autoApply) {
+    if (autoApplyCommand) {
       const ctx = getToolContext();
       if (commandBlock.run) {
         try {

@@ -9,7 +9,7 @@ beforeEach(async ()=>{
   const bridge = new InMemoryBridge("prod", {"NexussDemo/src/a.ts":"buggy","NexussDemo/package.json":'{"scripts":{"test":"vitest"}}'});
   const files = [{path:"NexussDemo/src/a.ts",size:5,mtime:0,content:"buggy"},{path:"NexussDemo/package.json",size:2,mtime:0,content:"{}"}];
   const index = buildIndex("prod", files);
-  useWorkspaceStore.setState({ bridge, index, connected:true, workspace:{name:"prod",root:"prod",kind:"in-memory"}, pathEnabled:true, activeProject:null, agentAutoLoop:true });
+  useWorkspaceStore.setState({ bridge, index, connected:true, workspace:{name:"prod",root:"prod",kind:"in-memory"}, pathEnabled:true, activeProject:null, agentAutoLoop:true, panelOpen:true });
 });
 
 describe("Production Chat → LLM → Agent → Tools loop", ()=>{
