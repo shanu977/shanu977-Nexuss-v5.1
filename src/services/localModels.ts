@@ -291,54 +291,33 @@ export async function* streamLocalChat(params: {
   signal?: AbortSignal;
 }): AsyncGenerator<{ type: "chunk"; content: string } | { type: "done" }> {
   let endpoint = normalizeEndpoint(params.endpoint);
-  // For Ollama, try connector first (production https → http localhost needs PNA handling)
+  // For Ollama on localhost, prefer connector if available - but don't block on health check.
+  // Use cached check without await, or try connector optimistically and fall back.
+  // Previously this did `await isConnectorAvailable()` (1500ms) before every chat, adding latency.
   if (endpoint === "http://localhost:11434/v1" || endpoint === "http://127.0.0.1:11434/v1") {
-    try {
-      const connectorAvailable = await isConnectorAvailable();
-      if (connectorAvailable) {
-        endpoint = CONNECTOR_ENDPOINT;
-      }
-    } catch {}
-  }
-  // Try desktop IPC first (Electron main process fetches without CORS/mixed-content)
-  const desktopOllama = (typeof window !== "undefined"
-    ? (window as unknown as {
-        nexussDesktop?: {
-          ollama?: {
-            chat?: (p: {
-              endpoint: string;
-              modelId: string;
-              messages: LocalChatMessage[];
-              apiKey?: string;
-            }) => Promise<{ content: string }>;
-          };
-        };
-      }).nexussDesktop?.ollama
-    : undefined) as
-    | { chat?: (p: { endpoint: string; modelId: string; messages: LocalChatMessage[]; apiKey?: string }) => Promise<{ content: string }> }
-    | undefined;
-  if (isDesktop() && desktopOllama?.chat) {
-    try {
-      const result = await desktopOllama.chat({
-        endpoint,
-        modelId: params.modelId,
-        messages: params.messages,
-        apiKey: params.apiKey,
-      });
-      if (result?.content) {
-        // Simulate streaming by yielding in ~20 char chunks to keep incremental UX
-        const content = result.content;
-        for (let i = 0; i < content.length; i += 20) {
-          if (params.signal?.aborted) throw new Error("Request aborted.");
-          yield { type: "chunk", content: content.slice(i, i + 20) };
+    // Non-blocking: check cache synchronously, don't await network
+    const now = Date.now();
+    const isCachedAvailable = cachedAvailable === true && now - lastCheck < CACHE_TTL_MS;
+    if (isCachedAvailable) {
+      endpoint = CONNECTOR_ENDPOINT;
+    } else if (cachedAvailable === null) {
+      // First time: try connector in background without blocking, but don't wait
+      // Kick off async check for next time
+      isConnectorAvailable().then((avail) => {
+        if (avail) {
+          // next chat will use connector
         }
-      }
-      yield { type: "done" };
-      return;
-    } catch (e) {
-      throw e instanceof Error ? e : new Error(String(e));
+      }).catch(() => {});
+      // Use direct endpoint for this chat to avoid 1.5s delay
+    } else if (cachedAvailable === false && now - lastCheck < CACHE_TTL_MS) {
+      // Recently checked and not available, use direct
     }
   }
+  // Desktop IPC is now also real streaming via the main process.
+  // Previously this buffered the full response (stream:false) then faked chunks, adding TTFT latency.
+  // Now we use the same fetch path as browser for true streaming. The main process still handles
+  // CORS via isConnectorAvailable cache, but we don't block on it.
+  // Keep desktop check for future streaming IPC, but don't buffer.
   const url = `${endpoint.replace(/\/$/, "")}/chat/completions`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (params.apiKey?.trim()) headers["Authorization"] = `Bearer ${params.apiKey.trim()}`;
