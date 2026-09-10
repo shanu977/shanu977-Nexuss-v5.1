@@ -13,6 +13,7 @@
 // NOT_SUPPORTED rather than pretending to execute anything.
 
 import { ToolError } from "./errors";
+import { createLocalConnectorRuntime } from "@/workspace/localTerminalRuntime";
 import type {
   AgentFileRef,
   NativeCommandResult,
@@ -449,11 +450,15 @@ function nativeRuntime(ctx: ToolContext): NativeRuntimeBridge {
 
 function terminalRuntime(ctx: ToolContext): NativeRuntimeBridge {
   // TERMINAL != FILESYSTEM: terminal does not require pathEnabled/connected
+  // Fallback to local connector (http://127.0.0.1:11435) when desktop runtime
+  // is absent — this is the normal Chrome case at https://nexuss.in.
   const runtime = ctx.runtime;
-  if (!runtime || typeof runtime.run !== "function") {
-    throw new ToolError("NATIVE_BRIDGE_UNAVAILABLE");
-  }
-  return runtime;
+  if (runtime && typeof runtime.run === "function") return runtime;
+  try {
+    const connector = createLocalConnectorRuntime();
+    if (connector && typeof connector.run === "function") return connector as unknown as NativeRuntimeBridge;
+  } catch {}
+  throw new ToolError("NATIVE_BRIDGE_UNAVAILABLE");
 }
 
 /**

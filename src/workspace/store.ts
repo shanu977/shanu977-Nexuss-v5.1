@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge, detectNativeRuntime } from "./bridge";
 import type { FileSource, NativeRuntimeBridge, WorkspaceBridge } from "./bridge";
+import { createLocalConnectorRuntime } from "./localTerminalRuntime";
 import {
   DEFAULT_CONTEXT_BUDGET,
   buildAmbiguityContext,
@@ -340,11 +341,31 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   agentAutoLoop: false,
   workspacePath: null,
 
-  openPanel: () => set({ panelOpen: true }),
+  openPanel: () => {
+    const cur = get();
+    if (!cur.runtime) {
+      try {
+        const connector = createLocalConnectorRuntime() as unknown as NativeRuntimeBridge;
+        set({ panelOpen: true, runtime: connector });
+        return;
+      } catch {}
+    }
+    set({ panelOpen: true });
+  },
 
   closePanel: () => set({ panelOpen: false }),
 
-  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
+  togglePanel: () => {
+    const s = get();
+    if (!s.panelOpen && !s.runtime) {
+      try {
+        const connector = createLocalConnectorRuntime() as unknown as NativeRuntimeBridge;
+        set({ panelOpen: true, runtime: connector });
+        return;
+      } catch {}
+    }
+    set({ panelOpen: !s.panelOpen });
+  },
 
   // Connect via the native desktop bridge when present, otherwise via the
   // browser's File System Access picker (a real user gesture). Never falls
