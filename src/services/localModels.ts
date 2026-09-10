@@ -31,14 +31,21 @@ function timeoutFetch(url: string, opts: RequestInit, ms: number): Promise<Respo
 
 const CONNECTOR_ENDPOINT = "http://127.0.0.1:11435/v1";
 const CONNECTOR_HEALTH_TIMEOUT_MS = 1500;
+let cachedAvailable: boolean | null = null;
+let lastCheck = 0;
+const CACHE_TTL_MS = 5000;
 
 async function isConnectorAvailable(): Promise<boolean> {
   if (typeof window === "undefined") return false;
-  // Only try connector for Ollama on localhost:11434
+  const now = Date.now();
+  if (cachedAvailable !== null && now - lastCheck < CACHE_TTL_MS) return cachedAvailable;
+  lastCheck = now;
   try {
     const res = await timeoutFetch(`http://127.0.0.1:11435/health`, { method: "GET" }, CONNECTOR_HEALTH_TIMEOUT_MS);
+    cachedAvailable = res.ok;
     return res.ok;
   } catch {
+    cachedAvailable = false;
     return false;
   }
 }
