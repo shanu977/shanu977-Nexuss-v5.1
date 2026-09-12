@@ -37,6 +37,7 @@ import {
   hasCommandFence
 } from "@/workspace/agent/parse";
 import { stripAllFences, hasAnyFence, formatToolResults, executeFencedTools, MAX_AGENT_STEPS } from "@/workspace/agent/loop";
+import { hasTerminalTag, extractTerminalTag } from "@/workspace/terminal";
 import Dexie from "dexie";
 
 interface ChatStore extends ChatState {
@@ -293,7 +294,9 @@ async function requestAssistant(
         ? isPhi3
           ? "Terminal is OPEN — use <terminal>COMMAND</terminal> for inspection."
           : "Terminal panel is OPEN — terminal is available via ```workspace-command {\"run\":{\"command\":\"...\"}}``` and will be auto-executed."
-        : "Terminal panel is CLOSED — do not use terminal tools.";
+        : isPhi3
+          ? "Terminal is CLOSED — you do NOT have terminal access right now. Do NOT output <terminal>. Explain or answer directly without terminal."
+          : "Terminal is CLOSED — you do NOT have terminal access. Do NOT use workspace-command. Explain or answer directly.";
       const allMessages: { role: string; content: string }[] = [
         { role: "system", content: basePrompt },
         { role: "system", content: terminalStatus },
@@ -304,9 +307,12 @@ async function requestAssistant(
       perf.mark("T2_end_request_preparation");
       perf.mark("request_preparation_end");
       if (process.env.NODE_ENV !== "production") {
-        console.debug("[Agent] terminal enabled", wsStateForPrompt.panelOpen);
-        console.debug("[Agent] model", localModel.modelId);
+        const cap = wsStateForPrompt;
+        const ws = useWorkspaceStore.getState();
+        console.debug(`[TerminalCapability] panelOpen:${cap.panelOpen} pathEnabled:${cap.pathEnabled} connected:${ws.connected} terminalAvailable:${cap.panelOpen} model:${localModel.modelId}`);
         console.debug("[Agent] user request", text.slice(0, 200));
+        // Log exact LLM request messages (truncated, no secrets)
+        console.debug(`[LLM Request] model=${localModel.modelId} messages=${allMessages.map(m=>`[${m.role}:${m.content.slice(0,180).replace(/\n/g,' ')}]`).join(' | ')}`);
       }
       perf.mark("T3_fetch_start");
       perf.mark("ollama_request_start");
@@ -457,10 +463,11 @@ async function requestAssistant(
     // For native workspaces tools stage for approval and loop pauses (existing UX).
     const wsForLoop = useWorkspaceStore.getState();
     const hasCommand = !!extractCommandBlock(display) || hasCommandFence(display);
+    const hasTerminal = hasTerminalTag(display) || !!extractTerminalTag(display);
     const hasChange = !!extractChangeBlock(display);
     // TERMINAL != FILESYSTEM: terminal is autonomous once Terminal panel is open (panelOpen)
     // Filesystem changes still require pathEnabled+in-memory+autoLoop
-    const shouldAutonomousLoop = hasAnyFence(display) && wsForLoop.panelOpen && (hasCommand || (hasChange && wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && wsForLoop.agentAutoLoop));
+    const shouldAutonomousLoop = hasAnyFence(display) && wsForLoop.panelOpen && (hasCommand || hasTerminal || (hasChange && wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && wsForLoop.agentAutoLoop));
     let finalContent: string;
     const loopDisplay = display;
     const loopHistory = [...history];
@@ -614,6 +621,10 @@ async function requestAssistant(
             .proposeCommandFromBlock(commandBlock)
             .catch(() => {});
         }
+      }
+      // Always strip terminal fence from non-executed path so raw tags never leak to UI
+      if (hasTerminalTag(stagedContent)) {
+        stagedContent = stripAllFences(stagedContent) || EMPTY_REPLY_FALLBACK;
       }
       finalContent = stagedContent;
       if (useWorkspaceStore.getState().lastCommandResult) {
