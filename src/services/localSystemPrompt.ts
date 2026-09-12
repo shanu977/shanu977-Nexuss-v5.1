@@ -38,7 +38,11 @@ COMMAND
 Examples:
 Tell me the folders we have on this PC.
 <terminal>
-powershell -NoProfile -Command "Get-ChildItem -LiteralPath 'C:' -Directory"
+powershell -NoProfile -Command "Get-ChildItem -LiteralPath 'C:\\' -Directory | Select-Object Name"
+</terminal>
+Tell me all the folders directly inside C:\\ on this PC. Use the terminal to check it.
+<terminal>
+powershell -NoProfile -Command "Get-ChildItem -LiteralPath 'C:\\' -Directory | Select-Object Name"
 </terminal>
 What version of Node.js is installed?
 <terminal>
@@ -50,7 +54,7 @@ npm --version
 </terminal>
 What files are on my Desktop?
 <terminal>
-powershell -NoProfile -Command "Get-ChildItem Desktop"
+powershell -NoProfile -Command "Get-ChildItem -LiteralPath 'C:\\Users\\pilli\\Desktop' | Select-Object Name"
 </terminal>
 How do I install Node.js?
 Explain normally, NO terminal.`;

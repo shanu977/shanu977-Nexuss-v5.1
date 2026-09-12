@@ -95,9 +95,26 @@ const server = http.createServer((req, res) => {
             res.end(JSON.stringify({ error: 'command is required' }));
             return;
           }
-          // Reuse native policy: FORBIDDEN_META + ALLOWED_BINS (extended for terminal)
-          const FORBIDDEN_META = /[&|;<>\r\n%^$`]/;
-          if (FORBIDDEN_META.test(command)) {
+          // Reuse native policy: allow | for PowerShell pipelines, block && and ||
+          const FORBIDDEN_META = /[&;<>`\r\n%^$]/;
+          const FORBIDDEN_PIPE_CHAIN = /&&|\|\|/;
+          if (FORBIDDEN_PIPE_CHAIN.test(command)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Shell chaining && and || is not allowed.' }));
+            return;
+          }
+          const isPowerShell = command.toLowerCase().includes("get-childitem") || command.toLowerCase().includes("get-psdrive") || command.toLowerCase().startsWith("powershell") || command.toLowerCase().startsWith("pwsh");
+          if (!isPowerShell && /[|]/.test(command)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Pipe | is only allowed for PowerShell terminal commands.' }));
+            return;
+          }
+          if (!isPowerShell && FORBIDDEN_META.test(command)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Shell metacharacters are not allowed.' }));
+            return;
+          }
+          if (isPowerShell && /[&;<>`\r\n%^$]/.test(command)) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Shell metacharacters are not allowed.' }));
             return;
