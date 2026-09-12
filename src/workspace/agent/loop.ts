@@ -4,6 +4,7 @@
 
 import { useWorkspaceStore } from "@/workspace/store";
 import { extractChangeBlock, stripChangeBlock, extractCommandBlock, stripCommandBlock, hasCommandFence } from "./parse";
+import { extractTerminalTag, hasTerminalTag, stripTerminalTag } from "@/workspace/terminal";
 import { toolProposeUpsert, toolRead, toolList, toolSearch } from "./tools";
 import type { ToolContext } from "./types";
 import { contentHash } from "../indexer";
@@ -22,15 +23,19 @@ export interface LoopToolResult {
 }
 
 export function hasAnyFence(text: string): boolean {
-  return !!extractChangeBlock(text) || !!extractCommandBlock(text) || hasCommandFence(text);
+  return !!extractChangeBlock(text) || !!extractCommandBlock(text) || hasCommandFence(text) || hasTerminalTag(text);
 }
 
 export function stripAllFences(text: string): string {
   let out = stripChangeBlock(text);
   out = stripCommandBlock(out);
-  // If any fence remained invalid, strip again to avoid leaking JSON
+  out = stripTerminalTag(out);
+  // If any fence remained invalid, strip again to avoid leaking JSON or terminal markup
   if (out.includes("workspace-change") || out.includes("workspace-command")) {
     out = out.replace(/```workspace-(change|command)[\s\S]*?```/gi, "").trim();
+  }
+  if (out.includes("<terminal>")) {
+    out = out.replace(/<terminal>[\s\S]*?<\/terminal>/gi, "").trim();
   }
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -148,6 +153,25 @@ export async function executeFencedTools(modelText: string): Promise<{ results: 
       await s.proposeCommandFromBlock(commandBlock);
       needsApproval = true;
       results.push({ kind: "command", success: true, stdout: "staged for approval" });
+    }
+  }
+
+  // Non-tool fallback: <terminal>COMMAND</terminal> — for phi3 and other models without native tool calling
+  // Terminal remains independent from Path: only panelOpen is required, validated via same terminalRuntime policy.
+  const terminalTag = extractTerminalTag(modelText);
+  if (terminalTag) {
+    if (autoApplyCommand) {
+      const ctx = getToolContext();
+      try {
+        const { toolRun } = await import("./tools");
+        const r = await toolRun(ctx, terminalTag.command);
+        results.push({ kind: "command", path: terminalTag.command, success: r.success, stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode });
+      } catch (e) {
+        results.push({ kind: "command", path: terminalTag.command, success: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    } else {
+      // Stage as command for approval when panel is closed (should not happen for terminal, but keep consistent)
+      results.push({ kind: "command", path: terminalTag.command, success: false, error: "Terminal panel is closed" });
     }
   }
 

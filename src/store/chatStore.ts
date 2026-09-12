@@ -27,7 +27,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { useWorkspaceStore } from "@/workspace/store";
 import { streamLocalChat } from "@/services/localModels";
-import { SYSTEM_PROMPT } from "@/services/localSystemPrompt";
+import { SYSTEM_PROMPT, PHI3_SYSTEM_PROMPT } from "@/services/localSystemPrompt";
 import {
   extractChangeBlock,
   stripChangeBlock,
@@ -223,11 +223,15 @@ async function requestAssistant(
       if (!localProvider || !localProvider.enabled) throw new Error("Local provider not found or disabled. Check Settings → Models.");
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
       const wsStateForPrompt = useWorkspaceStore.getState();
+      const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
+      const basePrompt = isPhi3 ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
       const terminalStatus = wsStateForPrompt.panelOpen
-        ? "Terminal panel is OPEN — terminal is available via ```workspace-command {\"run\":{\"command\":\"...\"}}``` and will be auto-executed."
+        ? isPhi3
+          ? "Terminal is OPEN — use <terminal>COMMAND</terminal> for inspection."
+          : "Terminal panel is OPEN — terminal is available via ```workspace-command {\"run\":{\"command\":\"...\"}}``` and will be auto-executed."
         : "Terminal panel is CLOSED — do not use terminal tools.";
       const allMessages: { role: string; content: string }[] = [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: basePrompt },
         { role: "system", content: terminalStatus },
         ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
         ...history,
@@ -407,8 +411,10 @@ async function requestAssistant(
           const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
           if (!localProvider) { nextDisplay = exec.stripped; break; }
           const wsRes = useWorkspaceStore.getState().buildContextFor(text);
+          const isPhi3Loop = localModel.modelId.toLowerCase().includes("phi3");
+          const loopPrompt = isPhi3Loop ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
           const allMessages: { role: string; content: string }[] = [
-            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: loopPrompt },
             ...(wsRes?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${wsRes.contextText}` }] : []),
             ...currentHistory,
             { role: "user", content: text }
