@@ -38,7 +38,27 @@ import {
 } from "@/workspace/agent/parse";
 import { stripAllFences, hasAnyFence, formatToolResults, executeFencedTools, MAX_AGENT_STEPS } from "@/workspace/agent/loop";
 import { hasTerminalTag, extractTerminalTag } from "@/workspace/terminal";
+import { pushExecutionContext, formatExecutionContextForPrompt } from "@/workspace/agent/executionContext";
 import Dexie from "dexie";
+
+// Fallback for models that emit bare terminal commands without the required fence
+// when user explicitly said "use the terminal" — prevents the "Here's the command you
+// can use..." hallucination from blocking autonomous execution.
+function userExplicitlyWantsTerminal(userText: string): boolean {
+  return /use (the )?terminal|via terminal|with terminal|check the terminal|through (the )?terminal|using the terminal/i.test(userText);
+}
+function extractBareTerminalCommand(modelText: string): string | null {
+  if (hasTerminalTag(modelText) || hasCommandFence(modelText) || !!extractCommandBlock(modelText)) return null;
+  // Bare powershell line (long enough to be intentional, not a HOW-TO snippet)
+  const pw = modelText.match(/powershell[^\n`]{10,800}/i);
+  if (pw) return pw[0].trim().replace(/^["`>\s]+|["`<\s]+$/g, "").trim();
+  if (/\bnode\s+--version\b/i.test(modelText)) return "node --version";
+  if (/\bnpm\s+--version\b/i.test(modelText)) return "npm --version";
+  // Generic Get-ChildItem bare hint (when model writes the command outside a fence)
+  const gci = modelText.match(/Get-ChildItem[^\n`]{10,800}/i);
+  if (gci) return `powershell -NoProfile -Command "${gci[0].trim()}"`;
+  return null;
+}
 
 interface ChatStore extends ChatState {
   theme: string;
@@ -298,10 +318,12 @@ async function requestAssistant(
         : isPhi3
           ? "Terminal is CLOSED — you do NOT have terminal access right now. Do NOT output <terminal>. Explain or answer directly without terminal."
           : "Terminal is CLOSED — you do NOT have terminal access. Do NOT use workspace-command. Explain or answer directly.";
+      const execContextText = formatExecutionContextForPrompt();
       const allMessages: { role: string; content: string }[] = [
         { role: "system", content: basePrompt },
         { role: "system", content: terminalStatus },
         ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
+        ...(execContextText ? [{ role: "system" as const, content: execContextText }] : []),
         ...history,
         { role: "user", content: text },
       ];
@@ -365,6 +387,8 @@ async function requestAssistant(
     } else {
       // Cloud path: via backend
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
+      const execContextTextCloud = formatExecutionContextForPrompt();
+      const combinedWorkspaceContext = [workspaceResult?.contextText, execContextTextCloud].filter(Boolean).join("\n\n") || undefined;
       const events = chatService.sendStream(
         {
           message: text,
@@ -372,7 +396,7 @@ async function requestAssistant(
           provider: provider as Exclude<ProviderType, "local">,
           model,
           image,
-          workspaceContext: workspaceResult?.contextText
+          workspaceContext: combinedWorkspaceContext
         },
         { signal: abortController.signal }
       );
@@ -466,9 +490,12 @@ async function requestAssistant(
     const hasCommand = !!extractCommandBlock(display) || hasCommandFence(display);
     const hasTerminal = hasTerminalTag(display) || !!extractTerminalTag(display);
     const hasChange = !!extractChangeBlock(display);
+    const bareTerminalCmd = extractBareTerminalCommand(display);
+    const hasBareTerminal = !!bareTerminalCmd && wsForLoop.panelOpen && userExplicitlyWantsTerminal(text);
     // TERMINAL != FILESYSTEM: terminal is autonomous once Terminal panel is open (panelOpen)
     // Filesystem changes still require pathEnabled+in-memory+autoLoop
-    const shouldAutonomousLoop = hasAnyFence(display) && wsForLoop.panelOpen && (hasCommand || hasTerminal || (hasChange && wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && wsForLoop.agentAutoLoop));
+    // Bare fallback: when model emits "Here's the command you can use: powershell ..." without fence but user explicitly said "use the terminal", treat as autonomous
+    const shouldAutonomousLoop = (hasAnyFence(display) && wsForLoop.panelOpen && (hasCommand || hasTerminal || (hasChange && wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && wsForLoop.agentAutoLoop))) || hasBareTerminal;
     let finalContent: string;
     const loopDisplay = display;
     const loopHistory = [...history];
@@ -477,20 +504,52 @@ async function requestAssistant(
       let steps = 0;
       let currentDisplay = loopDisplay;
       let currentHistory = [...loopHistory];
-      while (steps < MAX_AGENT_STEPS && hasAnyFence(currentDisplay) && !abortController.signal.aborted) {
+      while (steps < MAX_AGENT_STEPS && (hasAnyFence(currentDisplay) || !!extractBareTerminalCommand(currentDisplay)) && !abortController.signal.aborted) {
         perf?.mark(`terminal_parse_start_step${steps + 1}`);
         const execStart = performance.now();
         perf?.mark(`terminal_execute_start_step${steps + 1}`);
-        const exec = await executeFencedTools(currentDisplay);
+        // Bare fallback: synthesize a <terminal> fence so existing terminalRuntime executes even when model omitted the fence
+        const bareForStep = !hasAnyFence(currentDisplay) ? extractBareTerminalCommand(currentDisplay) : null;
+        const shouldUseBare = !!bareForStep && wsForLoop.panelOpen && userExplicitlyWantsTerminal(text);
+        const exec = shouldUseBare
+          ? await executeFencedTools(`<terminal>${bareForStep}</terminal>`)
+          : await executeFencedTools(currentDisplay);
+        // For bare, preserve original stripped text (remove bare command noise)
+        if (shouldUseBare) {
+          (exec as unknown as { stripped: string }).stripped = stripAllFences(currentDisplay).trim() || `Executed: ${bareForStep}`;
+        }
         const execDur = performance.now() - execStart;
-        if (process.env.NODE_ENV !== "production") console.debug(`[Perf] terminal exec step ${steps + 1} ${execDur.toFixed(1)}ms results=${exec.results.length}`);
+        if (process.env.NODE_ENV !== "production") console.debug(`[Perf] terminal exec step ${steps + 1} ${execDur.toFixed(1)}ms results=${exec.results.length} ${shouldUseBare ? "(bare fallback)" : ""}`);
         perf?.mark(`terminal_execute_end_step${steps + 1}`);
-        if (exec.results.length === 0) break;
+        if (exec.results.length === 0) {
+          if (shouldUseBare) {
+            // Bare command extraction succeeded but execution returned empty (should not happen) — surface as failure rather than hallucinate
+            if (process.env.NODE_ENV !== "production") console.debug(`[Terminal] bare fallback executed but no results`);
+          }
+          break;
+        }
         if (exec.needsApproval) {
           // Native-like pause not expected for in-memory; fall back to staging
           break;
         }
         const toolText = formatToolResults(exec.results);
+        // Persist structured execution context for follow-up pronoun resolution ("it", "that folder")
+        // Use real terminal results (actual stdout/cwd/exitCode), not model assumptions
+        for (const r of exec.results) {
+          if (r.kind === "command") {
+            try {
+              pushExecutionContext({
+                userText: text,
+                command: r.path || (shouldUseBare ? bareForStep || "" : ""),
+                cwd: (r as unknown as { cwd?: string }).cwd || wsForLoop.workspacePath || "",
+                stdout: r.stdout || "",
+                stderr: r.stderr || r.error || "",
+                exitCode: r.exitCode ?? null,
+                success: !!r.success,
+              });
+            } catch {}
+          }
+        }
         // Show tool progress in the streaming message (immediate)
         display = `${exec.stripped}\n\n${toolText}`;
         updateMessage(true);
@@ -530,11 +589,13 @@ async function requestAssistant(
           // Reuse original workspace context to avoid rebuilding search index twice for same question
           const wsResCached = useWorkspaceStore.getState().buildContextFor(text);
           const cachedWsText = wsResCached?.contextText;
+          const loopExecContext = formatExecutionContextForPrompt();
           const isPhi3Loop = localModel.modelId.toLowerCase().includes("phi3");
           const loopPrompt = isPhi3Loop ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
           const allMessages: { role: string; content: string }[] = [
             { role: "system", content: loopPrompt },
             ...(cachedWsText ? [{ role: "system" as const, content: `Workspace context:\n${cachedWsText}` }] : []),
+            ...(loopExecContext ? [{ role: "system" as const, content: loopExecContext }] : []),
             ...currentHistory,
             { role: "user", content: text }
           ];
@@ -566,8 +627,10 @@ async function requestAssistant(
           }
         } else {
           const wsRes = useWorkspaceStore.getState().buildContextFor(text);
+          const cloudLoopExecContext = formatExecutionContextForPrompt();
+          const cloudLoopWsCtx = [wsRes?.contextText, cloudLoopExecContext].filter(Boolean).join("\n\n") || undefined;
           try {
-            const events = chatService.sendStream({ message: `${text}\n\n${toolText}`, history: currentHistory, provider: provider as Exclude<ProviderType, "local">, model, workspaceContext: wsRes?.contextText }, { signal: abortController.signal });
+            const events = chatService.sendStream({ message: `${text}\n\n${toolText}`, history: currentHistory, provider: provider as Exclude<ProviderType, "local">, model, workspaceContext: cloudLoopWsCtx }, { signal: abortController.signal });
             let firstNext2 = true;
             for await (const event of events) {
               if (event.type === "chunk") {
