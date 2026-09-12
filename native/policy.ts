@@ -19,7 +19,8 @@ import { NativeError } from "./errors";
 import { readMakefileTargets, readPackageJson } from "./project";
 import { resolveInsideRoot } from "./boundary";
 
-const FORBIDDEN_META = /[&|;<>\r\n%^$`]/;
+const FORBIDDEN_META = /[&;<>`\r\n%^$]/;
+const FORBIDDEN_PIPE_CHAIN = /&&|\|\|/;
 
 const ALLOWED_BINS = new Set([
   "npm",
@@ -38,7 +39,15 @@ const ALLOWED_BINS = new Set([
   "go",
   "cargo",
   "make",
-  "deno"
+  "deno",
+  "powershell",
+  "pwsh",
+  "Get-ChildItem",
+  "get-childitem",
+  "Get-PSDrive",
+  "get-psdrive",
+  "dir",
+  "ls"
 ]);
 
 export interface CommandPolicyOptions {
@@ -106,11 +115,20 @@ export function validateCommand(
     return { cwd: opts.cwd, argv: requireTokens(normalized), command: normalized };
   }
 
-  if (FORBIDDEN_META.test(raw)) {
+  // Allow single | for PowerShell pipelines (Get-ChildItem | Select-Object) but block && and ||
+  if (FORBIDDEN_PIPE_CHAIN.test(raw)) {
+    throw new NativeError("COMMAND_NOT_ALLOWED", "Shell chaining && and || is not allowed.");
+  }
+  // For PowerShell terminal commands, allow | pipe; for others, allow but still validate
+  const isTerminalPowerShell = raw.toLowerCase().includes("get-childitem") || raw.toLowerCase().includes("get-psdrive") || raw.toLowerCase().startsWith("powershell") || raw.toLowerCase().startsWith("pwsh");
+  if (!isTerminalPowerShell && FORBIDDEN_META.test(raw)) {
     throw new NativeError(
       "COMMAND_NOT_ALLOWED",
       "Shell metacharacters are not allowed in workspace commands."
     );
+  }
+  if (isTerminalPowerShell && /[&;<>`\r\n%^$]/.test(raw)) {
+    throw new NativeError("COMMAND_NOT_ALLOWED", "Shell metacharacters are not allowed.");
   }
 
   const tokens = tokenizeCommand(normalized);
@@ -119,11 +137,25 @@ export function validateCommand(
   }
 
   const bin = tokens[0].toLowerCase();
-  if (!ALLOWED_BINS.has(bin)) {
-    throw new NativeError("COMMAND_NOT_ALLOWED", `"${bin}" is not an allowed command.`);
+  const origBin = tokens[0];
+  // Case-insensitive check for PowerShell bins
+  const lowerAllowed = new Set([...ALLOWED_BINS].map((s) => s.toLowerCase()));
+  if (!lowerAllowed.has(bin)) {
+    throw new NativeError("COMMAND_NOT_ALLOWED", `"${origBin}" is not an allowed command.`);
   }
 
   const arg1 = tokens[1];
+
+  // Terminal inspection commands: allow directly without package.json checks
+  if (bin === "powershell" || bin === "pwsh" || bin === "get-childitem" || bin === "get-psdrive" || bin === "dir" || bin === "ls") {
+    return { cwd: opts.cwd, argv: tokens, command: normalized };
+  }
+  if (bin === "node" && arg1 === "--version") {
+    return { cwd: opts.cwd, argv: tokens, command: normalized };
+  }
+  if ((bin === "npm" || bin === "pnpm" || bin === "yarn" || bin === "bun") && arg1 === "--version") {
+    return { cwd: opts.cwd, argv: tokens, command: normalized };
+  }
 
   if (bin === "npm" || bin === "pnpm" || bin === "yarn" || bin === "bun") {
     assertPackageManagerScript(opts.cwd, tokens, bin);

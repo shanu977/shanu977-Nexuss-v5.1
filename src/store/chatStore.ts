@@ -222,12 +222,21 @@ async function requestAssistant(
       const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
       if (!localProvider || !localProvider.enabled) throw new Error("Local provider not found or disabled. Check Settings → Models.");
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
+      const wsStateForPrompt = useWorkspaceStore.getState();
+      const terminalStatus = wsStateForPrompt.panelOpen
+        ? "Terminal panel is OPEN — terminal is available via ```workspace-command {\"run\":{\"command\":\"...\"}}``` and will be auto-executed."
+        : "Terminal panel is CLOSED — do not use terminal tools.";
       const allMessages: { role: string; content: string }[] = [
         { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: terminalStatus },
         ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
         ...history,
         { role: "user", content: text },
       ];
+      // Debug logs for agent verification (no secrets)
+      console.log("[Agent] terminal enabled", wsStateForPrompt.panelOpen);
+      console.log("[Agent] model", localModel.modelId);
+      console.log("[Agent] user request", text.slice(0, 200));
       const stream = streamLocalChat({
         endpoint: localProvider.endpoint,
         modelId: localModel.modelId,
