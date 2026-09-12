@@ -28,6 +28,7 @@ import { useLocalModelStore } from "@/store/localModelStore";
 import { useWorkspaceStore } from "@/workspace/store";
 import { streamLocalChat } from "@/services/localModels";
 import { SYSTEM_PROMPT, PHI3_SYSTEM_PROMPT } from "@/services/localSystemPrompt";
+import { PerfTracker } from "@/utils/localPerf";
 import {
   extractChangeBlock,
   stripChangeBlock,
@@ -202,15 +203,49 @@ async function requestAssistant(
   let errorEvent: ChatStreamErrorEvent | null = null;
   let display = "";
 
+  let perf: PerfTracker | null = null;
   try {
     const startTime = performance.now();
     const reasoner = new ReasoningFilter();
-    const updateMessage = () => {
+    // Batched UI updater: RAF-throttled to ~60fps to avoid per-token Zustand thrash,
+    // while preserving TTFT (first token flushes immediately). measurable: reduces
+    // React re-renders from N-per-token to ~16ms intervals without visible lag.
+    let pendingFrame: number | null = null;
+    let rafDisplay = "";
+    const flushUpdate = () => {
+      pendingFrame = null;
       useChatStore.setState((s) => ({
         messages: s.messages.map((m) =>
-          m.id === asstId ? { ...m, content: display } : m
+          m.id === asstId ? { ...m, content: rafDisplay } : m
         )
       }));
+    };
+    const scheduleUpdate = (content: string, immediate = false) => {
+      rafDisplay = content;
+      if (immediate) {
+        if (pendingFrame !== null) {
+          if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(pendingFrame);
+          pendingFrame = null;
+        }
+        flushUpdate();
+        return;
+      }
+      if (pendingFrame !== null) return;
+      if (typeof requestAnimationFrame !== "undefined") {
+        pendingFrame = requestAnimationFrame(() => flushUpdate());
+      } else {
+        // jsdom / node fallback - micro-batch
+        pendingFrame = setTimeout(() => flushUpdate(), 16) as unknown as number;
+      }
+    };
+    const updateMessage = (immediate = false) => scheduleUpdate(display, immediate);
+    const flushPending = () => {
+      if (pendingFrame !== null) {
+        if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(pendingFrame);
+        else clearTimeout(pendingFrame);
+        pendingFrame = null;
+        flushUpdate();
+      }
     };
 
     if (provider === "local") {
@@ -221,6 +256,8 @@ async function requestAssistant(
       if (!localModel) throw new Error("No local model configured. Add one in Settings → Models. No cloud API key is required for local chat.");
       const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
       if (!localProvider || !localProvider.enabled) throw new Error("Local provider not found or disabled. Check Settings → Models.");
+      perf = new PerfTracker();
+      perf.mark("request_preparation_start");
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
       const wsStateForPrompt = useWorkspaceStore.getState();
       const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
@@ -237,10 +274,13 @@ async function requestAssistant(
         ...history,
         { role: "user", content: text },
       ];
-      // Debug logs for agent verification (no secrets)
-      console.log("[Agent] terminal enabled", wsStateForPrompt.panelOpen);
-      console.log("[Agent] model", localModel.modelId);
-      console.log("[Agent] user request", text.slice(0, 200));
+      perf.mark("request_preparation_end");
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[Agent] terminal enabled", wsStateForPrompt.panelOpen);
+        console.debug("[Agent] model", localModel.modelId);
+        console.debug("[Agent] user request", text.slice(0, 200));
+      }
+      perf.mark("ollama_request_start");
       const stream = streamLocalChat({
         endpoint: localProvider.endpoint,
         modelId: localModel.modelId,
@@ -248,17 +288,21 @@ async function requestAssistant(
         apiKey: localProvider.apiKey,
         signal: abortController.signal,
       });
+      let ttftDone = false;
+      let firstVisible = true;
       for await (const evt of stream) {
         if (evt.type === "chunk") {
+          if (!ttftDone) { perf.mark("ttft"); ttftDone = true; }
           const visible = reasoner.push(evt.content);
           if (!visible) continue;
           display += visible;
-          updateMessage();
+          if (firstVisible) { updateMessage(true); firstVisible = false; }
+          else updateMessage();
         } else if (evt.type === "done") {
           const tail = reasoner.flush();
           if (tail) {
             display += tail;
-            updateMessage();
+            updateMessage(true);
           }
         }
       }
@@ -266,8 +310,11 @@ async function requestAssistant(
       const tail = reasoner.flush();
       if (tail) {
         display += tail;
-        updateMessage();
+        updateMessage(true);
       }
+      flushPending();
+      perf.mark("model_generation_complete");
+      perf.logSummary();
     } else {
       // Cloud path: via backend
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
@@ -284,12 +331,13 @@ async function requestAssistant(
       );
       const responseTime = performance.now() - startTime;
 
+      let cloudFirst = true;
       for await (const event of events) {
         if (event.type === "chunk") {
           const visible = reasoner.push(event.content);
           if (!visible) continue;
           display += visible;
-          updateMessage();
+          if (cloudFirst) { updateMessage(true); cloudFirst = false; } else updateMessage();
         } else if (event.type === "usage") {
           usageEvent = event;
           if (event.fallback_used) {
@@ -303,8 +351,9 @@ async function requestAssistant(
       const tail = reasoner.flush();
       if (tail) {
         display += tail;
-        updateMessage();
+        updateMessage(true);
       }
+      flushPending();
 
       // Record usage for EVERY attempted request (primary + fallbacks).
       const attempts = usageEvent?.attempts ?? errorEvent?.attempts ?? [];
@@ -381,26 +430,46 @@ async function requestAssistant(
       let currentDisplay = loopDisplay;
       let currentHistory = [...loopHistory];
       while (steps < MAX_AGENT_STEPS && hasAnyFence(currentDisplay) && !abortController.signal.aborted) {
+        perf?.mark(`terminal_parse_start_step${steps + 1}`);
+        const execStart = performance.now();
+        perf?.mark(`terminal_execute_start_step${steps + 1}`);
         const exec = await executeFencedTools(currentDisplay);
+        const execDur = performance.now() - execStart;
+        if (process.env.NODE_ENV !== "production") console.debug(`[Perf] terminal exec step ${steps + 1} ${execDur.toFixed(1)}ms results=${exec.results.length}`);
+        perf?.mark(`terminal_execute_end_step${steps + 1}`);
         if (exec.results.length === 0) break;
         if (exec.needsApproval) {
           // Native-like pause not expected for in-memory; fall back to staging
           break;
         }
         const toolText = formatToolResults(exec.results);
-        // Show tool progress in the streaming message
+        // Show tool progress in the streaming message (immediate)
         display = `${exec.stripped}\n\n${toolText}`;
-        updateMessage();
+        updateMessage(true);
         // Feed stripped assistant + tool results to next LLM call
         currentHistory = [...currentHistory, { role: "assistant", content: exec.stripped }, { role: "system", content: toolText }];
+        perf?.mark(`second_model_request_start_step${steps + 1}`);
         // Fetch next model iteration with updated history (reuse same provider/model/reasoner)
         // Reset for next fetch
         const nextReasoner = new ReasoningFilter();
         let nextDisplay = "";
-        const nextUpdate = () => {
+        let nextPending: number | null = null;
+        let nextRafDisplay = "";
+        const flushNext = () => {
+          nextPending = null;
           useChatStore.setState((s) => ({
-            messages: s.messages.map((m) => (m.id === asstId ? { ...m, content: nextDisplay } : m))
+            messages: s.messages.map((m) => (m.id === asstId ? { ...m, content: nextRafDisplay } : m))
           }));
+        };
+        const nextUpdate = (immediate = false) => {
+          nextRafDisplay = nextDisplay;
+          if (immediate) {
+            if (nextPending !== null) { if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(nextPending); else clearTimeout(nextPending); nextPending = null; }
+            flushNext(); return;
+          }
+          if (nextPending !== null) return;
+          if (typeof requestAnimationFrame !== "undefined") nextPending = requestAnimationFrame(() => flushNext());
+          else nextPending = setTimeout(() => flushNext(), 16) as unknown as number;
         };
         // Duplicate provider branching for next iteration using currentHistory as context
         if (provider === "local") {
@@ -410,12 +479,14 @@ async function requestAssistant(
           if (!localModel) { nextDisplay = exec.stripped; break; }
           const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
           if (!localProvider) { nextDisplay = exec.stripped; break; }
-          const wsRes = useWorkspaceStore.getState().buildContextFor(text);
+          // Reuse original workspace context to avoid rebuilding search index twice for same question
+          const wsResCached = useWorkspaceStore.getState().buildContextFor(text);
+          const cachedWsText = wsResCached?.contextText;
           const isPhi3Loop = localModel.modelId.toLowerCase().includes("phi3");
           const loopPrompt = isPhi3Loop ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
           const allMessages: { role: string; content: string }[] = [
             { role: "system", content: loopPrompt },
-            ...(wsRes?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${wsRes.contextText}` }] : []),
+            ...(cachedWsText ? [{ role: "system" as const, content: `Workspace context:\n${cachedWsText}` }] : []),
             ...currentHistory,
             { role: "user", content: text }
           ];
@@ -423,19 +494,24 @@ async function requestAssistant(
           allMessages.splice(allMessages.length - 1, 0, { role: "system", content: toolText });
           try {
             const stream = streamLocalChat({ endpoint: localProvider.endpoint, modelId: localModel.modelId, messages: allMessages, apiKey: localProvider.apiKey, signal: abortController.signal });
+            let firstNext = true;
+            let secondTtftDone = false;
             for await (const evt of stream) {
               if (evt.type === "chunk") {
                 const v = nextReasoner.push(evt.content);
                 if (!v) continue;
+                if (!secondTtftDone) { perf?.mark(`second_ttft_step${steps + 1}`); secondTtftDone = true; }
                 nextDisplay += v;
-                nextUpdate();
+                if (firstNext) { nextUpdate(true); firstNext = false; } else nextUpdate();
               } else if (evt.type === "done") {
                 const t = nextReasoner.flush();
-                if (t) { nextDisplay += t; nextUpdate(); }
+                if (t) { nextDisplay += t; nextUpdate(true); }
               }
             }
             const t = nextReasoner.flush();
-            if (t) { nextDisplay += t; nextUpdate(); }
+            if (t) { nextDisplay += t; nextUpdate(true); }
+            if (nextPending !== null) { if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(nextPending); else clearTimeout(nextPending); nextPending = null; flushNext(); }
+            perf?.mark(`second_model_complete_step${steps + 1}`);
           } catch {
             nextDisplay = exec.stripped;
             break;
@@ -444,16 +520,18 @@ async function requestAssistant(
           const wsRes = useWorkspaceStore.getState().buildContextFor(text);
           try {
             const events = chatService.sendStream({ message: `${text}\n\n${toolText}`, history: currentHistory, provider: provider as Exclude<ProviderType, "local">, model, workspaceContext: wsRes?.contextText }, { signal: abortController.signal });
+            let firstNext2 = true;
             for await (const event of events) {
               if (event.type === "chunk") {
                 const v = nextReasoner.push(event.content);
                 if (!v) continue;
                 nextDisplay += v;
-                nextUpdate();
+                if (firstNext2) { nextUpdate(true); firstNext2 = false; } else nextUpdate();
               }
             }
             const t = nextReasoner.flush();
-            if (t) { nextDisplay += t; nextUpdate(); }
+            if (t) { nextDisplay += t; nextUpdate(true); }
+            if (nextPending !== null) { if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(nextPending); else clearTimeout(nextPending); nextPending = null; flushNext(); }
           } catch {
             nextDisplay = exec.stripped;
             break;
@@ -464,6 +542,8 @@ async function requestAssistant(
         steps++;
         if (!hasAnyFence(currentDisplay)) break;
       }
+      perf?.mark("final_response");
+      perf?.logSummary();
       finalContent = stripAllFences(currentDisplay).trim() || EMPTY_REPLY_FALLBACK;
       // Also append lastCommandResult if one exists from auto-applied commands (rare for in-memory)
       if (useWorkspaceStore.getState().lastCommandResult) {
@@ -513,7 +593,8 @@ async function requestAssistant(
         }
       }
       display = finalContent;
-      updateMessage();
+      updateMessage(true);
+      flushPending();
     }
 
     const asstMsg: Message = {

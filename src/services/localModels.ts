@@ -296,6 +296,8 @@ export async function* streamLocalChat(params: {
   messages: LocalChatMessage[];
   apiKey?: string;
   signal?: AbortSignal;
+  numPredict?: number;
+  keepAlive?: string;
 }): AsyncGenerator<{ type: "chunk"; content: string } | { type: "done" }> {
   let endpoint = normalizeEndpoint(params.endpoint);
   // For Ollama on localhost, prefer connector if available - but don't block on health check.
@@ -333,9 +335,25 @@ export async function* streamLocalChat(params: {
     model: params.modelId,
     messages: params.messages,
     stream: true,
+    keep_alive: params.keepAlive ?? "5m",
+    // Sensible default: prevent simple prompts from generating huge outputs; benchmark overrides to 256
+    options: { num_predict: params.numPredict ?? 1024, temperature: 0.7 },
+    // Also set max_tokens for OpenAI-compatible gateways that honor it
+    max_tokens: params.numPredict ?? 1024,
   });
 
+  const perfStart = performance.now();
+  if (process.env.NODE_ENV !== "production") console.debug(`[Perf] localModels request start model=${params.modelId} endpoint=${endpoint} t0=${perfStart.toFixed(1)}`);
   let res: Response;
+  let firstTokenFired = false;
+  const markFirstToken = () => {
+    if (!firstTokenFired) {
+      firstTokenFired = true;
+      const ttft = performance.now() - perfStart;
+      if (process.env.NODE_ENV !== "production") console.debug(`[Perf] TTFT ${ttft.toFixed(1)}ms model=${params.modelId}`);
+    }
+  };
+  const isDirect = endpoint !== CONNECTOR_ENDPOINT;
   try {
     res = await fetch(url, {
       method: "POST",
@@ -346,10 +364,28 @@ export async function* streamLocalChat(params: {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if ((e as Error).name === "AbortError") throw new Error("Request aborted.");
-    if (msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("cors")) {
-      throw new Error("Cannot connect to local model. Check that the server is running and CORS is configured (e.g., OLLAMA_ORIGINS=*).");
+    const isNetwork = msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("cors") || msg.toLowerCase().includes("networkerror");
+    // Fast fallback: if direct endpoint failed due to CORS/mixed-content, retry once via connector
+    if (isNetwork && isDirect && (endpoint === "http://localhost:11434/v1" || endpoint === "http://127.0.0.1:11434/v1")) {
+      const fallbackUrl = `${CONNECTOR_ENDPOINT}/chat/completions`;
+      try {
+        if (process.env.NODE_ENV !== "production") console.debug(`[Perf] retry via connector after direct failed`);
+        res = await fetch(fallbackUrl, {
+          method: "POST",
+          headers,
+          body,
+          signal: params.signal,
+        });
+        // Mark connector as available for next time
+        cachedAvailable = true; lastCheck = Date.now();
+      } catch (e2: unknown) {
+        if ((e2 as Error).name === "AbortError") throw new Error("Request aborted.");
+        throw new Error("Cannot connect to local model. Check that Ollama is running and the Nexuss connector is started (node local-connector/server.js).");
+      }
+    } else {
+      if (isNetwork) throw new Error("Cannot connect to local model. Check that the server is running and CORS is configured (e.g., OLLAMA_ORIGINS=*).");
+      throw new Error(`Cannot connect to local model: ${msg}`);
     }
-    throw new Error(`Cannot connect to local model: ${msg}`);
   }
 
   if (!res.ok) {
@@ -387,7 +423,7 @@ export async function* streamLocalChat(params: {
         try {
           const obj = JSON.parse(data);
           const delta = obj?.choices?.[0]?.delta?.content ?? obj?.choices?.[0]?.text ?? "";
-          if (typeof delta === "string" && delta) yield { type: "chunk", content: delta };
+          if (typeof delta === "string" && delta) { markFirstToken(); yield { type: "chunk", content: delta }; }
           if (obj?.choices?.[0]?.finish_reason) {
             // stream ended
           }
