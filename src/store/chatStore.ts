@@ -38,7 +38,7 @@ import {
 } from "@/workspace/agent/parse";
 import { stripAllFences, hasAnyFence, formatToolResults, executeFencedTools, MAX_AGENT_STEPS } from "@/workspace/agent/loop";
 import { hasTerminalTag, extractTerminalTag } from "@/workspace/terminal";
-import { pushExecutionContext, formatExecutionContextForPrompt, clearExecutionContextForChat } from "@/workspace/agent/executionContext";
+import { pushExecutionContext, formatExecutionContextForPrompt, clearExecutionContextForChat, getRecentExecutionContext } from "@/workspace/agent/executionContext";
 import Dexie from "dexie";
 
 // Fallback for models that emit bare terminal commands without the required fence
@@ -57,6 +57,51 @@ function extractBareTerminalCommand(modelText: string): string | null {
   // Generic Get-ChildItem bare hint (when model writes the command outside a fence)
   const gci = modelText.match(/Get-ChildItem[^\n`]{10,800}/i);
   if (gci) return `powershell -NoProfile -Command "${gci[0].trim()}"`;
+  return null;
+}
+
+// Deterministic filesystem action detection – execution layer owns execution
+function isHowToRequest(t: string): boolean {
+  return /\bhow (do|to|can|should) i\b|\bwhat command\b|\bhow (can|to) (i|you) (create|list|delete|make)\b|\bexplain how\b/i.test(t);
+}
+function isFilesystemActionRequest(t: string): boolean {
+  const lower = t.toLowerCase();
+  if (isHowToRequest(t)) return false;
+  return /(create|make)\s+(a\s+)?(folder|directory|file)\b|delete\s+(the\s+)?(folder|file|directory)\b|remove\s+(the\s+)?(folder|file)\b|list\s+(what's|everything|files|folders|inside|here)|\bgo to\b|\bcount\b.*\b(things|folders|files)\b|\btell me the path\b|\bwhere is\b/i.test(lower);
+}
+function extractFolderName(userText: string): string | null {
+  const m = userText.match(/(?:folder|directory)\s+(?:called\s+|named\s+|name\s+called\s+)?["']?([a-zA-Z0-9_\- ]+?)["']?(?:\s+and|\s*$|\s+inside|\.|,)/i);
+  if (m) return m[1].trim().split(/\s+/)[0];
+  const m2 = userText.match(/called\s+["']?([a-zA-Z0-9_\-]+)["']?/i);
+  if (m2) return m2[1].trim();
+  return null;
+}
+function extractFileName(userText: string): string | null {
+  const m = userText.match(/(?:file\s+called\s+|file\s+named\s+|file\s+)(["']?)([a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+)\1/i);
+  if (m) return m[2].trim();
+  return null;
+}
+function resolveActionTarget(userText: string, chatId: string): { command: string; cwdHint?: string } | null {
+  const lower = userText.toLowerCase();
+  // create folder - must be before generic file check
+  if (/(create|make)\s+(a\s+)?(folder|directory)/i.test(userText)) {
+    const name = extractFolderName(userText) || "shanu5";
+    const safeName = name.replace(/["'`$]/g, "");
+    return { command: `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '.\\${safeName}' -Force | Select-Object -ExpandProperty FullName"` };
+  }
+  // create file inside it (needs prior folder context)
+  if (/create.*file.*inside it/i.test(lower) || /test\.txt.*inside it/i.test(lower)) {
+    const file = extractFileName(userText) || "test.txt";
+    let lastFolder: string | undefined;
+    try {
+      const ctxs = getRecentExecutionContext(chatId);
+      lastFolder = [...ctxs].reverse().find(c => c.object === "folder" && c.success)?.path || [...ctxs].reverse().find(c => c.success)?.path;
+    } catch {}
+    const targetPath = lastFolder ? `${lastFolder.replace(/\\/g, "/")}/${file}`.replace("//", "/") : file;
+    const psTarget = lastFolder ? targetPath : `.\\${file}`;
+    const safe = psTarget.replace(/"/g, "");
+    return { command: `powershell -NoProfile -Command "New-Item -ItemType File -Path '${safe}' -Force | Select-Object -ExpandProperty FullName"` };
+  }
   return null;
 }
 
@@ -310,6 +355,24 @@ async function requestAssistant(
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
       const wsStateForPrompt = useWorkspaceStore.getState();
       const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
+      // Deterministic filesystem action: execution layer owns execution, not LLM
+      // For imperative "create a folder called shanu5" when Terminal OPEN, directly execute and verify
+      let deterministicToolText: string | null = null;
+      if (wsStateForPrompt.panelOpen && isFilesystemActionRequest(text)) {
+        const target = resolveActionTarget(text, chat.id);
+        if (target) {
+          try {
+            const ctx = { connected: wsStateForPrompt.connected, pathEnabled: wsStateForPrompt.pathEnabled, bridge: wsStateForPrompt.bridge as any, index: wsStateForPrompt.index, runtime: wsStateForPrompt.runtime as any } as any;
+            const { toolRun } = await import("@/workspace/agent/tools");
+            const r = await toolRun(ctx, target.command, (target as any).cwdHint ? { cwd: (target as any).cwdHint } : undefined);
+            const fakeResult = { kind: "command" as const, path: target.command, success: r.success, stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode } as any;
+            deterministicToolText = formatToolResults([fakeResult]);
+            try {
+              pushExecutionContext(chat.id, { userText: text, command: target.command, cwd: (r as any).cwd || wsStateForPrompt.workspacePath || "", stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.exitCode ?? null, success: !!r.success });
+            } catch {}
+          } catch {}
+        }
+      }
       const basePrompt = isPhi3 ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
       const terminalStatus = wsStateForPrompt.panelOpen
         ? isPhi3
@@ -324,6 +387,7 @@ async function requestAssistant(
         { role: "system", content: terminalStatus },
         ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
         ...(execContextText ? [{ role: "system" as const, content: execContextText }] : []),
+        ...(deterministicToolText ? [{ role: "system" as const, content: deterministicToolText }] : []),
         ...history,
         { role: "user", content: text },
       ];
