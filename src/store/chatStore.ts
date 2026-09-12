@@ -312,37 +312,7 @@ async function requestAssistant(
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
       const wsStateForPrompt = useWorkspaceStore.getState();
       const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
-      // Deterministic multi-step filesystem loop: execution layer owns execution, not LLM
-      // For ONE user goal with multiple operations (e.g., create folder → create file → write → list),
-      // autonomously execute the bounded sequence and inject all observations.
-      let deterministicToolText: string | null = null;
-      if (wsStateForPrompt.panelOpen && isFilesystemActionRequest(text) && !isHowToRequest(text)) {
-        const actions = planFilesystemActions(text, chat.id);
-        if (actions.length > 0) {
-          const results: any[] = [];
-          for (const action of actions) {
-            const cmd = synthesizeCommand(action, chat.id);
-            try {
-              const ctx = { connected: wsStateForPrompt.connected, pathEnabled: wsStateForPrompt.pathEnabled, bridge: wsStateForPrompt.bridge as any, index: wsStateForPrompt.index, runtime: wsStateForPrompt.runtime as any } as any;
-              const { toolRun } = await import("@/workspace/agent/tools");
-              const r: any = await toolRun(ctx, cmd);
-              const fakeResult = { kind: "command" as const, path: cmd, success: r.success, stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode, cwd: r.cwd } as any;
-              results.push(fakeResult);
-              try {
-                pushExecutionContext(chat.id, { userText: text, command: cmd, cwd: r.cwd || wsStateForPrompt.workspacePath || "", stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.exitCode ?? null, success: !!r.success });
-              } catch {}
-              if (!r.success) break; // stop on failure, let LLM report
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              results.push({ kind: "command" as const, path: `[action ${action.kind}]`, success: false, error: msg } as any);
-              break;
-            }
-          }
-          if (results.length > 0) {
-            deterministicToolText = formatToolResults(results);
-          }
-        }
-      }
+
       const basePrompt = isPhi3 ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
       const terminalStatus = wsStateForPrompt.panelOpen
         ? isPhi3
@@ -357,7 +327,6 @@ async function requestAssistant(
         { role: "system", content: terminalStatus },
         ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
         ...(execContextText ? [{ role: "system" as const, content: execContextText }] : []),
-        ...(deterministicToolText ? [{ role: "system" as const, content: deterministicToolText }] : []),
         ...history,
         { role: "user", content: text },
       ];
@@ -526,10 +495,18 @@ async function requestAssistant(
     const hasChange = !!extractChangeBlock(display);
     const bareTerminalCmd = extractBareTerminalCommand(display);
     const hasBareTerminal = !!bareTerminalCmd && wsForLoop.panelOpen && userExplicitlyWantsTerminal(text);
+    // Unified planner fallback: when model does not emit fence but user asked for filesystem action (e.g., "create folder shanu5")
+    let remainingPlannedActions: ReturnType<typeof planFilesystemActions> = [];
+    try {
+      if (wsForLoop.panelOpen && isFilesystemActionRequest(text) && !isHowToRequest(text)) {
+        remainingPlannedActions = planFilesystemActions(text, chat.id);
+      }
+    } catch {}
+    const hasPlannedAction = remainingPlannedActions.length > 0;
     // TERMINAL != FILESYSTEM: terminal is autonomous once Terminal panel is open (panelOpen)
     // Filesystem changes still require pathEnabled+in-memory+autoLoop
     // Bare fallback: when model emits "Here's the command you can use: powershell ..." without fence but user explicitly said "use the terminal", treat as autonomous
-    const shouldAutonomousLoop = (hasAnyFence(display) && wsForLoop.panelOpen && (hasCommand || hasTerminal || (hasChange && wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && wsForLoop.agentAutoLoop))) || hasBareTerminal;
+    const shouldAutonomousLoop = (hasAnyFence(display) && wsForLoop.panelOpen && (hasCommand || hasTerminal || (hasChange && wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && wsForLoop.agentAutoLoop))) || hasBareTerminal || hasPlannedAction;
     let finalContent: string;
     const loopDisplay = display;
     const loopHistory = [...history];
@@ -538,16 +515,35 @@ async function requestAssistant(
       let steps = 0;
       let currentDisplay = loopDisplay;
       let currentHistory = [...loopHistory];
-      while (steps < MAX_AGENT_STEPS && (hasAnyFence(currentDisplay) || !!extractBareTerminalCommand(currentDisplay)) && !abortController.signal.aborted) {
+      while (steps < MAX_AGENT_STEPS && (hasAnyFence(currentDisplay) || !!extractBareTerminalCommand(currentDisplay) || remainingPlannedActions.length > 0) && !abortController.signal.aborted) {
         perf?.mark(`terminal_parse_start_step${steps + 1}`);
         const execStart = performance.now();
         perf?.mark(`terminal_execute_start_step${steps + 1}`);
-        // Bare fallback: synthesize a <terminal> fence so existing terminalRuntime executes even when model omitted the fence
+        // Unified fallback: bare terminal OR planned filesystem action when model omitted fence but goal requires action
         const bareForStep = !hasAnyFence(currentDisplay) ? extractBareTerminalCommand(currentDisplay) : null;
         const shouldUseBare = !!bareForStep && wsForLoop.panelOpen && userExplicitlyWantsTerminal(text);
-        const exec = shouldUseBare
-          ? await executeFencedTools(`<terminal>${bareForStep}</terminal>`)
-          : await executeFencedTools(currentDisplay);
+        let exec: Awaited<ReturnType<typeof executeFencedTools>>;
+        if (shouldUseBare) {
+          exec = await executeFencedTools(`<terminal>${bareForStep}</terminal>`);
+        } else if (!hasAnyFence(currentDisplay) && remainingPlannedActions.length > 0) {
+          const nextAction = remainingPlannedActions.shift()!;
+          const cmd = synthesizeCommand(nextAction, chat.id);
+          // Execute via same pipeline as terminal fence
+          exec = await executeFencedTools(`<terminal>${cmd}</terminal>`);
+          // If synthesizeCommand already returns full powershell, use it directly via toolRun fallback
+          if (exec.results.length === 0) {
+            try {
+              const ctx = { connected: wsForLoop.connected, pathEnabled: wsForLoop.pathEnabled, bridge: wsForLoop.bridge as any, index: wsForLoop.index, runtime: wsForLoop.runtime as any } as any;
+              const { toolRun } = await import("@/workspace/agent/tools");
+              const r: any = await toolRun(ctx, cmd);
+              exec = { results: [{ kind: "command" as const, path: cmd, success: r.success, stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode, cwd: r.cwd } as any], needsApproval: false, stripped: `Executed planned ${nextAction.kind}` };
+            } catch (e) {
+              exec = { results: [{ kind: "command" as const, path: cmd, success: false, error: e instanceof Error ? e.message : String(e) } as any], needsApproval: false, stripped: "" };
+            }
+          }
+        } else {
+          exec = await executeFencedTools(currentDisplay);
+        }
         // For bare, preserve original stripped text (remove bare command noise)
         if (shouldUseBare) {
           (exec as unknown as { stripped: string }).stripped = stripAllFences(currentDisplay).trim() || `Executed: ${bareForStep}`;
@@ -567,6 +563,19 @@ async function requestAssistant(
           break;
         }
         const toolText = formatToolResults(exec.results);
+        // If this exec corresponded to a planned filesystem action, consume it from the queue
+        try {
+          if (remainingPlannedActions.length > 0) {
+            const peek = remainingPlannedActions[0] as any;
+            const executedPath = (exec.results[0] as any)?.path || "";
+            if (peek && peek.name && executedPath.toLowerCase().includes(peek.name.toLowerCase())) {
+              remainingPlannedActions.shift();
+            } else if (peek && peek.kind && executedPath.toLowerCase().includes(peek.kind)) {
+              // fallback
+              remainingPlannedActions.shift();
+            }
+          }
+        } catch {}
         // Persist structured execution context for follow-up pronoun resolution ("it", "that folder")
         // Use real terminal results (actual stdout/cwd/exitCode), not model assumptions
         for (const r of exec.results) {
