@@ -206,8 +206,9 @@ async function requestAssistant(
 
   const t0Global = typeof window !== 'undefined' ? (window as unknown as Record<string, number>).__nexussT0 : performance.now();
   const perf: PerfTracker = new PerfTracker();
-  // Override start to be T0 if available for accurate T9-T0
-  if (t0Global && Math.abs(perf.getMarks()[0].ts - t0Global) > 5) {
+  // Override start to be T0 if available for accurate T9-T0 — safe when PerfTracker disabled (production)
+  const firstMark = perf.getMarks()[0];
+  if (t0Global && firstMark && Math.abs(firstMark.ts - t0Global) > 5) {
     // PerfTracker already started at now, adjust? Keep separate mark
     perf.mark(`T1_requestAssistant_start T0_delta ${(performance.now()-t0Global).toFixed(1)}ms`);
   } else {
