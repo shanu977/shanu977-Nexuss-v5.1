@@ -78,35 +78,46 @@ function parseSemantic(command: string, cwd: string): Partial<Pick<ExecutionCont
   const mkdirMatch = command.match(/(?:mkdir|md)\s+["']?([^\s"']+)/i);
   const newItemDirMatch = command.match(/New-Item[^;]*-ItemType\s+Directory[^;]*-Path\s+["']([^"']+)["']/i) || command.match(/New-Item[^;]*-Path\s+["']([^"']+)["'][^;]*-ItemType\s+Directory/i);
   const newItemFileMatch = command.match(/New-Item[^;]*-ItemType\s+File[^;]*-Path\s+["']([^"']+)["']/i) || command.match(/New-Item[^;]*-Path\s+["']([^"']+)["'][^;]*-ItemType\s+File/i) || command.match(/ni\s+["']?([^\s"']+)/i);
+  const setContentMatch = command.match(/Set-Content[^;]*-Path\s+["']([^"']+)["']/i);
   const rmMatch = command.match(/Remove-Item[^;]*-LiteralPath\s+["']([^"']+)["']/i) || command.match(/Remove-Item[^;]*-Path\s+["']([^"']+)["']/i) || command.match(/(?:Remove-Item|rm|del|rmdir)\s+["']?([^\s"']+)/i);
   const gciMatch = command.match(/Get-ChildItem\s+.*-LiteralPath\s+["']([^"']+)["']/i) || command.match(/Get-ChildItem\s+.*-Path\s+["']([^"']+)["']/i);
 
+  const clean = (p: string) => p.replace(/^[.\/\\]+/, "").replace(/\\/g, "/");
+  const resolve = (p: string) => {
+    const c = clean(p);
+    if (p.includes(":") || p.startsWith("/") || p.startsWith("\\")) return p;
+    return cwd ? `${cwd.replace(/\\/g, "/")}/${c}` : c;
+  };
+
   if (mkdirMatch) {
-    const name = mkdirMatch[1].replace(/^[.\/\\]+/, "");
-    const base = name.split(/[\\/]/).pop() || name;
-    const full = cwd ? `${cwd.replace(/\\/g, "/")}/${name.replace(/\\/g, "/")}` : name;
-    return { action: "create", object: "folder", name: base, path: full };
+    const name = clean(mkdirMatch[1]);
+    const base = name.split("/").pop() || name;
+    return { action: "create", object: "folder", name: base, path: resolve(mkdirMatch[1]) };
   }
   if (newItemDirMatch) {
     const p = newItemDirMatch[1];
-    const base = p.split(/[\\/]/).pop() || p;
-    const full = p.includes(":") || p.startsWith("/") ? p : cwd ? `${cwd.replace(/\\/g, "/")}/${p.replace(/\\/g, "/")}` : p;
-    return { action: "create", object: "folder", name: base, path: full };
+    const base = clean(p).split("/").pop() || clean(p);
+    return { action: "create", object: "folder", name: base, path: resolve(p) };
   }
   if (newItemFileMatch) {
     const p = newItemFileMatch[1];
-    const base = p.split(/[\\/]/).pop() || p;
-    const full = p.includes(":") || p.startsWith("/") ? p : cwd ? `${cwd.replace(/\\/g, "/")}/${p.replace(/\\/g, "/")}` : p;
-    return { action: "create", object: "file", name: base, path: full };
+    const base = clean(p).split("/").pop() || clean(p);
+    return { action: "create", object: "file", name: base, path: resolve(p) };
+  }
+  if (setContentMatch) {
+    const p = setContentMatch[1];
+    const base = clean(p).split("/").pop() || clean(p);
+    return { action: "create", object: "file", name: base, path: resolve(p) };
   }
   if (rmMatch) {
     const p = rmMatch[1];
-    const base = p.split(/[\\/]/).pop() || p;
+    const base = clean(p).split("/").pop() || clean(p);
     return { action: "delete", object: "folder", name: base, path: p };
   }
   if (gciMatch) {
     const p = gciMatch[1];
-    return { action: "list", object: "folder", name: p.split(/[\\/]/).pop() || p, path: p };
+    const base = clean(p).split("/").pop() || clean(p);
+    return { action: "list", object: "folder", name: base, path: resolve(p) };
   }
   if (lower.includes("get-childitem")) return { action: "list", object: "folder" };
   if (lower.includes("node --version") || lower.includes("npm --version")) return { action: "run", object: "file" };

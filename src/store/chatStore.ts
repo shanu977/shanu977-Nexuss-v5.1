@@ -60,50 +60,7 @@ function extractBareTerminalCommand(modelText: string): string | null {
   return null;
 }
 
-// Deterministic filesystem action detection – execution layer owns execution
-function isHowToRequest(t: string): boolean {
-  return /\bhow (do|to|can|should) i\b|\bwhat command\b|\bhow (can|to) (i|you) (create|list|delete|make)\b|\bexplain how\b/i.test(t);
-}
-function isFilesystemActionRequest(t: string): boolean {
-  const lower = t.toLowerCase();
-  if (isHowToRequest(t)) return false;
-  return /(create|make)\s+(a\s+)?(folder|directory|file)\b|delete\s+(the\s+)?(folder|file|directory)\b|remove\s+(the\s+)?(folder|file)\b|list\s+(what's|everything|files|folders|inside|here)|\bgo to\b|\bcount\b.*\b(things|folders|files)\b|\btell me the path\b|\bwhere is\b/i.test(lower);
-}
-function extractFolderName(userText: string): string | null {
-  const m = userText.match(/(?:folder|directory)\s+(?:called\s+|named\s+|name\s+called\s+)?["']?([a-zA-Z0-9_\- ]+?)["']?(?:\s+and|\s*$|\s+inside|\.|,)/i);
-  if (m) return m[1].trim().split(/\s+/)[0];
-  const m2 = userText.match(/called\s+["']?([a-zA-Z0-9_\-]+)["']?/i);
-  if (m2) return m2[1].trim();
-  return null;
-}
-function extractFileName(userText: string): string | null {
-  const m = userText.match(/(?:file\s+called\s+|file\s+named\s+|file\s+)(["']?)([a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+)\1/i);
-  if (m) return m[2].trim();
-  return null;
-}
-function resolveActionTarget(userText: string, chatId: string): { command: string; cwdHint?: string } | null {
-  const lower = userText.toLowerCase();
-  // create folder - must be before generic file check
-  if (/(create|make)\s+(a\s+)?(folder|directory)/i.test(userText)) {
-    const name = extractFolderName(userText) || "shanu5";
-    const safeName = name.replace(/["'`$]/g, "");
-    return { command: `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '.\\${safeName}' -Force | Select-Object -ExpandProperty FullName"` };
-  }
-  // create file inside it (needs prior folder context)
-  if (/create.*file.*inside it/i.test(lower) || /test\.txt.*inside it/i.test(lower)) {
-    const file = extractFileName(userText) || "test.txt";
-    let lastFolder: string | undefined;
-    try {
-      const ctxs = getRecentExecutionContext(chatId);
-      lastFolder = [...ctxs].reverse().find(c => c.object === "folder" && c.success)?.path || [...ctxs].reverse().find(c => c.success)?.path;
-    } catch {}
-    const targetPath = lastFolder ? `${lastFolder.replace(/\\/g, "/")}/${file}`.replace("//", "/") : file;
-    const psTarget = lastFolder ? targetPath : `.\\${file}`;
-    const safe = psTarget.replace(/"/g, "");
-    return { command: `powershell -NoProfile -Command "New-Item -ItemType File -Path '${safe}' -Force | Select-Object -ExpandProperty FullName"` };
-  }
-  return null;
-}
+import { isHowToRequest, isFilesystemActionRequest, planFilesystemActions, synthesizeCommand } from "@/workspace/agent/actionPlanner";
 
 interface ChatStore extends ChatState {
   theme: string;
@@ -355,22 +312,35 @@ async function requestAssistant(
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
       const wsStateForPrompt = useWorkspaceStore.getState();
       const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
-      // Deterministic filesystem action: execution layer owns execution, not LLM
-      // For imperative "create a folder called shanu5" when Terminal OPEN, directly execute and verify
+      // Deterministic multi-step filesystem loop: execution layer owns execution, not LLM
+      // For ONE user goal with multiple operations (e.g., create folder → create file → write → list),
+      // autonomously execute the bounded sequence and inject all observations.
       let deterministicToolText: string | null = null;
-      if (wsStateForPrompt.panelOpen && isFilesystemActionRequest(text)) {
-        const target = resolveActionTarget(text, chat.id);
-        if (target) {
-          try {
-            const ctx = { connected: wsStateForPrompt.connected, pathEnabled: wsStateForPrompt.pathEnabled, bridge: wsStateForPrompt.bridge as any, index: wsStateForPrompt.index, runtime: wsStateForPrompt.runtime as any } as any;
-            const { toolRun } = await import("@/workspace/agent/tools");
-            const r = await toolRun(ctx, target.command, (target as any).cwdHint ? { cwd: (target as any).cwdHint } : undefined);
-            const fakeResult = { kind: "command" as const, path: target.command, success: r.success, stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode } as any;
-            deterministicToolText = formatToolResults([fakeResult]);
+      if (wsStateForPrompt.panelOpen && isFilesystemActionRequest(text) && !isHowToRequest(text)) {
+        const actions = planFilesystemActions(text, chat.id);
+        if (actions.length > 0) {
+          const results: any[] = [];
+          for (const action of actions) {
+            const cmd = synthesizeCommand(action, chat.id);
             try {
-              pushExecutionContext(chat.id, { userText: text, command: target.command, cwd: (r as any).cwd || wsStateForPrompt.workspacePath || "", stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.exitCode ?? null, success: !!r.success });
-            } catch {}
-          } catch {}
+              const ctx = { connected: wsStateForPrompt.connected, pathEnabled: wsStateForPrompt.pathEnabled, bridge: wsStateForPrompt.bridge as any, index: wsStateForPrompt.index, runtime: wsStateForPrompt.runtime as any } as any;
+              const { toolRun } = await import("@/workspace/agent/tools");
+              const r: any = await toolRun(ctx, cmd);
+              const fakeResult = { kind: "command" as const, path: cmd, success: r.success, stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode, cwd: r.cwd } as any;
+              results.push(fakeResult);
+              try {
+                pushExecutionContext(chat.id, { userText: text, command: cmd, cwd: r.cwd || wsStateForPrompt.workspacePath || "", stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.exitCode ?? null, success: !!r.success });
+              } catch {}
+              if (!r.success) break; // stop on failure, let LLM report
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              results.push({ kind: "command" as const, path: `[action ${action.kind}]`, success: false, error: msg } as any);
+              break;
+            }
+          }
+          if (results.length > 0) {
+            deterministicToolText = formatToolResults(results);
+          }
         }
       }
       const basePrompt = isPhi3 ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
