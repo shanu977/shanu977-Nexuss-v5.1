@@ -139,7 +139,6 @@ describe("executionContext – continuous agent", () => {
       success: true,
     });
     // Simulate reload: clear in-memory but keep localStorage
-    // @ts-ignore access private
     const before = formatExecutionContextForPrompt("chat-1");
     expect(before).toContain("shanu");
   });

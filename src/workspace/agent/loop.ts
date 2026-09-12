@@ -5,9 +5,8 @@
 import { useWorkspaceStore } from "@/workspace/store";
 import { extractChangeBlock, stripChangeBlock, extractCommandBlock, stripCommandBlock, hasCommandFence } from "./parse";
 import { extractTerminalTag, hasTerminalTag, stripTerminalTag } from "@/workspace/terminal";
-import { toolProposeUpsert, toolRead, toolList, toolSearch } from "./tools";
+import { toolProposeUpsert } from "./tools";
 import type { ToolContext } from "./types";
-import { contentHash } from "../indexer";
 
 export const MAX_AGENT_STEPS = 6;
 
@@ -87,7 +86,6 @@ export async function executeFencedTools(modelText: string): Promise<{ results: 
   // TERMINAL != FILESYSTEM: terminal (workspace-command) does not require pathEnabled/connected
   // Filesystem changes (workspace-change) still require pathEnabled
   const canChange = s.pathEnabled;
-  const canCommand = true; // terminal available immediately when panel open
 
   // Auto-apply: changes require in-memory demo, commands auto-apply when Terminal panel is open
   const autoApplyChange = s.agentAutoLoop && s.workspace?.kind === "in-memory";

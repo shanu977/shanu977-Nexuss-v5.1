@@ -16,17 +16,12 @@ import {
   toolList,
   toolSearch,
   toolProposeUpsert,
-  toolProposeDelete,
-  toolProposeMove,
-  toolProposeMkdir,
   toolProposeEdit,
   toolMkdir,
   toolRun,
-  toolTest,
   assertValidPath
 } from "./tools";
 import type { ToolContext, ProposedChange, ReadToolResult, AgentFileRef, NativeCommandResult } from "./types";
-import { contentHash } from "../indexer";
 
 export interface WorkflowStep {
   action: string;

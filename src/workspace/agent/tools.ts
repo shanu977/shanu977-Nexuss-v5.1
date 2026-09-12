@@ -440,14 +440,6 @@ export async function toolProposeEdit(
   });
 }
 
-function nativeRuntime(ctx: ToolContext): NativeRuntimeBridge {
-  const runtime = ctx.runtime;
-  if (!runtime || typeof runtime.run !== "function") {
-    throw new ToolError("NATIVE_BRIDGE_UNAVAILABLE");
-  }
-  return runtime;
-}
-
 function terminalRuntime(ctx: ToolContext): NativeRuntimeBridge {
   // TERMINAL != FILESYSTEM: terminal does not require pathEnabled/connected
   // Fallback to local connector (http://127.0.0.1:11435) when desktop runtime

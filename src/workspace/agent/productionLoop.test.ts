@@ -48,7 +48,6 @@ describe("Production Chat → LLM → Agent → Tools loop", ()=>{
 
   it("formatToolResults returns text that would be fed back to LLM and loop continues", async ()=>{
     // Simulate ONE user message multi-step: model1 → list → read → run → edit → run → final
-    const s1 = 'Inspecting\n```workspace-command {"run":{"command":"npm test"}}```';
     // Initially workspace has no test command but in-memory will validate? Use generic npm run via auto-apply still needs runtime mock
     // Instead test change loop
     const changeText = '```workspace-change {"changes":[{"path":"NexussDemo/src/calc.ts","content":"export function add(a:number,b:number){return a+b}"}]}```';
