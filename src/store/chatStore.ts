@@ -38,7 +38,7 @@ import {
 } from "@/workspace/agent/parse";
 import { stripAllFences, hasAnyFence, formatToolResults, executeFencedTools, MAX_AGENT_STEPS } from "@/workspace/agent/loop";
 import { hasTerminalTag, extractTerminalTag } from "@/workspace/terminal";
-import { pushExecutionContext, formatExecutionContextForPrompt } from "@/workspace/agent/executionContext";
+import { pushExecutionContext, formatExecutionContextForPrompt, clearExecutionContextForChat } from "@/workspace/agent/executionContext";
 import Dexie from "dexie";
 
 // Fallback for models that emit bare terminal commands without the required fence
@@ -318,7 +318,7 @@ async function requestAssistant(
         : isPhi3
           ? "Terminal is CLOSED — you do NOT have terminal access right now. Do NOT output <terminal>. Explain or answer directly without terminal."
           : "Terminal is CLOSED — you do NOT have terminal access. Do NOT use workspace-command. Explain or answer directly.";
-      const execContextText = formatExecutionContextForPrompt();
+      const execContextText = formatExecutionContextForPrompt(chat.id);
       const allMessages: { role: string; content: string }[] = [
         { role: "system", content: basePrompt },
         { role: "system", content: terminalStatus },
@@ -387,7 +387,7 @@ async function requestAssistant(
     } else {
       // Cloud path: via backend
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
-      const execContextTextCloud = formatExecutionContextForPrompt();
+      const execContextTextCloud = formatExecutionContextForPrompt(chat.id);
       const combinedWorkspaceContext = [workspaceResult?.contextText, execContextTextCloud].filter(Boolean).join("\n\n") || undefined;
       const events = chatService.sendStream(
         {
@@ -538,7 +538,7 @@ async function requestAssistant(
         for (const r of exec.results) {
           if (r.kind === "command") {
             try {
-              pushExecutionContext({
+              pushExecutionContext(chat.id, {
                 userText: text,
                 command: r.path || (shouldUseBare ? bareForStep || "" : ""),
                 cwd: (r as unknown as { cwd?: string }).cwd || wsForLoop.workspacePath || "",
@@ -589,7 +589,7 @@ async function requestAssistant(
           // Reuse original workspace context to avoid rebuilding search index twice for same question
           const wsResCached = useWorkspaceStore.getState().buildContextFor(text);
           const cachedWsText = wsResCached?.contextText;
-          const loopExecContext = formatExecutionContextForPrompt();
+          const loopExecContext = formatExecutionContextForPrompt(chat.id);
           const isPhi3Loop = localModel.modelId.toLowerCase().includes("phi3");
           const loopPrompt = isPhi3Loop ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
           const allMessages: { role: string; content: string }[] = [
@@ -627,7 +627,7 @@ async function requestAssistant(
           }
         } else {
           const wsRes = useWorkspaceStore.getState().buildContextFor(text);
-          const cloudLoopExecContext = formatExecutionContextForPrompt();
+          const cloudLoopExecContext = formatExecutionContextForPrompt(chat.id);
           const cloudLoopWsCtx = [wsRes?.contextText, cloudLoopExecContext].filter(Boolean).join("\n\n") || undefined;
           try {
             const events = chatService.sendStream({ message: `${text}\n\n${toolText}`, history: currentHistory, provider: provider as Exclude<ProviderType, "local">, model, workspaceContext: cloudLoopWsCtx }, { signal: abortController.signal });
@@ -1120,6 +1120,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     if (getLastChatId(uid) === id) {
       setLastChatId(uid, wasCurrent ? null : get().currentChat?.id ?? null);
     }
+    try { clearExecutionContextForChat(id); } catch {}
   },
 
   searchChats: async (query) => {
