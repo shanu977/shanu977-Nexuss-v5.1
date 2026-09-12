@@ -531,6 +531,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     }
     if (!pathEnabled) return null;
 
+    // Fast path: trivial greetings like "hi", "hello" must not trigger expensive
+    // workspace search/scan. Saves ~10-50ms per simple chat and keeps "hi" minimal.
+    const trimmedLower = question.trim().toLowerCase();
+    if (trimmedLower.length <= 12 && /^(hi|hello|hey|hiya|yo|sup|howdy|greetings)(\s*[!?.]*)?$/.test(trimmedLower)) {
+      return null;
+    }
+
     const intent = classifyWorkspaceIntent(question);
     if (intent === "status") {
       return buildStatusContext(workspace, index);

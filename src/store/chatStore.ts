@@ -203,15 +203,25 @@ async function requestAssistant(
   let errorEvent: ChatStreamErrorEvent | null = null;
   let display = "";
 
-  let perf: PerfTracker | null = null;
+  const t0Global = typeof window !== 'undefined' ? (window as unknown as Record<string, number>).__nexussT0 : performance.now();
+  const perf: PerfTracker = new PerfTracker();
+  // Override start to be T0 if available for accurate T9-T0
+  if (t0Global && Math.abs(perf.getMarks()[0].ts - t0Global) > 5) {
+    // PerfTracker already started at now, adjust? Keep separate mark
+    perf.mark(`T1_requestAssistant_start T0_delta ${(performance.now()-t0Global).toFixed(1)}ms`);
+  } else {
+    perf.mark(`T1_requestAssistant_start`);
+  }
   try {
     const startTime = performance.now();
     const reasoner = new ReasoningFilter();
+    if (typeof window !== 'undefined') (window as unknown as Record<string, unknown>).__nexussPerf = perf;
     // Batched UI updater: RAF-throttled to ~60fps to avoid per-token Zustand thrash,
     // while preserving TTFT (first token flushes immediately). measurable: reduces
     // React re-renders from N-per-token to ~16ms intervals without visible lag.
     let pendingFrame: number | null = null;
     let rafDisplay = "";
+    let firstUpdateDone = false;
     const flushUpdate = () => {
       pendingFrame = null;
       useChatStore.setState((s) => ({
@@ -219,6 +229,20 @@ async function requestAssistant(
           m.id === asstId ? { ...m, content: rafDisplay } : m
         )
       }));
+      if (!firstUpdateDone) {
+        firstUpdateDone = true;
+        perf.mark("T8_zustand_first_update");
+        // T9 = first paint after Zustand - next frame
+        if (typeof requestAnimationFrame !== "undefined") {
+          requestAnimationFrame(() => {
+            perf.mark("T9_first_render");
+            const t0v = typeof window !== 'undefined' ? (window as unknown as Record<string, number>).__nexussT0 : null;
+            if (t0v) console.debug(`[Perf][T9] FIRST_VISIBLE_TOKEN T0→render ${(performance.now()-t0v).toFixed(1)}ms`);
+          })
+        } else {
+          perf.mark("T9_first_render");
+        }
+      }
     };
     const scheduleUpdate = (content: string, immediate = false) => {
       rafDisplay = content;
@@ -238,7 +262,10 @@ async function requestAssistant(
         pendingFrame = setTimeout(() => flushUpdate(), 16) as unknown as number;
       }
     };
-    const updateMessage = (immediate = false) => scheduleUpdate(display, immediate);
+    const updateMessage = (immediate = false) => {
+      if (!firstUpdateDone && immediate) perf.mark("T7_first_visible_chunk_parsed");
+      scheduleUpdate(display, immediate);
+    };
     const flushPending = () => {
       if (pendingFrame !== null) {
         if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(pendingFrame);
@@ -256,7 +283,7 @@ async function requestAssistant(
       if (!localModel) throw new Error("No local model configured. Add one in Settings → Models. No cloud API key is required for local chat.");
       const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
       if (!localProvider || !localProvider.enabled) throw new Error("Local provider not found or disabled. Check Settings → Models.");
-      perf = new PerfTracker();
+      perf.mark("T2_request_preparation_start");
       perf.mark("request_preparation_start");
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
       const wsStateForPrompt = useWorkspaceStore.getState();
@@ -274,12 +301,14 @@ async function requestAssistant(
         ...history,
         { role: "user", content: text },
       ];
+      perf.mark("T2_end_request_preparation");
       perf.mark("request_preparation_end");
       if (process.env.NODE_ENV !== "production") {
         console.debug("[Agent] terminal enabled", wsStateForPrompt.panelOpen);
         console.debug("[Agent] model", localModel.modelId);
         console.debug("[Agent] user request", text.slice(0, 200));
       }
+      perf.mark("T3_fetch_start");
       perf.mark("ollama_request_start");
       const stream = streamLocalChat({
         endpoint: localProvider.endpoint,
@@ -313,7 +342,18 @@ async function requestAssistant(
         updateMessage(true);
       }
       flushPending();
+      perf.mark("T10_final_token");
       perf.mark("model_generation_complete");
+      perf.mark("T11_final_render");
+      // Log full T0 breakdown
+      try {
+        const t0v = typeof window !== 'undefined' ? (window as unknown as Record<string, number>).__nexussT0 : null;
+        if (t0v) {
+          const marks = perf.getMarks();
+          const get = (label:string)=> marks.find(m=>m.label.includes(label))?.delta ?? 0;
+          console.debug(`[Perf][TIMING_MAP] T1-T0 ${(get("T1")-0).toFixed(1)} | T2-T1 ${(get("T2_end")-get("T1")).toFixed(1)} | T3-T2 ${(get("T3")-get("T2_end")).toFixed(1)} | T8-T3 ${(get("T8")-get("T3")).toFixed(1)} | T9-T8 ${(get("T9")-get("T8")).toFixed(1)} | T10-T9 ${(get("T10")-get("T9")).toFixed(1)} | FIRST_VISIBLE ${(get("T9")||0).toFixed(1)} | TOTAL ${(get("T11")||0).toFixed(1)}`);
+        }
+      } catch {}
       perf.logSummary();
     } else {
       // Cloud path: via backend
@@ -1016,6 +1056,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
   },
 
   sendMessageStream: async (content, image) => {
+    const t0 = performance.now();
+    if (typeof window !== 'undefined') (window as unknown as Record<string, number>).__nexussT0 = t0;
+    if (process.env.NODE_ENV !== 'production') console.debug(`[Perf][T0] user_submit t0=${t0.toFixed(1)}`);
     const text = content.trim();
     if (!text) return;
 

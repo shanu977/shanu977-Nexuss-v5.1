@@ -343,14 +343,17 @@ export async function* streamLocalChat(params: {
   });
 
   const perfStart = performance.now();
-  if (process.env.NODE_ENV !== "production") console.debug(`[Perf] localModels request start model=${params.modelId} endpoint=${endpoint} t0=${perfStart.toFixed(1)}`);
+  const globalT3 = typeof window !== 'undefined' ? (window as unknown as Record<string, number>).__nexussT0 : perfStart;
+  if (process.env.NODE_ENV !== "production") console.debug(`[Perf][T3] fetch_start model=${params.modelId} endpoint=${endpoint} t0=${perfStart.toFixed(1)} delta_T0=${(perfStart - (globalT3 as number) || 0).toFixed(1)}ms`);
   let res: Response;
   let firstTokenFired = false;
   const markFirstToken = () => {
     if (!firstTokenFired) {
       firstTokenFired = true;
       const ttft = performance.now() - perfStart;
-      if (process.env.NODE_ENV !== "production") console.debug(`[Perf] TTFT ${ttft.toFixed(1)}ms model=${params.modelId}`);
+      const t0 = typeof window !== 'undefined' ? (window as unknown as Record<string, number>).__nexussT0 : perfStart;
+      const t0delta = performance.now() - (t0 as number)
+      if (process.env.NODE_ENV !== "production") console.debug(`[Perf][T7] first_token TTFT ${ttft.toFixed(1)}ms T0→token ${t0delta.toFixed(1)}ms model=${params.modelId}`);
     }
   };
   const isDirect = endpoint !== CONNECTOR_ENDPOINT;
@@ -388,6 +391,11 @@ export async function* streamLocalChat(params: {
     }
   }
 
+  if (process.env.NODE_ENV !== "production") {
+    const hdrDelta = performance.now() - perfStart
+    const t0 = typeof window !== 'undefined' ? (window as unknown as Record<string, number>).__nexussT0 : perfStart
+    console.debug(`[Perf][T5] headers_arrived ${hdrDelta.toFixed(1)}ms T0→headers ${(performance.now()-(t0 as number)).toFixed(1)}ms status=${res.status} ok=${res.ok}`)
+  }
   if (!res.ok) {
     let detail = `Local model error (${res.status})`;
     try {
