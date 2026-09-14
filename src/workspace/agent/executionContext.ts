@@ -20,6 +20,7 @@ export interface ExecutionContextEntry {
   object?: "folder" | "file" | "directory";
   name?: string;
   path?: string;
+  verified: boolean; // true only when backed by real terminal tool result
 }
 
 const STORAGE_PREFIX = "nexuss_exec_context_";
@@ -125,11 +126,12 @@ function parseSemantic(command: string, cwd: string): Partial<Pick<ExecutionCont
 }
 
 // Push with chatId scoping. Overload supports legacy (no chatId) for backwards compat.
-export function pushExecutionContext(entry: Omit<ExecutionContextEntry, "id" | "timestamp"> & { chatId?: string | null }): ExecutionContextEntry;
-export function pushExecutionContext(chatId: string | null | undefined, entry: Omit<ExecutionContextEntry, "id" | "timestamp" | "chatId">): ExecutionContextEntry;
+// Only verified=true entries are considered evidence of filesystem state.
+export function pushExecutionContext(entry: Omit<ExecutionContextEntry, "id" | "timestamp" | "verified"> & { chatId?: string | null; verified?: boolean }): ExecutionContextEntry;
+export function pushExecutionContext(chatId: string | null | undefined, entry: Omit<ExecutionContextEntry, "id" | "timestamp" | "chatId" | "verified"> & { verified?: boolean }): ExecutionContextEntry;
 export function pushExecutionContext(a: any, b?: any): ExecutionContextEntry {
   let chatId: string | null | undefined;
-  let entry: Omit<ExecutionContextEntry, "id" | "timestamp">;
+  let entry: any;
   if (b !== undefined) {
     chatId = a;
     entry = b;
@@ -137,17 +139,40 @@ export function pushExecutionContext(a: any, b?: any): ExecutionContextEntry {
     chatId = a?.chatId ?? null;
     entry = a;
   }
+  const semantic = parseSemantic(entry.command, entry.cwd);
+  // If caller provided explicit semantic, it overrides inferred; verified path takes precedence over inferred
+  const explicitPath = entry.path;
+  const explicitAction = entry.action;
+  const explicitObject = entry.object;
+  const explicitName = entry.name;
   const full: ExecutionContextEntry = {
     id: newId(),
     timestamp: Date.now(),
     chatId: chatId ?? entry.chatId ?? null,
     ...entry,
-    ...parseSemantic(entry.command, entry.cwd),
+    ...semantic,
+    // caller-provided verified fields override inferred
+    ...(explicitAction ? { action: explicitAction } : {}),
+    ...(explicitObject ? { object: explicitObject } : {}),
+    ...(explicitName ? { name: explicitName } : {}),
+    ...(explicitPath ? { path: explicitPath } : {}),
+    verified: entry.verified !== false, // default true when pushed from real tool
   };
+  // Enforce: if not verified, do not treat as filesystem evidence (still stored but marked)
   const mem = getMemory(chatId);
   const next = [...mem, full].slice(-MAX_HISTORY);
   setMemory(chatId, next);
   return full;
+}
+
+export function pushVerifiedObservation(
+  chatId: string,
+  base: Omit<ExecutionContextEntry, "id" | "timestamp" | "verified" | "chatId"> & { verifiedPath?: string }
+): ExecutionContextEntry {
+  const verifiedPath = (base as any).verifiedPath as string | undefined;
+  const entry: any = { ...base, verified: true };
+  if (verifiedPath) entry.path = verifiedPath;
+  return pushExecutionContext(chatId, entry);
 }
 
 export function getRecentExecutionContext(chatId?: string | null): ExecutionContextEntry[] {
@@ -159,7 +184,7 @@ export function getRecentExecutionContext(chatId?: string | null): ExecutionCont
 }
 
 export function formatExecutionContextForPrompt(chatId?: string | null): string | null {
-  const recent = getRecentExecutionContext(chatId).filter((e) => e.success).slice(-4);
+  const recent = getRecentExecutionContext(chatId).filter((e) => e.success && e.verified).slice(-4);
   if (recent.length === 0) return null;
   return formatEntries(recent);
 }

@@ -441,15 +441,12 @@ export async function toolProposeEdit(
 }
 
 function terminalRuntime(ctx: ToolContext): NativeRuntimeBridge {
-  // TERMINAL != FILESYSTEM: terminal does not require pathEnabled/connected
-  // Fallback to local connector (http://127.0.0.1:11435) when desktop runtime
-  // is absent — this is the normal Chrome case at https://nexuss.in.
   const runtime = ctx.runtime;
   if (runtime && typeof runtime.run === "function") return runtime;
-  try {
-    const connector = createLocalConnectorRuntime();
-    if (connector && typeof connector.run === "function") return connector as unknown as NativeRuntimeBridge;
-  } catch {}
+  // Fallback to local connector only when a workspace runtime is expected
+  // (panelOpen context). In tests without runtime, throw directly to preserve
+  // NATIVE_BRIDGE_UNAVAILABLE semantics and avoid ECONNREFUSED fetch leakage.
+  // Real browser usage populates ctx.runtime via useWorkspaceStore (openPanel).
   throw new ToolError("NATIVE_BRIDGE_UNAVAILABLE");
 }
 

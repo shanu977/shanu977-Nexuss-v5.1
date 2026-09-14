@@ -32,7 +32,8 @@ export function isFilesystemActionRequest(t: string): boolean {
   const lower = t.toLowerCase();
   // Action verbs with filesystem objects, even without "use the terminal"
   return (
-    /(create|make)\s+(a\s+)?(folder|directory|file)\b/.test(lower) ||
+    /(create|make)\s+(a\s+)?(folder|directory|file|project)\b/.test(lower) ||
+    /(create|make)\b.*\.[a-z0-9]{1,4}\b/.test(lower) ||
     /\bdelete\b/.test(lower) ||
     /\bremove\b/.test(lower) ||
     /\blist\b.*\b(inside|here|folder|directory|files)\b/.test(lower) ||
@@ -46,7 +47,7 @@ export function isFilesystemActionRequest(t: string): boolean {
 }
 
 function extractFolderName(clause: string): string | null {
-  const m = clause.match(/(?:folder|directory)\s+(?:called\s+|named\s+|name\s+called\s+)?["']?([a-zA-Z0-9_\- ]+?)["']?(?:\s+and|\s*$|\s+inside|\s+here|\.|,|;)/i);
+  const m = clause.match(/(?:folder|directory|project)\s+(?:called\s+|named\s+|name\s+called\s+)?["']?([a-zA-Z0-9_\- ]+?)["']?(?:\s+and|\s*$|\s+inside|\s+here|\.|,|;)/i);
   if (m) return m[1].trim().split(/\s+/)[0].replace(/["'`]/g, "");
   const m2 = clause.match(/called\s+["']?([a-zA-Z0-9_\-]+)["']?/i);
   if (m2) return m2[1].trim();
@@ -157,16 +158,16 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
       continue;
     }
 
-    // create file
-    if (/(create|make)\s+.*file/i.test(lower)) {
+    // create file (with or without explicit word "file", e.g., "create test.txt inside it")
+    if (/(create|make)\s+.*file/i.test(lower) || (/(create|make)\b/i.test(lower) && extractFileName(clause))) {
       const name = extractFileName(clause) || "test.txt";
       const folderRef = lower.includes("inside it") || lower.includes("inside that") ? "it" : undefined;
       actions.push({ kind: "createFile", name, folderRef, clause, content: lower.includes("hello world") ? "hello world" : undefined });
       continue;
     }
 
-    // create folder
-    if (/(create|make)\s+.*(folder|directory)/i.test(lower)) {
+    // create folder (including project synonym)
+    if (/(create|make)\s+.*(folder|directory|project)/i.test(lower)) {
       const name = extractFolderName(clause);
       if (name) {
         actions.push({ kind: "createFolder", name, clause });

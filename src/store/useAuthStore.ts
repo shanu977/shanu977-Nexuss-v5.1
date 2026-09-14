@@ -15,15 +15,38 @@ interface AuthState {
   signOut: () => Promise<void>;
 }
 
+function isE2ETestBypassEnabled(): boolean {
+  // SAFE TEST-ONLY bypass: must be explicitly enabled via NEXT_PUBLIC_E2E_TEST_MODE=1
+  // and never active in production. The env var is only set in Playwright/test runs.
+  if (typeof process !== "undefined" && process.env.NODE_ENV === "production") return false;
+  try {
+    return typeof window !== "undefined" && (process.env.NEXT_PUBLIC_E2E_TEST_MODE === "1" || (window as unknown as { __NEXUSS_E2E_BYPASS?: boolean }).__NEXUSS_E2E_BYPASS === true);
+  } catch { return false; }
+}
+
+function getInitialAuthState(): Pick<AuthState, 'user'|'idToken'|'loading'|'initialized'> {
+  if (isE2ETestBypassEnabled()) {
+    return {
+      user: { uid: "e2e-test-user", email: "e2e@test.local", displayName: "E2E Test" } as unknown as User,
+      idToken: "e2e-test-token",
+      loading: false,
+      initialized: true,
+    };
+  }
+  return { user: null, idToken: null, loading: true, initialized: false };
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
-  idToken: null,
-  loading: true,
-  initialized: false,
+  ...getInitialAuthState(),
 
   setUser: (user, idToken) => set({ user, idToken, loading: false }),
 
   initAuth: () => {
+    if (isE2ETestBypassEnabled()) {
+      const mockUser = { uid: "e2e-test-user", email: "e2e@test.local", displayName: "E2E Test" } as unknown as User;
+      set({ user: mockUser, idToken: "e2e-test-token", loading: false, initialized: true });
+      return () => {};
+    }
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {

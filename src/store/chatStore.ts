@@ -34,33 +34,13 @@ import {
   stripChangeBlock,
   extractCommandBlock,
   stripCommandBlock,
-  hasCommandFence
 } from "@/workspace/agent/parse";
-import { stripAllFences, hasAnyFence, formatToolResults, executeFencedTools, MAX_AGENT_STEPS } from "@/workspace/agent/loop";
-import { hasTerminalTag, extractTerminalTag } from "@/workspace/terminal";
-import { pushExecutionContext, formatExecutionContextForPrompt, clearExecutionContextForChat, getRecentExecutionContext } from "@/workspace/agent/executionContext";
+import { stripAllFences } from "@/workspace/agent/loop";
+import { formatExecutionContextForPrompt } from "@/workspace/agent/executionContext";
 import Dexie from "dexie";
 
-// Fallback for models that emit bare terminal commands without the required fence
-// when user explicitly said "use the terminal" — prevents the "Here's the command you
-// can use..." hallucination from blocking autonomous execution.
-function userExplicitlyWantsTerminal(userText: string): boolean {
-  return /use (the )?terminal|via terminal|with terminal|check the terminal|through (the )?terminal|using the terminal/i.test(userText);
-}
-function extractBareTerminalCommand(modelText: string): string | null {
-  if (hasTerminalTag(modelText) || hasCommandFence(modelText) || !!extractCommandBlock(modelText)) return null;
-  // Bare powershell line (long enough to be intentional, not a HOW-TO snippet)
-  const pw = modelText.match(/powershell[^\n`]{10,800}/i);
-  if (pw) return pw[0].trim().replace(/^["`>\s]+|["`<\s]+$/g, "").trim();
-  if (/\bnode\s+--version\b/i.test(modelText)) return "node --version";
-  if (/\bnpm\s+--version\b/i.test(modelText)) return "npm --version";
-  // Generic Get-ChildItem bare hint (when model writes the command outside a fence)
-  const gci = modelText.match(/Get-ChildItem[^\n`]{10,800}/i);
-  if (gci) return `powershell -NoProfile -Command "${gci[0].trim()}"`;
-  return null;
-}
-
-import { isHowToRequest, isFilesystemActionRequest, planFilesystemActions, synthesizeCommand } from "@/workspace/agent/actionPlanner";
+import { resolveIntent } from "@/workspace/agent/intent";
+import { runAuthorizedGoal } from "@/workspace/agent/authorizedExecutor";
 
 interface ChatStore extends ChatState {
   theme: string;
@@ -484,256 +464,75 @@ async function requestAssistant(
       }
     }
 
-    // — Autonomous agent loop: when Path is ON and model emits fences,
-    // execute tools and feed results back to the model within the SAME
-    // assistant turn (up to MAX_AGENT_STEPS). For in-memory/demo workspaces
-    // tools auto-apply so ONE user message can complete discover→read→edit→run→fix→verify.
-    // For native workspaces tools stage for approval and loop pauses (existing UX).
-    const wsForLoop = useWorkspaceStore.getState();
-    const hasCommand = !!extractCommandBlock(display) || hasCommandFence(display);
-    const hasTerminal = hasTerminalTag(display) || !!extractTerminalTag(display);
-    const hasChange = !!extractChangeBlock(display);
-    const bareTerminalCmd = extractBareTerminalCommand(display);
-    const hasBareTerminal = !!bareTerminalCmd && wsForLoop.panelOpen && userExplicitlyWantsTerminal(text);
-    // Unified planner fallback: when model does not emit fence but user asked for filesystem action (e.g., "create folder shanu5")
-    let remainingPlannedActions: ReturnType<typeof planFilesystemActions> = [];
-    try {
-      if (wsForLoop.panelOpen && isFilesystemActionRequest(text) && !isHowToRequest(text)) {
-        remainingPlannedActions = planFilesystemActions(text, chat.id);
-      }
-    } catch {}
-    const hasPlannedAction = remainingPlannedActions.length > 0;
-    // TERMINAL != FILESYSTEM: terminal is autonomous once Terminal panel is open (panelOpen)
-    // Filesystem changes still require pathEnabled+in-memory+autoLoop
-    // Bare fallback: when model emits "Here's the command you can use: powershell ..." without fence but user explicitly said "use the terminal", treat as autonomous
-    const shouldAutonomousLoop = (hasAnyFence(display) && wsForLoop.panelOpen && (hasCommand || hasTerminal || (hasChange && wsForLoop.pathEnabled && wsForLoop.workspace?.kind === "in-memory" && wsForLoop.agentAutoLoop))) || hasBareTerminal || hasPlannedAction;
+    // === AUTHORITATIVE AGENT STATE MACHINE (single source of truth) ===
+    const wsState = useWorkspaceStore.getState();
+    const intent = resolveIntent(text);
     let finalContent: string;
     const loopDisplay = display;
-    const loopHistory = [...history];
-    // Preserve original single-shot behavior for native or Path OFF
-    if (shouldAutonomousLoop && !abortController.signal.aborted) {
-      let steps = 0;
-      let currentDisplay = loopDisplay;
-      let currentHistory = [...loopHistory];
-      while (steps < MAX_AGENT_STEPS && (hasAnyFence(currentDisplay) || !!extractBareTerminalCommand(currentDisplay) || remainingPlannedActions.length > 0) && !abortController.signal.aborted) {
-        perf?.mark(`terminal_parse_start_step${steps + 1}`);
-        const execStart = performance.now();
-        perf?.mark(`terminal_execute_start_step${steps + 1}`);
-        // Unified fallback: bare terminal OR planned filesystem action when model omitted fence but goal requires action
-        const bareForStep = !hasAnyFence(currentDisplay) ? extractBareTerminalCommand(currentDisplay) : null;
-        const shouldUseBare = !!bareForStep && wsForLoop.panelOpen && userExplicitlyWantsTerminal(text);
-        let exec: Awaited<ReturnType<typeof executeFencedTools>>;
-        if (shouldUseBare) {
-          exec = await executeFencedTools(`<terminal>${bareForStep}</terminal>`);
-        } else if (!hasAnyFence(currentDisplay) && remainingPlannedActions.length > 0) {
-          const nextAction = remainingPlannedActions.shift()!;
-          const cmd = synthesizeCommand(nextAction, chat.id);
-          // Execute via same pipeline as terminal fence
-          exec = await executeFencedTools(`<terminal>${cmd}</terminal>`);
-          // If synthesizeCommand already returns full powershell, use it directly via toolRun fallback
-          if (exec.results.length === 0) {
-            try {
-              const ctx = { connected: wsForLoop.connected, pathEnabled: wsForLoop.pathEnabled, bridge: wsForLoop.bridge as any, index: wsForLoop.index, runtime: wsForLoop.runtime as any } as any;
-              const { toolRun } = await import("@/workspace/agent/tools");
-              const r: any = await toolRun(ctx, cmd);
-              exec = { results: [{ kind: "command" as const, path: cmd, success: r.success, stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode, cwd: r.cwd } as any], needsApproval: false, stripped: `Executed planned ${nextAction.kind}` };
-            } catch (e) {
-              exec = { results: [{ kind: "command" as const, path: cmd, success: false, error: e instanceof Error ? e.message : String(e) } as any], needsApproval: false, stripped: "" };
-            }
-          }
+
+    // For filesystem ACTION, run through authorized executor BEFORE using model prose as answer.
+    // Model output never becomes a terminal command.
+    if (intent.kind === "action" && !abortController.signal.aborted) {
+      try {
+        const report = await runAuthorizedGoal(chat.id, text, {
+          panelOpen: wsState.panelOpen,
+          workspacePath: wsState.workspacePath || null,
+        });
+        if (report.finalResponse) {
+          // Execution produced an honest verified response (success, failure, clarification, terminal closed)
+          // That is authoritative; do not use model hallucination.
+          finalContent = report.finalResponse;
+          // Show execution progress immediately
+          display = finalContent;
+          updateMessage(true);
+          flushPending();
         } else {
-          exec = await executeFencedTools(currentDisplay);
+          // No deterministic plan but intent was action and executor asked for model-based answer?
+          // Fall back to stripping fences and not executing model commands
+          const stripped = stripAllFences(loopDisplay).trim() || EMPTY_REPLY_FALLBACK;
+          // Ensure no model fence leaked into execution: never call executeFencedTools here
+          finalContent = stripped;
+          display = finalContent;
+          updateMessage(true);
+          flushPending();
         }
-        // For bare, preserve original stripped text (remove bare command noise)
-        if (shouldUseBare) {
-          (exec as unknown as { stripped: string }).stripped = stripAllFences(currentDisplay).trim() || `Executed: ${bareForStep}`;
-        }
-        const execDur = performance.now() - execStart;
-        if (process.env.NODE_ENV !== "production") console.debug(`[Perf] terminal exec step ${steps + 1} ${execDur.toFixed(1)}ms results=${exec.results.length} ${shouldUseBare ? "(bare fallback)" : ""}`);
-        perf?.mark(`terminal_execute_end_step${steps + 1}`);
-        if (exec.results.length === 0) {
-          if (shouldUseBare) {
-            // Bare command extraction succeeded but execution returned empty (should not happen) — surface as failure rather than hallucinate
-            if (process.env.NODE_ENV !== "production") console.debug(`[Terminal] bare fallback executed but no results`);
-          }
-          break;
-        }
-        if (exec.needsApproval) {
-          // Native-like pause not expected for in-memory; fall back to staging
-          break;
-        }
-        const toolText = formatToolResults(exec.results);
-        // If this exec corresponded to a planned filesystem action, consume it from the queue
-        try {
-          if (remainingPlannedActions.length > 0) {
-            const peek = remainingPlannedActions[0] as any;
-            const executedPath = (exec.results[0] as any)?.path || "";
-            if (peek && peek.name && executedPath.toLowerCase().includes(peek.name.toLowerCase())) {
-              remainingPlannedActions.shift();
-            } else if (peek && peek.kind && executedPath.toLowerCase().includes(peek.kind)) {
-              // fallback
-              remainingPlannedActions.shift();
-            }
-          }
-        } catch {}
-        // Persist structured execution context for follow-up pronoun resolution ("it", "that folder")
-        // Use real terminal results (actual stdout/cwd/exitCode), not model assumptions
-        for (const r of exec.results) {
-          if (r.kind === "command") {
-            try {
-              pushExecutionContext(chat.id, {
-                userText: text,
-                command: r.path || (shouldUseBare ? bareForStep || "" : ""),
-                cwd: (r as unknown as { cwd?: string }).cwd || wsForLoop.workspacePath || "",
-                stdout: r.stdout || "",
-                stderr: r.stderr || r.error || "",
-                exitCode: r.exitCode ?? null,
-                success: !!r.success,
-              });
-            } catch {}
-          }
-        }
-        // Show tool progress in the streaming message (immediate)
-        display = `${exec.stripped}\n\n${toolText}`;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        finalContent = `Execution failed: ${msg}`;
+        display = finalContent;
         updateMessage(true);
-        // Feed stripped assistant + tool results to next LLM call
-        currentHistory = [...currentHistory, { role: "assistant", content: exec.stripped }, { role: "system", content: toolText }];
-        perf?.mark(`second_model_request_start_step${steps + 1}`);
-        // Fetch next model iteration with updated history (reuse same provider/model/reasoner)
-        // Reset for next fetch
-        const nextReasoner = new ReasoningFilter();
-        let nextDisplay = "";
-        let nextPending: number | null = null;
-        let nextRafDisplay = "";
-        const flushNext = () => {
-          nextPending = null;
-          useChatStore.setState((s) => ({
-            messages: s.messages.map((m) => (m.id === asstId ? { ...m, content: nextRafDisplay } : m))
-          }));
-        };
-        const nextUpdate = (immediate = false) => {
-          nextRafDisplay = nextDisplay;
-          if (immediate) {
-            if (nextPending !== null) { if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(nextPending); else clearTimeout(nextPending); nextPending = null; }
-            flushNext(); return;
-          }
-          if (nextPending !== null) return;
-          if (typeof requestAnimationFrame !== "undefined") nextPending = requestAnimationFrame(() => flushNext());
-          else nextPending = setTimeout(() => flushNext(), 16) as unknown as number;
-        };
-        // Duplicate provider branching for next iteration using currentHistory as context
-        if (provider === "local") {
-          const localState = useLocalModelStore.getState();
-          let localModel = localState.models.find((m) => m.modelId === model && m.enabled);
-          if (!localModel) localModel = localState.models.find((m) => m.enabled);
-          if (!localModel) { nextDisplay = exec.stripped; break; }
-          const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
-          if (!localProvider) { nextDisplay = exec.stripped; break; }
-          // Reuse original workspace context to avoid rebuilding search index twice for same question
-          const wsResCached = useWorkspaceStore.getState().buildContextFor(text);
-          const cachedWsText = wsResCached?.contextText;
-          const loopExecContext = formatExecutionContextForPrompt(chat.id);
-          const isPhi3Loop = localModel.modelId.toLowerCase().includes("phi3");
-          const loopPrompt = isPhi3Loop ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
-          const allMessages: { role: string; content: string }[] = [
-            { role: "system", content: loopPrompt },
-            ...(cachedWsText ? [{ role: "system" as const, content: `Workspace context:\n${cachedWsText}` }] : []),
-            ...(loopExecContext ? [{ role: "system" as const, content: loopExecContext }] : []),
-            ...currentHistory,
-            { role: "user", content: text }
-          ];
-          // Also inject toolText as additional system for immediate next turn visibility
-          allMessages.splice(allMessages.length - 1, 0, { role: "system", content: toolText });
-          try {
-            const stream = streamLocalChat({ endpoint: localProvider.endpoint, modelId: localModel.modelId, messages: allMessages, apiKey: localProvider.apiKey, signal: abortController.signal });
-            let firstNext = true;
-            let secondTtftDone = false;
-            for await (const evt of stream) {
-              if (evt.type === "chunk") {
-                const v = nextReasoner.push(evt.content);
-                if (!v) continue;
-                if (!secondTtftDone) { perf?.mark(`second_ttft_step${steps + 1}`); secondTtftDone = true; }
-                nextDisplay += v;
-                if (firstNext) { nextUpdate(true); firstNext = false; } else nextUpdate();
-              } else if (evt.type === "done") {
-                const t = nextReasoner.flush();
-                if (t) { nextDisplay += t; nextUpdate(true); }
-              }
-            }
-            const t = nextReasoner.flush();
-            if (t) { nextDisplay += t; nextUpdate(true); }
-            if (nextPending !== null) { if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(nextPending); else clearTimeout(nextPending); nextPending = null; flushNext(); }
-            perf?.mark(`second_model_complete_step${steps + 1}`);
-          } catch {
-            nextDisplay = exec.stripped;
-            break;
-          }
-        } else {
-          const wsRes = useWorkspaceStore.getState().buildContextFor(text);
-          const cloudLoopExecContext = formatExecutionContextForPrompt(chat.id);
-          const cloudLoopWsCtx = [wsRes?.contextText, cloudLoopExecContext].filter(Boolean).join("\n\n") || undefined;
-          try {
-            const events = chatService.sendStream({ message: `${text}\n\n${toolText}`, history: currentHistory, provider: provider as Exclude<ProviderType, "local">, model, workspaceContext: cloudLoopWsCtx }, { signal: abortController.signal });
-            let firstNext2 = true;
-            for await (const event of events) {
-              if (event.type === "chunk") {
-                const v = nextReasoner.push(event.content);
-                if (!v) continue;
-                nextDisplay += v;
-                if (firstNext2) { nextUpdate(true); firstNext2 = false; } else nextUpdate();
-              }
-            }
-            const t = nextReasoner.flush();
-            if (t) { nextDisplay += t; nextUpdate(true); }
-            if (nextPending !== null) { if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(nextPending); else clearTimeout(nextPending); nextPending = null; flushNext(); }
-          } catch {
-            nextDisplay = exec.stripped;
-            break;
-          }
-        }
-        display = nextDisplay;
-        currentDisplay = nextDisplay;
-        steps++;
-        if (!hasAnyFence(currentDisplay)) break;
+        flushPending();
       }
-      perf?.mark("final_response");
-      perf?.logSummary();
-      finalContent = stripAllFences(currentDisplay).trim() || EMPTY_REPLY_FALLBACK;
-      // Also append lastCommandResult if one exists from auto-applied commands (rare for in-memory)
-      if (useWorkspaceStore.getState().lastCommandResult) {
-        const last = useWorkspaceStore.getState().lastCommandResult;
-        if (last) {
-          const resultText = [`## Last command result`, `Command: \`${last.command}\``, `Exit: ${last.exitCode ?? "n/a"}`, ...(last.stdout ? [`\`\`\`\n${last.stdout}\n\`\`\``] : []), ...(last.stderr ? [`Stderr:\n\`\`\`\n${last.stderr}\n\`\`\``] : [])].join("\n");
-          useWorkspaceStore.getState().clearLastCommandResult();
-          finalContent = `${finalContent}\n\n${resultText}`;
-        }
-      }
+    } else if (intent.kind === "howto") {
+      // HOW-TO: explain only, never execute. Strip any fences model may have hallucinated.
+      const stripped = stripAllFences(loopDisplay).trim() || EMPTY_REPLY_FALLBACK;
+      // Also stage no commands
+      finalContent = stripped;
+      display = finalContent;
+      updateMessage(true);
+      flushPending();
     } else {
+      // No filesystem intent: normal chat path.
+      // Still need to handle workspace-change / workspace-command blocks for code editing (non-terminal) with user approval.
+      // For terminal fences in non-action messages, DO NOT auto-execute — model prose must not become command.
       const filtered = loopDisplay.trim();
       const changeBlock = extractChangeBlock(filtered);
-      let stagedContent =
-        filtered.length > 0 ? stripChangeBlock(filtered) : EMPTY_REPLY_FALLBACK;
+      let stagedContent = filtered.length > 0 ? stripChangeBlock(filtered) : EMPTY_REPLY_FALLBACK;
       if (changeBlock) {
-        void useWorkspaceStore
-          .getState()
-          .proposeChangeFromBlock(changeBlock.changes)
-          .catch(() => {});
+        void useWorkspaceStore.getState().proposeChangeFromBlock(changeBlock.changes).catch(() => {});
       }
       const commandBlock = extractCommandBlock(stagedContent);
-      if (commandBlock || hasCommandFence(stagedContent)) {
+      if (commandBlock) {
+        // Stage for user approval only, never auto-execute model commands here
         stagedContent = stripCommandBlock(stagedContent) || EMPTY_REPLY_FALLBACK;
-        if (commandBlock) {
-          void useWorkspaceStore
-            .getState()
-            .proposeCommandFromBlock(commandBlock)
-            .catch(() => {});
-        }
+        void useWorkspaceStore.getState().proposeCommandFromBlock(commandBlock).catch(() => {});
+      } else if (stagedContent.includes("workspace-command")) {
+        stagedContent = stagedContent.replace(/```workspace-(change|command)[\s\S]*?```/gi, "").trim() || EMPTY_REPLY_FALLBACK;
       }
-      // Always strip terminal fence from non-executed path so raw tags never leak to UI
-      if (hasTerminalTag(stagedContent)) {
-        stagedContent = stripAllFences(stagedContent) || EMPTY_REPLY_FALLBACK;
-      }
+      // Strictly strip any terminal tags — never execute them outside authorized flow
+      stagedContent = stripAllFences(stagedContent) || EMPTY_REPLY_FALLBACK;
       finalContent = stagedContent;
+      // Surface lastCommandResult if present (previous turn's verified result)
       if (useWorkspaceStore.getState().lastCommandResult) {
         const last = useWorkspaceStore.getState().lastCommandResult;
         if (last) {
@@ -1163,7 +962,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     if (getLastChatId(uid) === id) {
       setLastChatId(uid, wasCurrent ? null : get().currentChat?.id ?? null);
     }
-    try { clearExecutionContextForChat(id); } catch {}
+    try { const { clearAgentState } = await import("@/workspace/agent/agentState"); clearAgentState(id); const { clearExecutionContextForChat } = await import("@/workspace/agent/executionContext"); clearExecutionContextForChat(id); } catch {}
   },
 
   searchChats: async (query) => {
