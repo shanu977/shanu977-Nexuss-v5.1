@@ -11,7 +11,8 @@ export type PlannedAction =
   | { kind: "list"; target?: string; clause: string }
   | { kind: "count"; target?: string; clause: string }
   | { kind: "delete"; target: string; clause: string }
-  | { kind: "goTo"; target: string; clause: string };
+  | { kind: "goTo"; target: string; clause: string }
+  | { kind: "read"; target: string; clause: string };
 
 export function isHowToRequest(t: string): boolean {
   const lower = t.toLowerCase();
@@ -31,6 +32,7 @@ export function isFilesystemActionRequest(t: string): boolean {
   if (isHowToRequest(t)) return false;
   const lower = t.toLowerCase();
   // Action verbs with filesystem objects, even without "use the terminal"
+  // Also includes pronoun/continuity path queries that must be resolved via executionContext
   return (
     /(create|make)\s+(a\s+)?(folder|directory|file|project)\b/.test(lower) ||
     /(create|make)\b.*\.[a-z0-9]{1,4}\b/.test(lower) ||
@@ -39,10 +41,20 @@ export function isFilesystemActionRequest(t: string): boolean {
     /\blist\b.*\b(inside|here|folder|directory|files)\b/.test(lower) ||
     /what'?s inside/.test(lower) ||
     /tell me.*inside/.test(lower) ||
+    /\bwhat'?s inside\b/.test(lower) ||
+    /\binside it\b/.test(lower) ||
     /\bgo to\b/.test(lower) ||
     /\bcount\b/.test(lower) ||
     /tell me the path/.test(lower) ||
-    /where is/.test(lower)
+    /what is (the )?path/.test(lower) ||
+    /give me.*path/.test(lower) ||
+    /path of (it|that|the folder|the file)/.test(lower) ||
+    /path for that/.test(lower) ||
+    /where is/.test(lower) ||
+    /\bread\b/.test(lower) ||
+    /\bwrite\b.*\b(into|to)\b/.test(lower) ||
+    /\bthe full path\b/.test(lower) ||
+    /\byou (just|was) .*create/.test(lower)
   );
 }
 
@@ -175,11 +187,36 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
       }
     }
 
-    // tell me path / where is -> count/list already, but also create+path
-    if (/tell me the path/.test(lower) && actions.length === 0) {
-      const name = extractFolderName(userText);
-      if (name) actions.push({ kind: "createFolder", name, clause });
+    // tell me path / where is -> handled as path query if no other action
+    // read file
+    if (/\bread\b/.test(lower)) {
+      const target = extractFileName(clause) || (lower.includes("it") || lower.includes("that") ? "it" : (extractFolderName(clause) || "it"));
+      actions.push({ kind: "read", target, clause });
       continue;
+    }
+    // inside it with pronoun but also explicit inside
+    if (/\binside it\b/.test(lower) && actions.length === 0) {
+      actions.push({ kind: "list", target: "it", clause });
+      continue;
+    }
+  }
+
+  // Fallback for pure path/continuity queries that didn't match above but are still filesystem requests
+  if (actions.length === 0) {
+    const lowerAll = userText.toLowerCase();
+    const isPathQuery = /what is (the )?path/.test(lowerAll) || /give me.*path/.test(lowerAll) || /path of (it|that|the folder|the file)/.test(lowerAll) || /path for that/.test(lowerAll) || /the full path/.test(lowerAll) || /where is/.test(lowerAll) || /you (just|was).*create/.test(lowerAll);
+    const isInsideQuery = /what'?s inside/.test(lowerAll) || /tell me.*inside/.test(lowerAll) || /\binside it\b/.test(lowerAll);
+    const isReadQuery = /\bread\b/.test(lowerAll) && (lowerAll.includes("it") || lowerAll.includes("that"));
+    if (isPathQuery) {
+      // Resolve via execution context deterministically; produce a read-like marker that executor will handle as path answer
+      // Use goTo with "it" as signal for path resolution
+      const target = extractFileName(userText) || extractFolderName(userText) || "it";
+      actions.push({ kind: "goTo", target, clause: userText });
+    } else if (isInsideQuery) {
+      actions.push({ kind: "list", target: "it", clause: userText });
+    } else if (isReadQuery) {
+      const target = extractFileName(userText) || "it";
+      actions.push({ kind: "read", target, clause: userText });
     }
   }
 
@@ -277,12 +314,44 @@ export function synthesizeCommand(action: PlannedAction, chatId: string): string
       return `powershell -NoProfile -Command "Remove-Item -LiteralPath '${safe}' -Recurse -Force | Out-Null"`;
     }
     case "goTo": {
-      const safe = action.target.replace(/"/g, "");
+      const raw = action.target;
+      // If target is pronoun "it"/"that", resolve via execution context to absolute path
+      if (raw === "it" || raw.toLowerCase().includes("it") || raw.toLowerCase().includes("that")) {
+        const resolvedIt = resolveIt("it");
+        if (resolvedIt) {
+          const safeIt = resolvedIt.replace(/"/g, "");
+          return `powershell -NoProfile -Command "Get-Item -LiteralPath '${safeIt}' | Select-Object -ExpandProperty FullName"`;
+        }
+      }
+      const safe = raw.replace(/"/g, "");
       let resolved = safe;
       if (/^downloads$/i.test(safe)) resolved = "C:\\Users\\pilli\\Downloads";
       else if (/^desktop$/i.test(safe)) resolved = "C:\\Users\\pilli\\Desktop";
       else if (/^documents$/i.test(safe)) resolved = "C:\\Users\\pilli\\Documents";
+      else if (safe === "it") {
+        // fallback verification of last created folder
+        const fb = resolveIt("it");
+        if (fb) resolved = fb;
+      }
       return `powershell -NoProfile -Command "Get-Item -LiteralPath '${resolved}' | Select-Object -ExpandProperty FullName"`;
+    }
+    case "read": {
+      let targetPath: string | undefined;
+      if (action.target === "it" || action.target.toLowerCase().includes("it") || action.target.toLowerCase().includes("that")) {
+        try {
+          const ctxs = getRecentExecutionContext(chatId);
+          const file = [...ctxs].reverse().find(c => c.object === "file" && c.success && c.path);
+          if (file?.path) targetPath = file.path;
+          else {
+            const any = [...ctxs].reverse().find(c => c.success && c.path);
+            if (any?.path) targetPath = any.path;
+          }
+        } catch {}
+      } else {
+        targetPath = action.target;
+      }
+      const safe = (targetPath || action.target).replace(/"/g, "");
+      return `powershell -NoProfile -Command "Get-Content -LiteralPath '${safe}' | Out-String"`;
     }
   }
 }
