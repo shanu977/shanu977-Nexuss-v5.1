@@ -5,7 +5,7 @@
 
 import { getToolContext } from "./loop";
 import { toolRun } from "./tools";
-import { synthesizeCommand, PlannedAction, planFilesystemActions } from "./actionPlanner";
+import { synthesizeCommand, PlannedAction, planFilesystemActions, hasExplicitTarget } from "./actionPlanner";
 import { getAgentState, setAgentState, createGoalState, updateGoalWithActions, completeAction, AuthorizedAction, StructuredToolResult, newActionId } from "./agentState";
 import { pushVerifiedObservation, getRecentExecutionContext, ExecutionContextEntry } from "./executionContext";
 import { resolveIntent } from "./intent";
@@ -38,6 +38,7 @@ function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): Author
       rawClause: p.clause,
       content: (p as any).content,
       status: "pending" as const,
+      basePath: (p as any).basePath,
     };
   });
 }
@@ -156,11 +157,18 @@ export async function runAuthorizedGoal(
   // Deterministic path/continuity resolver: answer "what is the path?" etc from verified executionContext
   // before falling back to terminal verification. This ensures follow-up pronouns ("it", "that") work
   // even without a new terminal execution, and satisfies requirement #2 and #3.
+  // IMPORTANT: explicit targets (new name/path supplied in current message) MUST win over previous context.
+  // Only use context when message actually requires contextual resolution (pronoun without explicit target).
   const isPathLikeQuery = /\b(path|full path)\b/i.test(userText) || /where is/i.test(userText) || /you (just|was).*create/i.test(userText);
   const isReadLikeQuery = /\bread\b/i.test(userText);
   const isInsideLikeQuery = /what'?s inside/i.test(userText) || /tell me.*inside/i.test(userText) || /\binside it\b/i.test(userText);
   const hasPronoun = /\b(it|that|the folder|the file|there)\b/i.test(userText);
-  if ((isPathLikeQuery || isReadLikeQuery || isInsideLikeQuery) && hasPronoun) {
+  // Check if current message contains explicit target - if so, do NOT use old context
+  // Explicit target: new folder/file name supplied, explicit path, explicit action+target
+  // This ensures "C:\...\Downloads create a folder ... name it as raju" does NOT return old shanu path
+  const hasExplicit = hasExplicitTarget(userText);
+  // Only resolve via context if no explicit target is present
+  if ((isPathLikeQuery || isReadLikeQuery || isInsideLikeQuery) && hasPronoun && !hasExplicit) {
     // Try to resolve from executionContext first (verified observations only)
     const recent = getRecentExecutionContext(chatId).filter(e => e.success && e.verified);
     let resolved: ExecutionContextEntry | undefined;
@@ -270,6 +278,8 @@ async function executePending(
   opts: { workspacePath: string | null }
 ): Promise<ExecutionReport> {
   const ctx = getToolContext();
+  // Re-evaluate explicit target for this turn (must win over previous context)
+  const hasExplicit = hasExplicitTarget(userText);
   let executed = 0, succeeded = 0, failed = 0;
   const observations: StructuredToolResult[] = [];
 
@@ -286,7 +296,7 @@ async function executePending(
     const plannedLike: PlannedAction = authorizedToPlanned(next);
     let cmd: string;
     try {
-      cmd = synthesizeCommand(plannedLike, chatId);
+      cmd = synthesizeCommand(plannedLike, chatId, hasExplicit);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       const res: StructuredToolResult = { success: false, exitCode: null, stdout: "", stderr: err, cwd: opts.workspacePath || "", command: "", error: err };
@@ -448,7 +458,7 @@ async function executePending(
 
 function authorizedToPlanned(a: AuthorizedAction): PlannedAction {
   switch (a.type) {
-    case "create_folder": return { kind: "createFolder", name: a.target, clause: a.rawClause };
+    case "create_folder": return { kind: "createFolder", name: a.target, clause: a.rawClause, basePath: (a as any).basePath };
     case "create_file": {
       const name = a.target.includes("/") ? a.target.split("/").pop()! : a.target;
       const folderRef = a.target.includes("/") ? a.target.split("/").slice(0, -1).join("/") : undefined;
@@ -470,7 +480,7 @@ export function isModelCommandAuthorized(chatId: string, modelCommand: string): 
   const state = getAgentState(chatId);
   if (!state || state.pendingActions.length === 0) return false;
   const next = state.pendingActions[0];
-  const expectedCmd = (() => { try { return synthesizeCommand(authorizedToPlanned(next), chatId); } catch { return ""; } })();
+  const expectedCmd = (() => { try { return synthesizeCommand(authorizedToPlanned(next), chatId, false); } catch { return ""; } })();
   // Semantic check: target name must appear in model command, and action type must align
   const targetBase = next.target.split("/").pop()?.replace(/["'`]/g, "").toLowerCase();
   if (!targetBase) return false;

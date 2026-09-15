@@ -5,7 +5,7 @@
 import { getRecentExecutionContext } from "./executionContext";
 
 export type PlannedAction =
-  | { kind: "createFolder"; name: string; clause: string }
+  | { kind: "createFolder"; name: string; clause: string; basePath?: string }
   | { kind: "createFile"; name: string; folderRef?: string; clause: string; content?: string }
   | { kind: "writeFile"; name: string; content: string; clause: string }
   | { kind: "list"; target?: string; clause: string }
@@ -59,11 +59,64 @@ export function isFilesystemActionRequest(t: string): boolean {
 }
 
 function extractFolderName(clause: string): string | null {
+  // Handle "name it as X" first - most specific for raju case: "name it as raju"
+  const mAs = clause.match(/name\s+it\s+as\s+["']?([a-zA-Z0-9_\- ]+)["']?/i);
+  if (mAs) return mAs[1].trim().replace(/\s+/g, " ").trim().replace(/["'`]/g, "");
+  // Also handle "named X" and "name as X"
+  const mNamed = clause.match(/\bnamed\s+["']?([a-zA-Z0-9_\- ]+)["']?/i);
+  if (mNamed) {
+    // Avoid capturing trailing "in this path" - take first word/phrase before path keywords
+    const raw = mNamed[1].trim().replace(/["'`]/g, "");
+    // If raw contains "in this path", trim it
+    const cut = raw.split(/\s+in\s+this\s+path/i)[0].trim();
+    if (cut) return cut.replace(/\s+/g, " ").trim();
+  }
+  // Handle "folder name called X" and "folder called X" with spaces/numbers
+  // Keep full name (e.g., "shanu 1999") - split only on trailing delimiters, not internal spaces
   const m = clause.match(/(?:folder|directory|project)\s+(?:called\s+|named\s+|name\s+called\s+)?["']?([a-zA-Z0-9_\- ]+?)["']?(?:\s+and|\s*$|\s+inside|\s+here|\.|,|;)/i);
-  if (m) return m[1].trim().split(/\s+/)[0].replace(/["'`]/g, "");
-  const m2 = clause.match(/called\s+["']?([a-zA-Z0-9_\-]+)["']?/i);
-  if (m2) return m2[1].trim();
+  if (m) {
+    const raw = m[1].trim().replace(/["'`]/g, "");
+    // Keep full name but normalize multiple spaces, preserve single spaces
+    if (raw) {
+      const cleaned = raw.replace(/\s+/g, " ").trim();
+      // Filter out generic phrases like "in this path name it as raju" -> extract actual name if present
+      if (/^in this path/i.test(cleaned) && /name it as/i.test(clause)) {
+        // Already handled by mAs above, but fallback: extract after "name it as"
+        const inner = clause.match(/name\s+it\s+as\s+([a-zA-Z0-9_\- ]+)/i);
+        if (inner) return inner[1].trim().replace(/\s+/g, " ").trim();
+      }
+      if (cleaned && cleaned.toLowerCase() !== "in this path name it as raju" && !cleaned.toLowerCase().startsWith("in this path")) return cleaned;
+      // If cleaned is the generic phrase, try to extract actual name
+      const fallback = clause.match(/name\s+it\s+as\s+([a-zA-Z0-9_\-]+)/i);
+      if (fallback) return fallback[1].trim();
+      return cleaned;
+    }
+  }
+  const m2 = clause.match(/called\s+["']?([a-zA-Z0-9_\- ]+)["']?/i);
+  if (m2) return m2[1].trim().replace(/\s+/g, " ").trim().replace(/["'`]/g, "");
   return null;
+}
+
+export function extractAbsolutePath(text: string): string | null {
+  // Match Windows absolute path like C:\Users\... or C:/Users/...
+  const m = text.match(/([a-zA-Z]:\\[^\s"'`,;]+)/);
+  if (m) {
+    // Trim trailing punctuation
+    return m[1].replace(/[.,;]+$/, "").trim();
+  }
+  const m2 = text.match(/([a-zA-Z]:\/[^\s"'`,;]+)/);
+  if (m2) return m2[1].replace(/[.,;]+$/, "").trim();
+  return null;
+}
+
+export function hasExplicitTarget(text: string): boolean {
+  // Explicit folder/file name via called/named/name it as
+  if (/(?:called|named|name\s+it\s+as|name\s+as)\s+["']?[a-zA-Z0-9_\-]+/i.test(text)) return true;
+  // Explicit absolute path
+  if (/[a-zA-Z]:[\\/]/.test(text)) return true;
+  // Explicit file with extension preceded by create/make
+  if (/(create|make)\b.*\.[a-z0-9]{1,4}\b/i.test(text)) return true;
+  return false;
 }
 
 function extractFileName(clause: string): string | null {
@@ -182,7 +235,17 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
     if (/(create|make)\s+.*(folder|directory|project)/i.test(lower)) {
       const name = extractFolderName(clause);
       if (name) {
-        actions.push({ kind: "createFolder", name, clause });
+        const basePath = extractAbsolutePath(clause) || extractAbsolutePath(userText);
+        // Avoid using basePath that is actually the target folder itself? basePath is parent
+        // Only use basePath if it doesn't already end with the folder name
+        const filteredName = name.replace(/\s+/g, " ").trim();
+        // If name was incorrectly extracted as generic phrase, fallback to explicit "name it as"
+        let finalName = filteredName;
+        if (filteredName.toLowerCase().startsWith("in this path")) {
+          const mAsFallback = clause.match(/name\s+it\s+as\s+([a-zA-Z0-9_\-]+)/i) || userText.match(/name\s+it\s+as\s+([a-zA-Z0-9_\-]+)/i);
+          if (mAsFallback) finalName = mAsFallback[1].trim();
+        }
+        actions.push({ kind: "createFolder", name: finalName, clause, basePath: basePath || undefined });
         continue;
       }
     }
@@ -224,9 +287,12 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
   return actions;
 }
 
-export function synthesizeCommand(action: PlannedAction, chatId: string): string {
+export function synthesizeCommand(action: PlannedAction, chatId: string, hasExplicitTargetFlag = false): string {
   const resolveIt = (target?: string) => {
     if (!target || target === "it") {
+      if (hasExplicitTargetFlag) {
+        return target || undefined;
+      }
       try {
         const ctxs = getRecentExecutionContext(chatId);
         const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success);
@@ -242,6 +308,16 @@ export function synthesizeCommand(action: PlannedAction, chatId: string): string
   switch (action.kind) {
     case "createFolder": {
       const safe = action.name.replace(/["'`$]/g, "");
+      const base = (action as any).basePath as string | undefined;
+      if (base) {
+        // Absolute path supplied explicitly - MUST win over context
+        const cleanBase = base.replace(/["'`$]/g, "").replace(/\\/g, "\\");
+        // Ensure no trailing slash
+        const normalizedBase = cleanBase.replace(/[\\/]+$/, "");
+        const full = `${normalizedBase}\\${safe}`;
+        const safeFull = full.replace(/"/g, "");
+        return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '${safeFull}' -Force | Select-Object -ExpandProperty FullName"`;
+      }
       return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '.\\${safe}' -Force | Select-Object -ExpandProperty FullName"`;
     }
     case "createFile": {

@@ -14,6 +14,7 @@ export interface AuthorizedAction {
   content?: string; // for write
   status: "pending" | "executing" | "completed" | "failed";
   result?: StructuredToolResult;
+  basePath?: string; // explicit absolute base path when supplied in current message (e.g., C:\Users\pilli\Downloads)
 }
 
 export interface StructuredToolResult {

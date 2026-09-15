@@ -34,7 +34,8 @@ export function resolveIntent(text: string): ResolvedIntent {
   }
   // Generic inspection without filesystem verb but with terminal/inspection semantics
   // e.g., "how many folders are directly inside C:\" or "what version of node"
-  if (/\b(how many|tell me|what version|node --version|npm --version|folders on this PC|files on my desktop)\b/i.test(trimmed) && !plannerIsHowTo(trimmed)) {
+  // NOTE: "tell me" alone is NOT filesystem - only specific filesystem tells are handled via isFilesystemActionRequest
+  if (/\b(how many|what version|node --version|npm --version|folders on this PC|files on my desktop)\b/i.test(trimmed) && !plannerIsHowTo(trimmed)) {
     return { kind: "action", isTerminalExplicit: userExplicitlyWantsTerminal(trimmed), raw: text };
   }
   // Also treat explicit terminal requests with filesystem verbs as action even if planner misses
