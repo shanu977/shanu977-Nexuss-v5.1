@@ -11,6 +11,10 @@ import { pushVerifiedObservation, getRecentExecutionContext, ExecutionContextEnt
 import { resolveIntent } from "./intent";
 import { createLocalConnectorRuntime } from "@/workspace/localTerminalRuntime";
 import { normalizeRelativePath, assertInsideRoot } from "@/workspace/path";
+import { createAgentPlan } from "./llmPlanner";
+import { validateAgentPlan } from "./planValidator";
+import type { AgentPlan, AgentAction } from "./llmTypes";
+import path from "path";
 
 function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): AuthorizedAction[] {
   return planned.map((p) => {
@@ -23,6 +27,9 @@ function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): Author
       delete: "delete",
       goTo: "goTo",
       read: "read",
+      move: "move",
+      copy: "copy",
+      run: "run",
     } as any;
     let target = "";
     if (p.kind === "createFolder") target = p.name;
@@ -32,6 +39,9 @@ function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): Author
     else if (p.kind === "list" || p.kind === "count") target = (p as any).target || "";
     else if (p.kind === "goTo") target = p.target;
     else if (p.kind === "read") target = (p as any).target || "";
+    else if (p.kind === "move") target = `${(p as any).source} -> ${(p as any).destination}`;
+    else if (p.kind === "copy") target = `${(p as any).source} -> ${(p as any).destination}`;
+    else if (p.kind === "run") target = (p as any).command;
     return {
       id: newActionId(),
       type: typeMap[p.kind] || "run",
@@ -40,8 +50,87 @@ function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): Author
       content: (p as any).content,
       status: "pending" as const,
       basePath: (p as any).basePath,
-    };
+      source: (p as any).source,
+      destination: (p as any).destination,
+      command: (p as any).command,
+    } as AuthorizedAction;
   });
+}
+
+function agentPlanToPlannedActions(plan: AgentPlan, chatId: string): PlannedAction[] {
+  const out: PlannedAction[] = [];
+  for (const a of plan.actions) {
+    switch (a.type) {
+      case "createDirectory": {
+        const p = (a as any).path as string;
+        if (/^[a-zA-Z]:[\\/]/.test(p)) {
+          const parts = p.split(/[\\/]/);
+          const name = parts.pop() || p;
+          const base = parts.join("\\");
+          out.push({ kind: "createFolder", name, clause: `LLM:${p}`, basePath: base || undefined } as any);
+        } else {
+          // For relative like "test" or "project/test"
+          const norm = p.replace(/\\/g, "/");
+          if (norm.includes("/")) {
+            const parts = norm.split("/");
+            const name = parts.pop()!;
+            const base = parts.join("/");
+            // If base is like "Downloads/kumar19", treat as folder creation with basePath? For now, handle as createFolder with basePath if absolute, else as folder name with slash
+            // For relative multi-segment, we treat as createFolder with name being last segment and basePath being parent (if parent is absolute or workspace-relative)
+            // Simpler: if path is "Downloads/kumar19", we want to create folder kumar19 inside Downloads
+            if (base) out.push({ kind: "createFolder", name, clause: `LLM:${p}`, basePath: base } as any);
+            else out.push({ kind: "createFolder", name, clause: `LLM:${p}` } as any);
+          } else {
+            out.push({ kind: "createFolder", name: p, clause: `LLM:${p}` } as any);
+          }
+        }
+        break;
+      }
+      case "createFile": {
+        const p = (a as any).path as string;
+        const content = (a as any).content || "";
+        if (/^[a-zA-Z]:[\\/]/.test(p)) {
+          const parts = p.split(/[\\/]/);
+          const name = parts.pop() || "file.txt";
+          const dir = parts.join("/");
+          out.push({ kind: "createFile", name, clause: `LLM:${p}`, content, folderRef: dir || undefined, basePath: dir } as any);
+        } else if (p.includes("/") || p.includes("\\")) {
+          const norm = p.replace(/\\/g, "/");
+          const parts = norm.split("/");
+          const name = parts.pop()!;
+          const dir = parts.join("/");
+          out.push({ kind: "createFile", name, clause: `LLM:${p}`, content, folderRef: dir || undefined } as any);
+        } else {
+          out.push({ kind: "createFile", name: p, clause: `LLM:${p}`, content } as any);
+        }
+        break;
+      }
+      case "writeFile":
+        out.push({ kind: "writeFile", name: (a as any).path, clause: `LLM:${(a as any).path}`, content: (a as any).content } as any);
+        break;
+      case "readFile":
+        out.push({ kind: "read", target: (a as any).path, clause: `LLM:${(a as any).path}` } as any);
+        break;
+      case "delete":
+        out.push({ kind: "delete", target: (a as any).path, clause: `LLM:${(a as any).path}` } as any);
+        break;
+      case "listDirectory":
+        out.push({ kind: "list", target: (a as any).path, clause: `LLM:${(a as any).path}` } as any);
+        break;
+      case "move":
+        out.push({ kind: "move", source: (a as any).source, destination: (a as any).destination, clause: `LLM:move` } as any);
+        break;
+      case "copy":
+        out.push({ kind: "copy", source: (a as any).source, destination: (a as any).destination, clause: `LLM:copy` } as any);
+        break;
+      case "runCommand":
+        out.push({ kind: "run", command: (a as any).command, clause: `LLM:run`, cwd: (a as any).cwd } as any);
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
 }
 
 function isFollowUp(text: string): boolean {
@@ -231,38 +320,121 @@ export async function runAuthorizedGoal(
     // (requirement #4: verify via filesystem rather than hallucinate)
   }
 
-  // Determine planned actions
-  const planned = planFilesystemActions(userText, chatId);
+  // NEW: LLM-driven Understand → Context → Plan with deterministic fallback
+  // LLM is intelligence, code is security/validation/execution/verification
+  let plan: AgentPlan | null = null;
+  let via: "llm" | "deterministic" = "deterministic";
+  let planned: PlannedAction[] = [];
+  let llmTried = false;
 
-  // Follow-up "do the thing" with no explicit actions but prior pending
-  if (planned.length === 0 && isFollowUp(userText) && stateBefore && stateBefore.pendingActions.length > 0) {
-    // Reuse pending - don't create new goal, just execute pending
-    return executePending(chatId, userText, opts);
+  try {
+    const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
+    if (!isTestEnv) {
+      const result = await createAgentPlan(userText, chatId);
+      if (result && result.plan) {
+        plan = result.plan;
+        via = result.via;
+        const validation = validateAgentPlan(plan, opts.workspacePath || undefined);
+        if (!validation.valid) {
+          const reason = (validation as any).reason as string;
+          const code = (validation as any).code as string;
+          if (code === "SECURITY") {
+            const s = createGoalState(chatId, userText, opts.workspacePath);
+            s.status = "failed";
+            (s as any).failureReason = "security_blocked";
+            setAgentState(s);
+            console.debug(`[Agent][VALIDATION] blocked: ${reason}`);
+            return {
+              executed: 0,
+              succeeded: 0,
+              failed: 1,
+              observations: [{ success: false, exitCode: 1, stdout: "", stderr: `Security blocked: ${reason}`, cwd: opts.workspacePath || "", command: "", error: reason } as any],
+              finalResponse: `Blocked by security policy: ${reason}`,
+            };
+          }
+          if (code === "AMBIGUOUS" || plan.intent === "clarification" || plan.actions.length === 0) {
+            const s = createGoalState(chatId, userText, opts.workspacePath);
+            s.status = "clarification_required";
+            setAgentState(s);
+            console.debug(`[Agent][VALIDATION] ambiguous: ${reason}`);
+            return {
+              executed: 0,
+              succeeded: 0,
+              failed: 0,
+              observations: [],
+              finalResponse: plan.explanation || "Could you clarify which target you mean? I couldn't resolve the reference from context.",
+            };
+          }
+          throw new Error(`Invalid LLM plan: ${reason}`);
+        }
+        // Convert LLM AgentPlan to internal PlannedAction for existing pipeline (preserves absolute paths)
+        planned = agentPlanToPlannedActions(plan, chatId);
+        if (planned.length === 0 && plan.actions.length > 0) throw new Error("LLM conversion empty");
+        llmTried = true;
+        console.debug(`[Agent][LLM] via=${via} intent=${plan.intent} actions=${planned.length} explanation=${plan.explanation?.slice(0,120)}`);
+      } else {
+        throw new Error("LLM no result");
+      }
+    } else {
+      throw new Error("Test env skip LLM");
+    }
+  } catch (e) {
+    if (process.env.NODE_ENV !== "production" && llmTried) console.debug(`[Agent] LLM fallback: ${(e as Error).message?.slice(0,120)}`);
+    // Fallback to deterministic planner (preserves existing keyword intelligence for tests and when LLM unavailable)
+    planned = planFilesystemActions(userText, chatId);
+    if (planned.length === 0 && isFollowUp(userText) && stateBefore && stateBefore.pendingActions.length > 0) {
+      return executePending(chatId, userText, opts);
+    }
+    if (planned.length === 0 && isFollowUp(userText) && stateBefore && stateBefore.completedActions.length > 0) {
+      return {
+        executed: 0,
+        succeeded: 0,
+        failed: 0,
+        observations: [...stateBefore.observations],
+        finalResponse: `That task is already complete (${stateBefore.goal}). If you want to repeat it or do something else, let me know the specific action.`,
+      };
+    }
+    if (planned.length === 0) {
+      const s = createGoalState(chatId, userText, opts.workspacePath);
+      s.status = "clarification_required";
+      setAgentState(s);
+      return {
+        executed: 0,
+        succeeded: 0,
+        failed: 0,
+        observations: [],
+        finalResponse: "I wasn't able to determine a specific filesystem action from that request. Could you clarify the folder or file name you'd like me to create, list, or delete?",
+      };
+    }
+    // Build a synthetic plan for logging/validation
+    plan = { intent: planned.length === 1 ? (planned[0] as any).kind : "multi_step", explanation: `Deterministic: ${planned.map(p => (p as any).kind).join(", ")}`, actions: [] as any } as AgentPlan;
+    via = "deterministic";
   }
 
-  if (planned.length === 0 && isFollowUp(userText) && stateBefore && stateBefore.completedActions.length > 0) {
-    // User says "do the thing" but already done - be honest
-    return {
-      executed: 0,
-      succeeded: 0,
-      failed: 0,
-      observations: [...stateBefore.observations],
-      finalResponse: `That task is already complete (${stateBefore.goal}). If you want to repeat it or do something else, let me know the specific action.`,
-    };
+  // Handle subfolder workspace (e.g., testRoot = cwd/nexuss-terminal-e2e-test)
+  // Real terminal's cwd is process.cwd(), not workspacePath, so we must make paths absolute via basePath
+  if (opts.workspacePath) {
+    try {
+      const wsResolved = path.resolve(opts.workspacePath);
+      const cwdResolved = path.resolve(process.cwd());
+      if (wsResolved !== cwdResolved && wsResolved.startsWith(cwdResolved + path.sep)) {
+        for (const p of planned) {
+          if (p.kind === "createFolder" && !(p as any).basePath) {
+            (p as any).basePath = wsResolved;
+          }
+          if (p.kind === "createFile" && !(p as any).folderRef && !(p as any).basePath) {
+            const rel = path.relative(cwdResolved, wsResolved).replace(/\\/g, "/");
+            if (rel) (p as any).folderRef = rel;
+          }
+        }
+      }
+    } catch {}
   }
 
-  if (planned.length === 0) {
-    // Ambiguous action with no concrete plan -> ask clarification rather than invent
-    const s = createGoalState(chatId, userText, opts.workspacePath);
-    s.status = "clarification_required";
-    setAgentState(s);
-    return {
-      executed: 0,
-      succeeded: 0,
-      failed: 0,
-      observations: [],
-      finalResponse: "I wasn't able to determine a specific filesystem action from that request. Could you clarify the folder or file name you'd like me to create, list, or delete?",
-    };
+  // At this point, planned is ready (from LLM or deterministic) and validated
+  // Log structured plan for debugging (without chain-of-thought)
+  if (plan) {
+    console.debug(`[Agent][PLAN] via=${via} intent=${plan.intent} actions=${JSON.stringify(plan.actions).slice(0,600)}`);
   }
 
   // Create authoritative goal state
@@ -280,6 +452,7 @@ async function tryBridgeFallback(
   ctx: any,
   opts: { workspacePath: string | null }
 ): Promise<StructuredToolResult | null> {
+  console.log(`[Fallback] opts.workspacePath=${opts.workspacePath} cwd=${opts.workspacePath || process.cwd?.()}`);
   const cwd = opts.workspacePath || process.cwd?.() || "C:\\mock";
   try {
     // Security: enforce workspace boundary for all fallback operations
@@ -448,6 +621,90 @@ async function tryBridgeFallback(
         return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `write file fallback`, path: undefined, error: msg };
       }
     }
+    // Fallback for move / copy / delete / list / read via Node fs (when connector unavailable)
+    if ((action.type as any) === "move") {
+      const src = (action as any).source || (planned as any).source;
+      const dst = (action as any).destination || (planned as any).destination;
+      if (!src || !dst) return null;
+      try {
+        if (!/^[a-zA-Z]:[\\/]/.test(src)) { const n = normalizeRelativePath(src); assertInsideRoot("", n); }
+        if (!/^[a-zA-Z]:[\\/]/.test(dst)) { const n = normalizeRelativePath(dst); assertInsideRoot("", n); }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `move fallback`, path: undefined, error: msg };
+      }
+      if (ctx?.bridge) {
+        try {
+          await ctx.bridge.rename(src, dst);
+          return { success: true, exitCode: 0, stdout: dst, stderr: "", cwd, command: `move ${src} -> ${dst} (bridge)`, path: dst };
+        } catch {}
+      }
+      try {
+        const fs = await import("fs/promises");
+        const pathMod = await import("path");
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        const srcPath = /^[a-zA-Z]:[\\/]/.test(src) ? src : pathMod.join(actualCwd, src);
+        const dstPath = /^[a-zA-Z]:[\\/]/.test(dst) ? dst : pathMod.join(actualCwd, dst);
+        await fs.mkdir(pathMod.dirname(dstPath), { recursive: true });
+        await fs.rename(srcPath, dstPath);
+        return { success: true, exitCode: 0, stdout: dstPath, stderr: "", cwd, command: `move ${src} -> ${dst} (fs fallback)`, path: dstPath };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `move fallback`, path: undefined, error: msg };
+      }
+    }
+    if ((action.type as any) === "copy") {
+      const src = (action as any).source || (planned as any).source;
+      const dst = (action as any).destination || (planned as any).destination;
+      if (!src || !dst) return null;
+      try {
+        if (!/^[a-zA-Z]:[\\/]/.test(src)) { const n = normalizeRelativePath(src); assertInsideRoot("", n); }
+        if (!/^[a-zA-Z]:[\\/]/.test(dst)) { const n = normalizeRelativePath(dst); assertInsideRoot("", n); }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `copy fallback`, path: undefined, error: msg };
+      }
+      try {
+        const fs = await import("fs/promises");
+        const pathMod = await import("path");
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        const srcPath = /^[a-zA-Z]:[\\/]/.test(src) ? src : pathMod.join(actualCwd, src);
+        const dstPath = /^[a-zA-Z]:[\\/]/.test(dst) ? dst : pathMod.join(actualCwd, dst);
+        await fs.mkdir(pathMod.dirname(dstPath), { recursive: true });
+        await fs.copyFile(srcPath, dstPath);
+        return { success: true, exitCode: 0, stdout: dstPath, stderr: "", cwd, command: `copy ${src} -> ${dst} (fs fallback)`, path: dstPath };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `copy fallback`, path: undefined, error: msg };
+      }
+    }
+    if ((action.type as any) === "delete") {
+      const p = action.target;
+      try {
+        if (!/^[a-zA-Z]:[\\/]/.test(p)) { const n = normalizeRelativePath(p); assertInsideRoot("", n); }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `delete fallback`, path: undefined, error: msg };
+      }
+      if (ctx?.bridge) {
+        try {
+          await ctx.bridge.delete(p);
+          return { success: true, exitCode: 0, stdout: p, stderr: "", cwd, command: `delete ${p} (bridge)`, path: p };
+        } catch {}
+      }
+      try {
+        const fs = await import("fs/promises");
+        const pathMod = await import("path");
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        const fsPath = /^[a-zA-Z]:[\\/]/.test(p) ? p : pathMod.join(actualCwd, p);
+        await fs.rm(fsPath, { recursive: true, force: true });
+        return { success: true, exitCode: 0, stdout: p, stderr: "", cwd, command: `delete ${p} (fs fallback)`, path: p };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `delete fallback`, path: undefined, error: msg };
+      }
+    }
+    // For runCommand, no filesystem fallback – let network error surface
   } catch {}
   return null;
 }

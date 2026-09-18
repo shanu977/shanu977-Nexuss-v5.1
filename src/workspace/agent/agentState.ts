@@ -4,7 +4,7 @@
 
 export type AgentStatus = "idle" | "planning" | "executing" | "waiting" | "completed" | "clarification_required" | "failed";
 
-export type AuthorizedActionType = "create_folder" | "create_file" | "write_file" | "list" | "count" | "delete" | "goTo" | "read" | "run";
+export type AuthorizedActionType = "create_folder" | "create_file" | "write_file" | "list" | "count" | "delete" | "goTo" | "read" | "run" | "move" | "copy";
 
 export interface AuthorizedAction {
   id: string;
@@ -15,6 +15,9 @@ export interface AuthorizedAction {
   status: "pending" | "executing" | "completed" | "failed";
   result?: StructuredToolResult;
   basePath?: string; // explicit absolute base path when supplied in current message (e.g., C:\Users\pilli\Downloads)
+  source?: string; // for move/copy
+  destination?: string; // for move/copy
+  command?: string; // for run
 }
 
 export interface StructuredToolResult {

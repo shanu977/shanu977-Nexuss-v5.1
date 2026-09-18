@@ -12,7 +12,10 @@ export type PlannedAction =
   | { kind: "count"; target?: string; clause: string }
   | { kind: "delete"; target: string; clause: string }
   | { kind: "goTo"; target: string; clause: string }
-  | { kind: "read"; target: string; clause: string };
+  | { kind: "read"; target: string; clause: string }
+  | { kind: "move"; source: string; destination: string; clause: string }
+  | { kind: "copy"; source: string; destination: string; clause: string }
+  | { kind: "run"; command: string; cwd?: string; clause: string };
 
 export function isHowToRequest(t: string): boolean {
   const lower = t.toLowerCase();
@@ -36,6 +39,8 @@ export function isFilesystemActionRequest(t: string): boolean {
   return (
     /(create|make)\s+(a\s+)?(folder|directory|file|project)\b/.test(lower) ||
     /(create|make)\b.*\.[a-z0-9]{1,4}\b/.test(lower) ||
+    /\bsame name\b/.test(lower) ||
+    /\bmkdir\b/.test(lower) ||
     /\bdelete\b/.test(lower) ||
     /\bremove\b/.test(lower) ||
     /\blist\b.*\b(inside|here|folder|directory|files)\b/.test(lower) ||
@@ -252,6 +257,27 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
     // Security: block traversal attempts early (covers folder and file)
     if (clause.includes("..") && (clause.includes("../") || clause.includes("..\\") || /\b\.\.\b/.test(clause))) {
       continue;
+    }
+
+    // Handle "same name" reference via recent context (deterministic fallback for LLM's semantic understanding)
+    if (lower.includes("same name")) {
+      try {
+        const ctxs = getRecentExecutionContext(chatId);
+        const recentFolder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && c.name);
+        const recentFile = [...ctxs].reverse().find(c => c.object === "file" && c.success && c.name);
+        const targetName = recentFolder?.name || recentFile?.name;
+        if (targetName) {
+          const basePath = extractAbsolutePath(clause) || extractAbsolutePath(userText);
+          // Check if it's file or folder context
+          const isFile = recentFile && (!recentFolder || recentFile.timestamp > recentFolder.timestamp);
+          if (isFile) {
+            actions.push({ kind: "createFile", name: targetName, clause, content: "" });
+          } else {
+            actions.push({ kind: "createFolder", name: targetName, clause, basePath: basePath || undefined });
+          }
+          continue;
+        }
+      } catch {}
     }
 
     // go to
@@ -578,6 +604,41 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
       }
       const safe = (targetPath || action.target).replace(/"/g, "");
       return `powershell -NoProfile -Command "Get-Content -LiteralPath '${safe}' | Out-String"`;
+    }
+    case "move": {
+      let src = (action as any).source as string;
+      let dst = (action as any).destination as string;
+      if (src === "it" || /it|that/.test(src.toLowerCase())) {
+        const r = resolveIt("it");
+        if (r) src = r;
+      }
+      // Resolve destination pronoun
+      if (dst.toLowerCase().includes("it") || dst.toLowerCase().includes("that")) {
+        const r = resolveIt("it");
+        if (r) dst = r;
+      }
+      const safeSrc = src.replace(/"/g, "");
+      const safeDst = dst.replace(/"/g, "");
+      return `powershell -NoProfile -Command "Move-Item -LiteralPath '${safeSrc}' -Destination '${safeDst}' -Force"`;
+    }
+    case "copy": {
+      let src = (action as any).source as string;
+      let dst = (action as any).destination as string;
+      if (src === "it" || /it|that/.test(src.toLowerCase())) {
+        const r = resolveIt("it");
+        if (r) src = r;
+      }
+      if (dst.toLowerCase().includes("it") || dst.toLowerCase().includes("that")) {
+        const r = resolveIt("it");
+        if (r) dst = r;
+      }
+      const safeSrc = src.replace(/"/g, "");
+      const safeDst = dst.replace(/"/g, "");
+      return `powershell -NoProfile -Command "Copy-Item -LiteralPath '${safeSrc}' -Destination '${safeDst}' -Force"`;
+    }
+    case "run": {
+      // For generic runCommand, trust the LLM's command but it will be validated by executor's allowlist and fallback
+      return (action as any).command as string;
     }
   }
 }
