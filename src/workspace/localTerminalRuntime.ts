@@ -38,11 +38,21 @@ export function createLocalConnectorRuntime(): {
 } {
   return {
     async run(req) {
-      const res = await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: req.command, cwd: req.cwd, timeoutMs: req.timeoutMs })
-      });
+      let res: Response;
+      try {
+        res = await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: req.command, cwd: req.cwd, timeoutMs: req.timeoutMs })
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // Network/CORS/mixed-content failure — distinguish from terminal command failure
+        if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("ECONNREFUSED") || msg.includes("fetch")) {
+          throw new Error(`NETWORK_ERROR: Cannot reach local terminal connector at ${CONNECTOR_URL}. Ensure it is running (node local-connector/server.js) and your browser allows Private Network Access. Details: ${msg}`);
+        }
+        throw new Error(`NETWORK_ERROR: ${msg}`);
+      }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         let err = text;
@@ -70,11 +80,20 @@ export function createLocalConnectorRuntime(): {
       // For now, run the discovered test command via /v1/terminal/run with "npm test" or similar
       // The connector will validate and run it; if no test command, throw
       // We try to run "npm test" as default
-      const res = await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: "npm test", cwd: req.cwd, timeoutMs: req.timeoutMs })
-      });
+      let res: Response;
+      try {
+        res = await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: "npm test", cwd: req.cwd, timeoutMs: req.timeoutMs })
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("ECONNREFUSED") || msg.includes("fetch")) {
+          throw new Error(`NETWORK_ERROR: Cannot reach local terminal connector at ${CONNECTOR_URL}. Details: ${msg}`);
+        }
+        throw new Error(`NETWORK_ERROR: ${msg}`);
+      }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(text || `Test failed (${res.status})`);

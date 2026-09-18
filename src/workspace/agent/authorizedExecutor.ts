@@ -10,6 +10,7 @@ import { getAgentState, setAgentState, createGoalState, updateGoalWithActions, c
 import { pushVerifiedObservation, getRecentExecutionContext, ExecutionContextEntry } from "./executionContext";
 import { resolveIntent } from "./intent";
 import { createLocalConnectorRuntime } from "@/workspace/localTerminalRuntime";
+import { normalizeRelativePath, assertInsideRoot } from "@/workspace/path";
 
 function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): AuthorizedAction[] {
   return planned.map((p) => {
@@ -272,6 +273,185 @@ export async function runAuthorizedGoal(
   return executePending(chatId, userText, opts);
 }
 
+async function tryBridgeFallback(
+  action: AuthorizedAction,
+  planned: PlannedAction,
+  chatId: string,
+  ctx: any,
+  opts: { workspacePath: string | null }
+): Promise<StructuredToolResult | null> {
+  const cwd = opts.workspacePath || process.cwd?.() || "C:\\mock";
+  try {
+    // Security: enforce workspace boundary for all fallback operations
+    // Only allow relative paths validated by normalizeRelativePath/assertInsideRoot.
+    // Absolute basePath (explicit user path like C:\Users\...) is allowed as parent,
+    // but the leaf name must still be a safe relative segment.
+    if (action.type === "create_folder") {
+      const rawName = (planned as any).name || action.target;
+      // Enforce path validation on the leaf name (prevents traversal like ../evil)
+      try {
+        const norm = normalizeRelativePath(rawName);
+        assertInsideRoot("", norm || rawName);
+        if (norm.includes("/") || norm.includes("\\")) {
+          // For folder fallback we only expect a single segment; multi-segment is still
+          // normalized and checked, but we keep the original norm for mkdir
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `mkdir fallback`, path: undefined, error: msg };
+      }
+      const name = rawName;
+      const basePath = (planned as any).basePath;
+      let fullPath: string;
+      if (basePath) {
+        const cleanBase = basePath.replace(/["'`$]/g, "");
+        fullPath = `${cleanBase.replace(/[\\/]+$/, "")}\\${name}`;
+      } else if (cwd) {
+        fullPath = `${cwd.replace(/[\\/]+$/, "")}\\${name}`;
+      } else {
+        fullPath = name;
+      }
+      // Try bridge first (e.g., InMemoryBridge or FileSystemAccessBridge)
+      if (ctx?.bridge) {
+        try {
+          // Validate via bridge path (must be relative and inside root)
+          const relCheck = normalizeRelativePath(action.target);
+          assertInsideRoot("", relCheck);
+          await ctx.bridge.mkdir(action.target);
+          const bridgePath = fullPath;
+          return { success: true, exitCode: 0, stdout: bridgePath, stderr: "", cwd, command: `mkdir ${action.target} (bridge fallback)`, path: bridgePath };
+        } catch {}
+      }
+      // Node fs fallback (for tests / local dev without bridge)
+      try {
+        const fs = await import("fs/promises");
+        const pathMod = await import("path");
+        // Determine actual fs path: if cwd is absolute, use it; otherwise use process.cwd()
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        // Re-validate full fs path stays inside allowed parent (actualCwd or basePath)
+        // For basePath case, basePath is user-supplied absolute parent – allow it but ensure name is safe (already validated)
+        const fsPath = basePath ? fullPath : pathMod.join(actualCwd, name);
+        // Ensure fsPath is inside actualCwd when no basePath (prevents traversal via name like ../../)
+        if (!basePath) {
+          const resolved = pathMod.resolve(fsPath);
+          const resolvedCwd = pathMod.resolve(actualCwd);
+          if (!resolved.startsWith(resolvedCwd + pathMod.sep) && resolved !== resolvedCwd) {
+            return { success: false, exitCode: 1, stdout: "", stderr: `Path escapes workspace root: "${name}"`, cwd, command: `mkdir fallback`, path: undefined, error: `Path escapes workspace root: "${name}"` };
+          }
+        }
+        await fs.mkdir(fsPath, { recursive: true });
+        return { success: true, exitCode: 0, stdout: fsPath, stderr: "", cwd: actualCwd, command: `mkdir ${fsPath} (fs fallback)`, path: fsPath };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `mkdir fallback`, path: undefined, error: msg };
+      }
+    }
+    if (action.type === "create_file" || action.type === "write_file") {
+      const content = (planned as any).content || action.content || "";
+      // Validate file name is safe relative path (no traversal, no absolute)
+      const rawFileName = (planned as any).name || action.target.split("/").pop() || "app.py";
+      try {
+        const normFile = normalizeRelativePath(rawFileName);
+        assertInsideRoot("", normFile);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `write file fallback`, path: undefined, error: msg };
+      }
+      // Resolve file path inside folderRef ("it" or concrete like "project")
+      let folderBase: string | undefined;
+      const rawRef = (planned as any).folderRef;
+      if (rawRef === "it") {
+        try {
+          const ctxs = getRecentExecutionContext(chatId);
+          const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success);
+          if (folder?.path) folderBase = folder.path;
+          else {
+            const any = [...ctxs].reverse().find(c => c.success && c.path);
+            if (any?.path) folderBase = any.path;
+          }
+        } catch {}
+      } else if (rawRef) {
+        // Concrete folder name like "project" or absolute path
+        folderBase = rawRef;
+      }
+      const fileName = rawFileName;
+      let fsPath: string;
+      let bridgeRel: string | undefined;
+      if (folderBase) {
+        bridgeRel = folderBase.includes("\\") ? `${folderBase}\\${fileName}` : `${folderBase}/${fileName}`;
+        fsPath = folderBase;
+        // If folderBase is absolute (contains :\), build fsPath correctly
+        if (/^[a-zA-Z]:[\\/]/.test(folderBase)) {
+          const pathMod = await import("path");
+          fsPath = pathMod.join(folderBase, fileName);
+        } else {
+          const pathMod = await import("path");
+          const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+          fsPath = pathMod.join(actualCwd, folderBase, fileName);
+          // If folderBase came from fallback (absolute), above join will double; fix
+          if (/^[a-zA-Z]:/.test(folderBase)) fsPath = `${folderBase}\\${fileName}`;
+        }
+      } else {
+        const pathMod = await import("path");
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        fsPath = pathMod.join(actualCwd, fileName);
+        bridgeRel = fileName;
+      }
+      // Try bridge
+      if (ctx?.bridge && bridgeRel) {
+        try {
+          // For bridge, relative path is expected (without drive)
+          const rel = bridgeRel.includes("\\") && /^[a-zA-Z]:/.test(bridgeRel) ? fileName : bridgeRel.replace(/\\/g, "/");
+          // Validate bridge relative path before touching bridge
+          try {
+            normalizeRelativePath(rel);
+            assertInsideRoot("", rel);
+          } catch {
+            // Skip bridge fallback for invalid path, fall through to fs check
+            throw new Error("invalid bridge path");
+          }
+          // Try to create via bridge (handle both create and write)
+          try {
+            await ctx.bridge.create(rel.replace(/^.*[\\/]/, rel.includes("/") ? rel : rel), content);
+          } catch {
+            await ctx.bridge.write(rel, content).catch(async () => {
+              await ctx.bridge.create(rel, content);
+            });
+          }
+          return { success: true, exitCode: 0, stdout: bridgeRel, stderr: "", cwd, command: `create file ${rel} (bridge fallback)`, path: bridgeRel };
+        } catch {}
+      }
+      // Node fs fallback – enforce boundary
+      try {
+        const fs = await import("fs/promises");
+        const pathMod = await import("path");
+        // Ensure file path stays inside its parent folderBase or actualCwd
+        const parentDir = pathMod.dirname(fsPath);
+        const resolvedParent = pathMod.resolve(parentDir);
+        const allowedRoot = folderBase && /^[a-zA-Z]:[\\/]/.test(folderBase) ? pathMod.resolve(folderBase) : pathMod.resolve(opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd());
+        if (!resolvedParent.startsWith(allowedRoot + pathMod.sep) && resolvedParent !== allowedRoot) {
+          // For file inside folderBase absolute, allow only inside folderBase
+          if (folderBase && /^[a-zA-Z]:[\\/]/.test(folderBase)) {
+            const fbResolved = pathMod.resolve(folderBase);
+            if (!pathMod.resolve(fsPath).startsWith(fbResolved + pathMod.sep) && pathMod.resolve(fsPath) !== fbResolved) {
+              return { success: false, exitCode: 1, stdout: "", stderr: `Path escapes workspace root: "${fileName}"`, cwd, command: `write file fallback`, path: undefined, error: `Path escapes workspace root` };
+            }
+          } else {
+            return { success: false, exitCode: 1, stdout: "", stderr: `Path escapes workspace root: "${fileName}"`, cwd, command: `write file fallback`, path: undefined, error: `Path escapes workspace root` };
+          }
+        }
+        await fs.mkdir(pathMod.dirname(fsPath), { recursive: true });
+        await fs.writeFile(fsPath, content, "utf8");
+        return { success: true, exitCode: 0, stdout: fsPath, stderr: "", cwd: fsPath.includes("\\") ? fsPath.slice(0, fsPath.lastIndexOf("\\")) : cwd, command: `write file ${fsPath} (fs fallback)`, path: fsPath };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `write file fallback`, path: undefined, error: msg };
+      }
+    }
+  } catch {}
+  return null;
+}
+
 async function executePending(
   chatId: string,
   userText: string,
@@ -310,7 +490,42 @@ async function executePending(
     try {
       toolRes = await toolRun(ctx, cmd);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const rawMsg = e instanceof Error ? e.message : String(e);
+      const isNetwork = rawMsg.includes("NETWORK_ERROR") || rawMsg.includes("Failed to fetch") || rawMsg.includes("ECONNREFUSED") || rawMsg.includes("Cannot reach local terminal");
+      if (isNetwork) {
+        // Attempt filesystem fallback via bridge or Node fs when connector is unreachable
+        const fallbackResult = await tryBridgeFallback(next, plannedLike, chatId, ctx, opts);
+        if (fallbackResult && fallbackResult.success) {
+          completeAction(chatId, next.id, fallbackResult);
+          pushVerifiedObservation(chatId, {
+            userText,
+            command: cmd,
+            cwd: fallbackResult.cwd,
+            stdout: fallbackResult.stdout,
+            stderr: fallbackResult.stderr,
+            exitCode: fallbackResult.exitCode,
+            success: true,
+            action: (next.type === "create_folder" ? "create" : next.type === "create_file" || next.type === "write_file" ? "create" : "run") as any,
+            object: (next.type === "create_folder" ? "folder" : "file") as any,
+            name: next.target,
+            path: fallbackResult.path,
+          } as any);
+          observations.push(fallbackResult);
+          succeeded++;
+          executed++;
+          continue;
+        }
+        const cleanMsg = rawMsg.replace(/^NETWORK_ERROR:\s*/i, "").trim();
+        const msg = `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult ? fallbackResult.stderr : "Please ensure node local-connector/server.js is running."}`;
+        const res: StructuredToolResult = { success: false, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
+        completeAction(chatId, next.id, res);
+        pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });
+        observations.push(res);
+        failed++;
+        executed++;
+        break;
+      }
+      const msg = rawMsg;
       const res: StructuredToolResult = { success: false, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
       completeAction(chatId, next.id, res);
       pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });

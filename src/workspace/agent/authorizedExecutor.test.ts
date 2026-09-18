@@ -37,16 +37,22 @@ vi.mock("@/workspace/agent/tools", async () => {
 });
 
 // Mock getToolContext to provide a fake context with runtime
+// Dynamic mock: respects useWorkspaceStore.getState().runtime so tests can simulate no-runtime case
 vi.mock("./loop", async () => {
   const actual = await vi.importActual("./loop") as any;
   return {
     ...actual,
-    getToolContext: () => ({
-      connected: true,
-      pathEnabled: true,
-      bridge: new InMemoryBridge("test", {}),
-      index: null,
-      runtime: { run: (req:any)=> (toolRun as any)({}, req.command), capabilities: ()=> ({ run:true, test:true }) }
+    getToolContext: vi.fn(() => {
+      const storeRuntime = (useWorkspaceStore.getState() as any).runtime;
+      // If store has explicit runtime (including null), use it; otherwise default to mocked runtime
+      const runtime = storeRuntime !== undefined ? storeRuntime : { run: (req:any)=> (toolRun as any)({}, req.command), capabilities: ()=> ({ run:true, test:true }) };
+      return {
+        connected: true,
+        pathEnabled: true,
+        bridge: new InMemoryBridge("test", {}),
+        index: null,
+        runtime
+      };
     })
   };
 });
@@ -81,13 +87,36 @@ describe("authorizedExecutor", () => {
     expect(ctx[0].success).toBe(true);
   });
 
-  it("does NOT execute when terminal is closed, returns honest message", async () => {
+  it("does NOT execute when terminal is closed and no runtime, returns honest message", async () => {
     setupWorkspace(false);
+    // Simulate truly no runtime (panel closed + no connector)
+    useWorkspaceStore.setState({ runtime: null } as any);
+    // Ensure mocked getToolContext also sees no runtime
+    const { getToolContext } = await import("./loop");
+    vi.mocked(getToolContext as any).mockReturnValueOnce({
+      connected: true,
+      pathEnabled: true,
+      bridge: new InMemoryBridge("test", {}),
+      index: null,
+      runtime: null
+    });
+    // Also ensure createLocalConnectorRuntime does not auto-create for this test
+    vi.spyOn(await import("@/workspace/localTerminalRuntime"), "createLocalConnectorRuntime").mockReturnValueOnce(null as any);
     const res = await runAuthorizedGoal("chatA", "create a folder called shanu10", { panelOpen: false, workspacePath: null });
     expect(res.executed).toBe(0);
     expect(res.finalResponse.toLowerCase()).toContain("terminal is not available");
     expect(getAgentState("chatA")?.failureReason).toBe("terminal_closed");
     expect(getRecentExecutionContext("chatA").length).toBe(0);
+  });
+
+  it("executes via fallback/runtime even when panel closed but runtime available (task requirement #7)", async () => {
+    setupWorkspace(false);
+    // Keep runtime available even though panel is closed – should succeed via real terminal/fallback
+    useWorkspaceStore.setState({ runtime: { run: async (req:any)=> (toolRun as any)({}, req.command), capabilities: ()=> ({ run:true, test:true }) } as any });
+    const res = await runAuthorizedGoal("chatA", "create a folder called shanu10", { panelOpen: false, workspacePath: "C:\\mock" });
+    expect(res.executed).toBe(1);
+    expect(res.succeeded).toBe(1);
+    expect(res.finalResponse).toContain("shanu10");
   });
 
   it("HOW-TO does not execute", async () => {
