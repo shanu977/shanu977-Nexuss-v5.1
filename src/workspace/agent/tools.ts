@@ -13,7 +13,6 @@
 // NOT_SUPPORTED rather than pretending to execute anything.
 
 import { ToolError } from "./errors";
-import { createLocalConnectorRuntime } from "@/workspace/localTerminalRuntime";
 import type {
   AgentFileRef,
   NativeCommandResult,

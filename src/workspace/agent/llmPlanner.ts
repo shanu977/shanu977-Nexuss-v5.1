@@ -1,15 +1,14 @@
 // LLM Planner: Understands natural language via Ollama and produces structured AgentPlan
 // Falls back to deterministic planner when LLM unavailable or in tests
 
-import type { AgentPlan, AgentContext } from "./llmTypes";
+import type { AgentPlan } from "./llmTypes";
 import { AGENT_SYSTEM_PROMPT } from "./llmTypes";
 import { buildAgentContext, formatContextForLLM } from "./agentContext";
-import { planFilesystemActions as deterministicPlan } from "./actionPlanner";
+import { planFilesystemActions as deterministicPlan, hasExplicitTarget, isFilesystemActionRequest } from "./actionPlanner";
 import { useLocalModelStore } from "@/store/localModelStore";
 
 const OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat";
-const LLM_TIMEOUT_MS = 8000;
-const MAX_RETRIES = 1;
+const LLM_TIMEOUT_MS = 3000; // Reduced from 8000 - planning JSON is small, no need to wait 8s
 
 function getPreferredModel(): { endpoint: string; modelId: string } | null {
   try {
@@ -28,7 +27,8 @@ function getPreferredModel(): { endpoint: string; modelId: string } | null {
   }
 }
 
-async function callOllamaForPlan(userText: string, contextStr: string, chatId: string | null): Promise<string | null> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function callOllamaForPlan(userText: string, contextStr: string, _chatId: string | null): Promise<string | null> {
   const pref = getPreferredModel();
   if (!pref) return null;
   const model = pref.modelId || "qwen2.5-coder:7b";
@@ -52,7 +52,7 @@ async function callOllamaForPlan(userText: string, contextStr: string, chatId: s
           { role: "user", content: userPrompt }
         ],
         stream: false,
-        options: { temperature: 0.2, num_predict: 800 },
+        options: { temperature: 0.2, num_predict: 300 }, // Reduced from 800 - planning JSON is small
         keep_alive: "5m"
       }),
       signal: controller.signal
@@ -96,7 +96,9 @@ function extractJson(text: string): string | null {
   }
 }
 
-function mapLLMActionToPlannedAction(llmAction: any): any | null {
+// Unused helper kept for future mapping
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _mapLLMActionToPlannedAction(llmAction: any): any | null {
   // Map LLM AgentAction to existing PlannedAction for executor compatibility
   if (!llmAction || typeof llmAction.type !== "string") return null;
   switch (llmAction.type) {
@@ -238,8 +240,29 @@ export function planViaDeterministic(userText: string, chatId: string | null): A
   };
 }
 
+// Fast path: simple explicit requests don't need LLM (saves 3s)
+function isSimpleDeterministicRequest(text: string): boolean {
+  const lower = text.toLowerCase();
+  // Pronouns / ambiguous need LLM
+  if (/\b(it|that|same name|there|another one|inside that|use that folder|previous one|do the thing)\b/.test(lower)) return false;
+  // Natural language variations that deterministic handles poorly need LLM
+  if (/\b(mkdir|set up|give me a place|i need a new|can you make me)\b/.test(lower)) return false;
+  // Must be filesystem action with explicit target
+  if (!isFilesystemActionRequest(text)) return false;
+  if (!hasExplicitTarget(text)) return false;
+  return true;
+}
+
 // Unified entry: try LLM first, fallback to deterministic
 export async function createAgentPlan(userText: string, chatId: string | null): Promise<{ plan: AgentPlan; via: "llm" | "deterministic" }> {
+  // Fast deterministic routing for simple explicit requests (saves LLM call)
+  if (isSimpleDeterministicRequest(userText)) {
+    const det = planViaDeterministic(userText, chatId);
+    if (det.actions.length > 0) {
+      if (process.env.NODE_ENV !== "production") console.debug(`[Agent][FastPath] deterministic for "${userText.slice(0,40)}"`);
+      return { plan: det, via: "deterministic" };
+    }
+  }
   // In tests (vitest), window may be defined but Ollama not reachable – we should fallback quickly
   // We try LLM but with short timeout; if fails, fallback
   const llmResult = await planViaLLM(userText, chatId);

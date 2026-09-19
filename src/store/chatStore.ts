@@ -279,7 +279,23 @@ async function requestAssistant(
       }
     };
 
+    // Fast path for terminal tasks: skip the initial chat LLM and go directly to authorized executor
+    // This saves one full Ollama call (chat) for every filesystem action (e.g., "Create folder")
+    let skipLocalChatForAction = false;
     if (provider === "local") {
+      try {
+        const { resolveIntent } = await import("@/workspace/agent/intent");
+        const quickIntent = resolveIntent(text);
+        if (quickIntent.kind === "action" && useWorkspaceStore.getState().panelOpen) {
+          skipLocalChatForAction = true;
+          perf.mark("skip_local_chat_for_action");
+          if (process.env.NODE_ENV !== "production") console.debug(`[Perf] skipping initial streamLocalChat for action intent, will use planner LLM only`);
+        }
+      } catch {}
+    }
+
+    if (provider === "local") {
+      if (!skipLocalChatForAction) {
       if (image) throw new Error("Local models do not support screen-share images yet. Please select a cloud vision model for image analysis.");
       const localState = useLocalModelStore.getState();
       let localModel = localState.models.find((m) => m.modelId === model && m.enabled);
@@ -367,6 +383,7 @@ async function requestAssistant(
         }
       } catch {}
       perf.logSummary();
+      } // end if (!skipLocalChatForAction)
     } else {
       // Cloud path: via backend
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);

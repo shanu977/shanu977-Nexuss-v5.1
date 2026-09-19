@@ -5,12 +5,11 @@ import type { AgentPlan, AgentAction } from "./llmTypes";
 import { validateAgentPlan } from "./planValidator";
 import { buildAgentContext } from "./agentContext";
 import { createAgentPlan } from "./llmPlanner";
-import { getRecentExecutionContext, pushVerifiedObservation } from "./executionContext";
+import { pushVerifiedObservation } from "./executionContext";
 import { getAgentState, setAgentState, createGoalState, updateGoalWithActions, completeAction, type AuthorizedAction, type StructuredToolResult, newActionId } from "./agentState";
 import { getToolContext } from "./loop";
 import { toolRun } from "./tools";
 import { synthesizeCommand, type PlannedAction } from "./actionPlanner";
-import { hasExplicitTarget } from "./actionPlanner";
 
 // Convert AgentAction to AuthorizedAction for existing executor pipeline
 function agentActionToAuthorized(action: AgentAction, rawClause: string): AuthorizedAction {
@@ -138,7 +137,7 @@ export async function runAgentLoop(
   const authorized = plan.actions.map(a => agentActionToAuthorized(a, userText));
 
   // Create goal state
-  const goal = createGoalState(chatId, userText, opts.workspacePath);
+  createGoalState(chatId, userText, opts.workspacePath);
   updateGoalWithActions(chatId, authorized as any);
 
   // Execute via existing pending loop, but with enhanced observe/verify/adapt
@@ -194,27 +193,11 @@ async function executeWithObserveVerify(
       const rawMsg = e instanceof Error ? e.message : String(e);
       const isNetwork = rawMsg.includes("NETWORK_ERROR") || rawMsg.includes("Failed to fetch") || rawMsg.includes("ECONNREFUSED") || rawMsg.includes("Cannot reach");
       if (isNetwork) {
-        // Try fallback (reuse existing tryBridgeFallback via dynamic import to avoid circular)
-        const { tryBridgeFallback } = await import("./authorizedExecutor");
-        // Need to reconstruct planned for fallback
-        const planned = authorizedToPlannedForLoop(next);
-        const fallback = await (tryBridgeFallback as any)(next, planned, chatId, ctx, opts);
-        if (fallback && fallback.success) {
-          completeAction(chatId, next.id, fallback);
-          pushVerifiedObservation(chatId, { userText, command: cmd, cwd: fallback.cwd, stdout: fallback.stdout, stderr: fallback.stderr, exitCode: fallback.exitCode, success: true, path: fallback.path } as any);
-          observations.push(fallback);
-          logDebug("OBSERVE", `fallback success ${fallback.path}`);
-          // Verify
-          const verified = await verifyAction(next, fallback);
-          if (verified) {
-            succeeded++; executed++;
-            logDebug("VERIFY", `verified ${next.type} ${fallback.path}`);
-            continue;
-          } else {
-            failed++; executed++;
-            break;
-          }
-        }
+        // Network fallback is handled internally by the authorized executor's
+        // public API (runAuthorizedGoal -> executePending -> tryBridgeFallback).
+        // Keep tryBridgeFallback private to authorizedExecutor.ts and surface
+        // a clear terminal-unreachable error here instead of reaching into
+        // internal implementation details.
         const cleanMsg = rawMsg.replace(/^NETWORK_ERROR:\s*/i, "").trim();
         const msg = `Network error: ${cleanMsg} — terminal connector not reachable.`;
         const res: StructuredToolResult = { success: false, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg } as any;
@@ -327,7 +310,6 @@ function authorizedToPlannedForLoop(a: any): PlannedAction {
         if (folder) {
           // Check if folder is absolute parent
           if (/^[a-zA-Z]:/.test(target)) {
-            const base = parts.slice(0, -1).join("\\");
             // For absolute, reconstruct basePath
             return { kind: "createFile", name, clause: a.rawClause, content: a.content, folderRef: folder.includes(":") ? folder : undefined, basePath: folder.includes(":") ? parts.slice(0, parts.length-1).join("\\") : undefined } as any;
           }
