@@ -27,7 +27,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { useWorkspaceStore } from "@/workspace/store";
 import { streamLocalChat } from "@/services/localModels";
-import { SYSTEM_PROMPT, PHI3_SYSTEM_PROMPT } from "@/services/localSystemPrompt";
+import { SYSTEM_PROMPT, PHI3_SYSTEM_PROMPT, MINIMAL_PROMPT, PHI3_MINIMAL_PROMPT } from "@/services/localSystemPrompt";
 import { PerfTracker } from "@/utils/localPerf";
 import {
   extractChangeBlock,
@@ -282,9 +282,11 @@ async function requestAssistant(
     // Fast path for terminal tasks: skip the initial chat LLM and go directly to authorized executor
     // This saves one full model call (2-4s) for every filesystem action (e.g., "Create folder kumar19")
     // Use static resolveIntent – no dynamic import per message, no extra tick.
+    // Also determine lightweight vs full context path for prompt prefill optimization.
     let shouldSkipChatForAction = false;
+    let preIntent: ReturnType<typeof resolveIntent> | null = null;
     try {
-      const preIntent = resolveIntent(text);
+      preIntent = resolveIntent(text);
       if (preIntent.kind === "action") {
         shouldSkipChatForAction = true;
         perf.mark("skip_chat_for_action");
@@ -305,27 +307,46 @@ async function requestAssistant(
       if (!localProvider || !localProvider.enabled) throw new Error("Local provider not found or disabled. Check Settings → Models.");
       perf.mark("T2_request_preparation_start");
       perf.mark("request_preparation_start");
-      const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
-      const wsStateForPrompt = useWorkspaceStore.getState();
       const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
-
-      const basePrompt = isPhi3 ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
-      const terminalStatus = wsStateForPrompt.panelOpen
-        ? isPhi3
-          ? "Terminal is OPEN — use <terminal>COMMAND</terminal> for inspection."
-          : "Terminal panel is OPEN — terminal is available via ```workspace-command {\"run\":{\"command\":\"...\"}}``` and will be auto-executed."
-        : isPhi3
-          ? "Terminal is CLOSED — you do NOT have terminal access right now. Do NOT output <terminal>. Explain or answer directly without terminal."
-          : "Terminal is CLOSED — you do NOT have terminal access. Do NOT use workspace-command. Explain or answer directly.";
-      const execContextText = formatExecutionContextForPrompt(chat.id);
-      const allMessages: { role: string; content: string }[] = [
-        { role: "system", content: basePrompt },
-        { role: "system", content: terminalStatus },
-        ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
-        ...(execContextText ? [{ role: "system" as const, content: execContextText }] : []),
-        ...history,
-        { role: "user", content: text },
-      ];
+      const wsStateForPrompt = useWorkspaceStore.getState();
+      // Lightweight vs full context: normal chat skips terminal/workspace/execution bloat
+      // Cache static strings: basePrompt/minimal are constants, terminalStatus only varies by panelOpen+model
+      const allMessages: { role: string; content: string }[] = (() => {
+        const isNormal = preIntent && (preIntent.kind === "none" || preIntent.kind === "howto");
+        if (isNormal) {
+          const minimal = isPhi3 ? PHI3_MINIMAL_PROMPT : MINIMAL_PROMPT;
+          const lightHistory = history.slice(-20);
+          // Only build workspace if needed; for "hello" buildContextFor returns null via fast path (no search)
+          const wsRes = useWorkspaceStore.getState().buildContextFor(text);
+          const msgs: { role: string; content: string }[] = [{ role: "system", content: minimal }];
+          if (wsRes?.contextText) msgs.push({ role: "system" as const, content: `Workspace context:\n${wsRes.contextText}` });
+          msgs.push(...lightHistory, { role: "user", content: text });
+          if (process.env.NODE_ENV !== "production") {
+            const fullEstimate = minimal.length + (wsRes?.contextText?.length || 0) + lightHistory.reduce((a: number, m: { content: string }) => a + m.content.length, 0);
+            console.debug(`[Perf][Lightweight] normal chat prompt ~${fullEstimate} chars history=${lightHistory.length} vs full ~6000+`);
+          }
+          return msgs;
+        }
+        // Full terminal/action path
+        const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
+        const basePrompt = isPhi3 ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
+        const terminalStatus = wsStateForPrompt.panelOpen
+          ? isPhi3
+            ? "Terminal is OPEN — use <terminal>COMMAND</terminal> for inspection."
+            : "Terminal panel is OPEN — terminal is available via ```workspace-command {\"run\":{\"command\":\"...\"}}``` and will be auto-executed."
+          : isPhi3
+            ? "Terminal is CLOSED — you do NOT have terminal access right now. Do NOT output <terminal>. Explain or answer directly without terminal."
+            : "Terminal is CLOSED — you do NOT have terminal access. Do NOT use workspace-command. Explain or answer directly.";
+        const execContextText = formatExecutionContextForPrompt(chat.id);
+        return [
+          { role: "system", content: basePrompt },
+          { role: "system", content: terminalStatus },
+          ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
+          ...(execContextText ? [{ role: "system" as const, content: execContextText }] : []),
+          ...history,
+          { role: "user", content: text },
+        ];
+      })();
       perf.mark("T2_end_request_preparation");
       perf.mark("request_preparation_end");
       if (process.env.NODE_ENV !== "production") {
@@ -384,10 +405,20 @@ async function requestAssistant(
       } catch {}
       perf.logSummary();
     } else {
-      // Cloud path: via backend
-      const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
-      const execContextTextCloud = formatExecutionContextForPrompt(chat.id);
-      const combinedWorkspaceContext = [workspaceResult?.contextText, execContextTextCloud].filter(Boolean).join("\n\n") || undefined;
+      // Cloud path: via backend – lightweight for normal chat (skip workspace/execution bloat)
+      let combinedWorkspaceContext: string | undefined;
+      const isNormalCloud = preIntent && (preIntent.kind === "none" || preIntent.kind === "howto");
+      if (isNormalCloud) {
+        // For normal cloud chat, only include workspace if explicitly needed (hello fast path returns null)
+        // Skip execution context entirely for normal chat to reduce prompt ~2k tokens and searchIndex cost
+        const wsRes = useWorkspaceStore.getState().buildContextFor(text);
+        combinedWorkspaceContext = wsRes?.contextText || undefined;
+        if (process.env.NODE_ENV !== "production" && combinedWorkspaceContext) console.debug(`[Perf][Lightweight][Cloud] workspace ${combinedWorkspaceContext.length} chars`);
+      } else {
+        const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
+        const execContextTextCloud = formatExecutionContextForPrompt(chat.id);
+        combinedWorkspaceContext = [workspaceResult?.contextText, execContextTextCloud].filter(Boolean).join("\n\n") || undefined;
+      }
       const events = chatService.sendStream(
         {
           message: text,
