@@ -33,6 +33,11 @@ export class ApiError extends Error {
   }
 }
 
+let cachedToken: string | null = null;
+let cachedTokenExpiry = 0;
+let cachedUid: string | null = null;
+const TOKEN_CACHE_TTL_MS = 55 * 60 * 1000; // 55 min – Firebase tokens valid 60 min
+
 export async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -42,14 +47,33 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
     const currentUser = auth.currentUser;
 
     if (currentUser) {
-      const token = await currentUser.getIdToken();
-      headers["Authorization"] = `Bearer ${token}`;
+      const now = Date.now();
+      if (cachedToken && cachedUid === currentUser.uid && now < cachedTokenExpiry) {
+        headers["Authorization"] = `Bearer ${cachedToken}`;
+      } else {
+        // forceRefresh false uses cached token if still valid, no network if not expired
+        const token = await currentUser.getIdToken(false);
+        cachedToken = token;
+        cachedUid = currentUser.uid;
+        cachedTokenExpiry = now + TOKEN_CACHE_TTL_MS;
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } else {
+      cachedToken = null;
+      cachedUid = null;
+      cachedTokenExpiry = 0;
     }
   } catch (err) {
     console.error("Failed to retrieve auth token:", err);
   }
 
   return headers;
+}
+
+export function clearAuthCache() {
+  cachedToken = null;
+  cachedUid = null;
+  cachedTokenExpiry = 0;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -87,11 +111,18 @@ export async function request<T>(
       },
       cache: "no-store",
     });
-  } catch {
+  } catch (e) {
+    if (externalSignal?.aborted) {
+      throw new ApiError(499, "Aborted");
+    }
     if (controller.signal.aborted) {
       throw new ApiError(0, "The request timed out. Please try again.");
     }
-    throw new ApiError(0, "Network error. Check your connection.");
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("networkerror")) {
+      throw new ApiError(0, `Network error: ${msg} — check backend is running at ${BASE_URL}`);
+    }
+    throw new ApiError(0, `Network error: ${msg}`);
   }
 
   try {
@@ -175,11 +206,18 @@ export async function* requestStream<T>(
       },
       cache: "no-store",
     });
-  } catch {
+  } catch (e) {
+    if (externalSignal?.aborted) {
+      throw new ApiError(499, "Aborted");
+    }
     if (controller.signal.aborted) {
       throw new ApiError(0, "The request timed out. Please try again.");
     }
-    throw new ApiError(0, "Network error. Check your connection.");
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("networkerror")) {
+      throw new ApiError(0, `Network error: ${msg} — check backend is running at ${BASE_URL}`);
+    }
+    throw new ApiError(0, `Network error: ${msg}`);
   }
 
   if (!res.ok) {
@@ -272,11 +310,15 @@ export async function* requestStream<T>(
     for (const event of events) {
       yield event;
     }
-  } catch {
+  } catch (e) {
+    if (externalSignal?.aborted) {
+      throw new ApiError(499, "Aborted");
+    }
     if (controller.signal.aborted) {
       throw new ApiError(0, "The request timed out. Please try again.");
     }
-    throw new ApiError(0, "The connection was interrupted.");
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new ApiError(0, `The connection was interrupted: ${msg}`);
   } finally {
     clearTimeout(overallTimeout);
     disarmStall();

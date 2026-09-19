@@ -11,7 +11,7 @@ let cachedAvailable: boolean | null = null;
 let lastCheck = 0;
 const CACHE_TTL_MS = 5000;
 
-async function isLocalConnectorAvailable(): Promise<boolean> {
+export async function isLocalConnectorAvailable(): Promise<boolean> {
   const now = Date.now();
   if (cachedAvailable !== null && now - lastCheck < CACHE_TTL_MS) return cachedAvailable;
   lastCheck = now;

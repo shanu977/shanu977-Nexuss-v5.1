@@ -280,22 +280,22 @@ async function requestAssistant(
     };
 
     // Fast path for terminal tasks: skip the initial chat LLM and go directly to authorized executor
-    // This saves one full Ollama call (chat) for every filesystem action (e.g., "Create folder")
-    let skipLocalChatForAction = false;
-    if (provider === "local") {
-      try {
-        const { resolveIntent } = await import("@/workspace/agent/intent");
-        const quickIntent = resolveIntent(text);
-        if (quickIntent.kind === "action" && useWorkspaceStore.getState().panelOpen) {
-          skipLocalChatForAction = true;
-          perf.mark("skip_local_chat_for_action");
-          if (process.env.NODE_ENV !== "production") console.debug(`[Perf] skipping initial streamLocalChat for action intent, will use planner LLM only`);
-        }
-      } catch {}
-    }
+    // This saves one full model call (2-4s) for every filesystem action (e.g., "Create folder kumar19")
+    // Use static resolveIntent – no dynamic import per message, no extra tick.
+    let shouldSkipChatForAction = false;
+    try {
+      const preIntent = resolveIntent(text);
+      if (preIntent.kind === "action") {
+        shouldSkipChatForAction = true;
+        perf.mark("skip_chat_for_action");
+        if (process.env.NODE_ENV !== "production") console.debug(`[Perf] skipping chat LLM for action intent, will use executor only`);
+      }
+    } catch {}
 
-    if (provider === "local") {
-      if (!skipLocalChatForAction) {
+    if (shouldSkipChatForAction) {
+      perf.mark("T2_skipped_chat_llm");
+      // No chat streaming – executor will run below and provide authoritative response
+    } else if (provider === "local") {
       if (image) throw new Error("Local models do not support screen-share images yet. Please select a cloud vision model for image analysis.");
       const localState = useLocalModelStore.getState();
       let localModel = localState.models.find((m) => m.modelId === model && m.enabled);
@@ -383,7 +383,6 @@ async function requestAssistant(
         }
       } catch {}
       perf.logSummary();
-      } // end if (!skipLocalChatForAction)
     } else {
       // Cloud path: via backend
       const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
@@ -1044,8 +1043,8 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
           c.id === currentChat!.id ? { ...c, updatedAt } : c
         )
       }));
-      await db.messages.add(userMsg);
-      await db.chats.update(currentChat.id, { updatedAt });
+      // Parallelize DB writes – don't block chat fetch on sequential IndexedDB
+      await Promise.all([db.messages.add(userMsg), db.chats.update(currentChat.id, { updatedAt })]);
 
       const history = get()
         .messages.filter(

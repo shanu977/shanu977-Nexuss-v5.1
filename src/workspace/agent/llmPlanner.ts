@@ -241,15 +241,17 @@ export function planViaDeterministic(userText: string, chatId: string | null): A
 }
 
 // Fast path: simple explicit requests don't need LLM (saves 3s)
+// Refined: pronouns like "inside it" are resolvable deterministically when an explicit target (e.g. "kumar19") is present,
+// so only block truly ambiguous pronouns without explicit target.
 function isSimpleDeterministicRequest(text: string): boolean {
   const lower = text.toLowerCase();
-  // Pronouns / ambiguous need LLM
-  if (/\b(it|that|same name|there|another one|inside that|use that folder|previous one|do the thing)\b/.test(lower)) return false;
-  // Natural language variations that deterministic handles poorly need LLM
-  if (/\b(mkdir|set up|give me a place|i need a new|can you make me)\b/.test(lower)) return false;
   // Must be filesystem action with explicit target
   if (!isFilesystemActionRequest(text)) return false;
   if (!hasExplicitTarget(text)) return false;
+  // Only block highly ambiguous patterns without clear target
+  if (/\b(same name|another one|previous one|do the thing)\b/.test(lower)) return false;
+  // Natural language variations that deterministic handles poorly need LLM
+  if (/\b(mkdir|set up|give me a place|i need a new|can you make me)\b/.test(lower)) return false;
   return true;
 }
 

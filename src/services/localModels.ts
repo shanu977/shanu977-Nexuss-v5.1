@@ -1,6 +1,7 @@
 "use client";
 
 import { normalizeEndpoint, validateEndpoint, isDesktop } from "@/types/localModels";
+import { isLocalConnectorAvailable as sharedIsConnectorAvailable } from "@/workspace/localTerminalRuntime";
 
 export interface LocalTestResult {
   ok: boolean;
@@ -30,22 +31,21 @@ function timeoutFetch(url: string, opts: RequestInit, ms: number): Promise<Respo
 }
 
 const CONNECTOR_ENDPOINT = "http://127.0.0.1:11435/v1";
-const CONNECTOR_HEALTH_TIMEOUT_MS = 1500;
+// Local cache mirrors shared connector cache – avoids duplicate health probes per message
 let cachedAvailable: boolean | null = null;
 let lastCheck = 0;
 const CACHE_TTL_MS = 5000;
 
 async function isConnectorAvailable(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
-  const now = Date.now();
-  if (cachedAvailable !== null && now - lastCheck < CACHE_TTL_MS) return cachedAvailable;
-  lastCheck = now;
   try {
-    const res = await timeoutFetch(`http://127.0.0.1:11435/health`, { method: "GET" }, CONNECTOR_HEALTH_TIMEOUT_MS);
-    cachedAvailable = res.ok;
-    return res.ok;
+    const avail = await sharedIsConnectorAvailable();
+    // Mirror shared result into local vars for sync fast-path in streamLocalChat
+    cachedAvailable = avail;
+    lastCheck = Date.now();
+    return avail;
   } catch {
     cachedAvailable = false;
+    lastCheck = Date.now();
     return false;
   }
 }
