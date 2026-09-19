@@ -15,6 +15,7 @@ import { createAgentPlan } from "./llmPlanner";
 import { validateAgentPlan } from "./planValidator";
 import type { AgentPlan, AgentAction } from "./llmTypes";
 import path from "path";
+import { isSpecialFolderName, resolveSpecialFolderAbsolute, getDefaultUserWorkspace } from "./specialFolders";
 
 function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): AuthorizedAction[] {
   return planned.map((p) => {
@@ -134,7 +135,14 @@ function agentPlanToPlannedActions(plan: AgentPlan, chatId: string): PlannedActi
 }
 
 function isFollowUp(text: string): boolean {
-  return /\b(do the thing|do it|do that|continue|finish it|put it there|inside it|use that folder|add something to it)\b/i.test(text);
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+  // If user provides a location (Downloads/Desktop/C:\Path) when pending exists, treat as follow-up
+  if (isSpecialFolderName(trimmed)) return true;
+  if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return true;
+  if (/\b(downloads|desktop|documents|pictures|videos|music)\b/i.test(text)) return true;
+  if (/\boutside\b/i.test(text)) return true;
+  return /\b(do the thing|do it|do that|continue|finish it|put it there|inside it|use that folder|add something to it|create it)\b/i.test(text);
 }
 
 function resolveFollowUpTarget(chatId: string): PlannedAction[] | null {
@@ -181,6 +189,18 @@ export async function runAuthorizedGoal(
     // Check follow-up explicitly
     if (isFollowUp(userText) && stateBefore) {
       if (stateBefore.pendingActions.length > 0) {
+        // If follow-up is a location (Downloads/Desktop/C:\Path), patch pending's basePath before executing
+        const trimmed = userText.trim();
+        const lowerTrim = trimmed.toLowerCase();
+        const specialSub = lowerTrim.match(/\b(downloads|desktop|documents|pictures|videos|music)\b/);
+        if (specialSub || /^[a-zA-Z]:[\\/]/.test(trimmed)) {
+          const resolved = specialSub ? specialSub[1] : trimmed;
+          const pending = stateBefore.pendingActions[0];
+          if (pending && pending.type === "create_folder" && !(pending as any).basePath) {
+            (pending as any).basePath = resolved;
+            setAgentState(stateBefore);
+          }
+        }
         // Continue pending goal - no new planning needed
         return executePending(chatId, userText, opts);
       }
@@ -383,6 +403,21 @@ export async function runAuthorizedGoal(
     // Fallback to deterministic planner (preserves existing keyword intelligence for tests and when LLM unavailable)
     planned = planFilesystemActions(userText, chatId);
     if (planned.length === 0 && isFollowUp(userText) && stateBefore && stateBefore.pendingActions.length > 0) {
+      // If follow-up is a location clarification (Downloads/Desktop/C:\Path), patch pending's basePath
+      const trimmed = userText.trim();
+      if (isSpecialFolderName(trimmed) || /^[a-zA-Z]:[\\/]/.test(trimmed)) {
+        const resolved = isSpecialFolderName(trimmed) ? resolveSpecialFolderAbsolute(trimmed) : trimmed;
+        const pending = stateBefore.pendingActions[0];
+        if (pending && pending.type === "create_folder" && !(pending as any).basePath) {
+          (pending as any).basePath = resolved;
+          setAgentState(stateBefore);
+        } else if (pending && (pending.type === "create_file" || pending.type === "write_file") && !(pending as any).folderRef) {
+          // For file creation awaiting location, treat as folderRef
+          (pending as any).folderRef = trimmed;
+          (pending as any).basePath = resolved;
+          setAgentState(stateBefore);
+        }
+      }
       return executePending(chatId, userText, opts);
     }
     if (planned.length === 0 && isFollowUp(userText) && stateBefore && stateBefore.completedActions.length > 0) {
@@ -411,22 +446,18 @@ export async function runAuthorizedGoal(
     via = "deterministic";
   }
 
-  // Handle subfolder workspace (e.g., testRoot = cwd/nexuss-terminal-e2e-test)
-  // Real terminal's cwd is process.cwd(), not workspacePath, so we must make paths absolute via basePath
+  // Handle workspacePath: for relative actions without explicit basePath, use workspacePath as parent
+  // This ensures "create folder xyz" goes to user's selected workspace, not repo, and is consistent
+  // for both terminal and fallback. Previously only handled subfolder case, now handles any workspace.
   if (opts.workspacePath) {
     try {
       const wsResolved = path.resolve(opts.workspacePath);
-      const cwdResolved = path.resolve(process.cwd());
-      if (wsResolved !== cwdResolved && wsResolved.startsWith(cwdResolved + path.sep)) {
-        for (const p of planned) {
-          if (p.kind === "createFolder" && !(p as any).basePath) {
-            (p as any).basePath = wsResolved;
-          }
-          if (p.kind === "createFile" && !(p as any).folderRef && !(p as any).basePath) {
-            const rel = path.relative(cwdResolved, wsResolved).replace(/\\/g, "/");
-            if (rel) (p as any).folderRef = rel;
-          }
+      for (const p of planned) {
+        if (p.kind === "createFolder" && !(p as any).basePath) {
+          (p as any).basePath = wsResolved;
         }
+        // For createFile without folder, fallback's actualCwd = workspacePath will place it at workspace root
+        // No need to set folderRef here; execution will use workspace.
       }
     } catch {}
   }
@@ -452,8 +483,8 @@ async function tryBridgeFallback(
   ctx: any,
   opts: { workspacePath: string | null }
 ): Promise<StructuredToolResult | null> {
-  console.log(`[Fallback] opts.workspacePath=${opts.workspacePath} cwd=${opts.workspacePath || process.cwd?.()}`);
-  const cwd = opts.workspacePath || process.cwd?.() || "C:\\mock";
+  console.log(`[Fallback] opts.workspacePath=${opts.workspacePath} cwd=${opts.workspacePath || getDefaultUserWorkspace()}`);
+  const cwd = opts.workspacePath || getDefaultUserWorkspace() || "C:\\mock";
   try {
     // Security: enforce workspace boundary for all fallback operations
     // Only allow relative paths validated by normalizeRelativePath/assertInsideRoot.
@@ -477,8 +508,14 @@ async function tryBridgeFallback(
       const basePath = (planned as any).basePath;
       let fullPath: string;
       if (basePath) {
-        const cleanBase = basePath.replace(/["'`$]/g, "");
-        fullPath = `${cleanBase.replace(/[\\/]+$/, "")}\\${name}`;
+        if (isSpecialFolderName(basePath)) {
+          const specialAbs = resolveSpecialFolderAbsolute(basePath);
+          const pathMod = await import("path");
+          fullPath = pathMod.join(specialAbs, name);
+        } else {
+          const cleanBase = basePath.replace(/["'`$]/g, "");
+          fullPath = `${cleanBase.replace(/[\\/]+$/, "")}\\${name}`;
+        }
       } else if (cwd) {
         fullPath = `${cwd.replace(/[\\/]+$/, "")}\\${name}`;
       } else {
@@ -499,8 +536,8 @@ async function tryBridgeFallback(
       try {
         const fs = await import("fs/promises");
         const pathMod = await import("path");
-        // Determine actual fs path: if cwd is absolute, use it; otherwise use process.cwd()
-        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        // Determine actual fs path: if workspacePath is absolute, use it; otherwise use user's default workspace (homedir), not repo
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         // Re-validate full fs path stays inside allowed parent (actualCwd or basePath)
         // For basePath case, basePath is user-supplied absolute parent – allow it but ensure name is safe (already validated)
         const fsPath = basePath ? fullPath : pathMod.join(actualCwd, name);
@@ -544,29 +581,37 @@ async function tryBridgeFallback(
           }
         } catch {}
       } else if (rawRef) {
-        // Concrete folder name like "project" or absolute path
+        // Concrete folder name like "project" or absolute path or special folder (Downloads/Desktop)
         folderBase = rawRef;
       }
       const fileName = rawFileName;
       let fsPath: string;
       let bridgeRel: string | undefined;
       if (folderBase) {
-        bridgeRel = folderBase.includes("\\") ? `${folderBase}\\${fileName}` : `${folderBase}/${fileName}`;
-        fsPath = folderBase;
-        // If folderBase is absolute (contains :\), build fsPath correctly
-        if (/^[a-zA-Z]:[\\/]/.test(folderBase)) {
+        // Special folder handling – resolve to absolute homedir path for Node fallback
+        if (isSpecialFolderName(folderBase)) {
+          const specialAbs = resolveSpecialFolderAbsolute(folderBase);
           const pathMod = await import("path");
-          fsPath = pathMod.join(folderBase, fileName);
+          fsPath = pathMod.join(specialAbs, fileName);
+          bridgeRel = `${specialAbs.replace(/\\/g, "/")}/${fileName}`;
         } else {
-          const pathMod = await import("path");
-          const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
-          fsPath = pathMod.join(actualCwd, folderBase, fileName);
-          // If folderBase came from fallback (absolute), above join will double; fix
-          if (/^[a-zA-Z]:/.test(folderBase)) fsPath = `${folderBase}\\${fileName}`;
+          bridgeRel = folderBase.includes("\\") ? `${folderBase}\\${fileName}` : `${folderBase}/${fileName}`;
+          fsPath = folderBase;
+          // If folderBase is absolute (contains :\), build fsPath correctly
+          if (/^[a-zA-Z]:[\\/]/.test(folderBase)) {
+            const pathMod = await import("path");
+            fsPath = pathMod.join(folderBase, fileName);
+          } else {
+            const pathMod = await import("path");
+            const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
+            fsPath = pathMod.join(actualCwd, folderBase, fileName);
+            // If folderBase came from fallback (absolute), above join will double; fix
+            if (/^[a-zA-Z]:/.test(folderBase)) fsPath = `${folderBase}\\${fileName}`;
+          }
         }
       } else {
         const pathMod = await import("path");
-        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         fsPath = pathMod.join(actualCwd, fileName);
         bridgeRel = fileName;
       }
@@ -601,7 +646,7 @@ async function tryBridgeFallback(
         // Ensure file path stays inside its parent folderBase or actualCwd
         const parentDir = pathMod.dirname(fsPath);
         const resolvedParent = pathMod.resolve(parentDir);
-        const allowedRoot = folderBase && /^[a-zA-Z]:[\\/]/.test(folderBase) ? pathMod.resolve(folderBase) : pathMod.resolve(opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd());
+        const allowedRoot = folderBase && /^[a-zA-Z]:[\\/]/.test(folderBase) ? pathMod.resolve(folderBase) : pathMod.resolve(opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace());
         if (!resolvedParent.startsWith(allowedRoot + pathMod.sep) && resolvedParent !== allowedRoot) {
           // For file inside folderBase absolute, allow only inside folderBase
           if (folderBase && /^[a-zA-Z]:[\\/]/.test(folderBase)) {
@@ -642,7 +687,7 @@ async function tryBridgeFallback(
       try {
         const fs = await import("fs/promises");
         const pathMod = await import("path");
-        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         const srcPath = /^[a-zA-Z]:[\\/]/.test(src) ? src : pathMod.join(actualCwd, src);
         const dstPath = /^[a-zA-Z]:[\\/]/.test(dst) ? dst : pathMod.join(actualCwd, dst);
         await fs.mkdir(pathMod.dirname(dstPath), { recursive: true });
@@ -667,7 +712,7 @@ async function tryBridgeFallback(
       try {
         const fs = await import("fs/promises");
         const pathMod = await import("path");
-        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         const srcPath = /^[a-zA-Z]:[\\/]/.test(src) ? src : pathMod.join(actualCwd, src);
         const dstPath = /^[a-zA-Z]:[\\/]/.test(dst) ? dst : pathMod.join(actualCwd, dst);
         await fs.mkdir(pathMod.dirname(dstPath), { recursive: true });
@@ -695,7 +740,7 @@ async function tryBridgeFallback(
       try {
         const fs = await import("fs/promises");
         const pathMod = await import("path");
-        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : process.cwd();
+        const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         const fsPath = /^[a-zA-Z]:[\\/]/.test(p) ? p : pathMod.join(actualCwd, p);
         await fs.rm(fsPath, { recursive: true, force: true });
         return { success: true, exitCode: 0, stdout: p, stderr: "", cwd, command: `delete ${p} (fs fallback)`, path: p };

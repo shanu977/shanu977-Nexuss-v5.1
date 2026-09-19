@@ -3,6 +3,7 @@
 // without hardcoding that exact phrase.
 
 import { getRecentExecutionContext } from "./executionContext";
+import { extractBasePath as extractSpecialBasePath, resolveSpecialFolderForPowerShell, isSpecialFolderName } from "./specialFolders";
 
 export type PlannedAction =
   | { kind: "createFolder"; name: string; clause: string; basePath?: string }
@@ -214,6 +215,7 @@ if __name__ == "__main__":
 `;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function resolveFolderRef(target: string | undefined, chatId: string): string | undefined {
   if (!target) return undefined;
   const lower = target.toLowerCase();
@@ -267,7 +269,7 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
         const recentFile = [...ctxs].reverse().find(c => c.object === "file" && c.success && c.name);
         const targetName = recentFolder?.name || recentFile?.name;
         if (targetName) {
-          const basePath = extractAbsolutePath(clause) || extractAbsolutePath(userText);
+          const basePath = extractSpecialBasePath(clause) || extractSpecialBasePath(userText) || extractAbsolutePath(clause) || extractAbsolutePath(userText);
           // Check if it's file or folder context
           const isFile = recentFile && (!recentFolder || recentFile.timestamp > recentFolder.timestamp);
           if (isFile) {
@@ -376,9 +378,17 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
 
     // create folder (including project synonym)
     if (/(create|make)\s+.*(folder|directory|project)/i.test(lower)) {
+      // If clause is just "create the folder outside" without a real name, treat as ambiguous → ask clarification
+      const isOutsideWithoutName = /\boutside\b/i.test(clause) && !/(called|named|name\s+it\s+as)/i.test(clause) && !/(downloads|desktop|documents|pictures|videos|music)/i.test(clause);
+      if (isOutsideWithoutName) {
+        // Don't create folder named "outside"; let it fall through to clarification path
+      } else {
       const name = extractFolderName(clause);
-      if (name) {
-        const basePath = extractAbsolutePath(clause) || extractAbsolutePath(userText);
+      // Filter generic location words mistaken as names
+      const lowerName = name?.toLowerCase();
+      const isGenericLocation = lowerName === "outside" || lowerName === "here" || lowerName === "there";
+      if (name && !isGenericLocation) {
+        const basePath = extractSpecialBasePath(clause) || extractSpecialBasePath(userText) || extractAbsolutePath(clause) || extractAbsolutePath(userText);
         // Avoid using basePath that is actually the target folder itself? basePath is parent
         // Only use basePath if it doesn't already end with the folder name
         const filteredName = name.replace(/\s+/g, " ").trim();
@@ -391,7 +401,8 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
         actions.push({ kind: "createFolder", name: finalName, clause, basePath: basePath || undefined });
         continue;
       }
-    }
+      } // end else for isOutsideWithoutName
+    } // end create folder
 
     // tell me path / where is -> handled as path query if no other action
     // read file
@@ -468,22 +479,30 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
       const safe = action.name.replace(/["'`$]/g, "");
       const base = (action as any).basePath as string | undefined;
       if (base) {
-        // Absolute path supplied explicitly - MUST win over context
-        const cleanBase = base.replace(/["'`$]/g, "").replace(/\\/g, "\\");
-        // Ensure no trailing slash
-        const normalizedBase = cleanBase.replace(/[\\/]+$/, "");
-        const full = `${normalizedBase}\\${safe}`;
+        // Absolute or special folder supplied explicitly - MUST win over context
+        let resolvedBase: string;
+        if (isSpecialFolderName(base)) {
+          resolvedBase = resolveSpecialFolderForPowerShell(base);
+        } else {
+          const cleanBase = base.replace(/["'`$]/g, "").replace(/\\/g, "\\");
+          resolvedBase = cleanBase.replace(/[\\/]+$/, "");
+        }
+        const full = `${resolvedBase}\\${safe}`;
         const safeFull = full.replace(/"/g, "");
         return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '${safeFull}' -Force | Select-Object -ExpandProperty FullName"`;
       }
-      return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '.\\${safe}' -Force | Select-Object -ExpandProperty FullName"`;
+      // No basePath – use user's home (not repo) for safety; $env:USERPROFILE resolves dynamically
+      return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '$env:USERPROFILE\\${safe}' -Force | Select-Object -ExpandProperty FullName"`;
     }
     case "createFile": {
       let targetPath: string;
       if (action.folderRef) {
         if (action.folderRef === "it") {
           const base = resolveIt("it");
-          targetPath = base ? `${base.replace(/\\/g, "/")}/${action.name}` : `.\\${action.name}`;
+          targetPath = base ? `${base.replace(/\\/g, "/")}/${action.name}` : `$env:USERPROFILE\\${action.name}`;
+        } else if (isSpecialFolderName(action.folderRef)) {
+          const specialBase = resolveSpecialFolderForPowerShell(action.folderRef);
+          targetPath = `${specialBase}\\${action.name}`;
         } else {
           // Concrete folder name like "project" or "final_test" or absolute
           // Try to resolve recent folder matching the name, else treat as relative folder
@@ -498,11 +517,11 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
           } else if (/^[a-zA-Z]:[\\/]/.test(action.folderRef) || action.folderRef.includes("/")) {
             targetPath = `${action.folderRef.replace(/\\/g, "/")}/${action.name}`;
           } else {
-            targetPath = `.\\${action.folderRef}/${action.name}`;
+            targetPath = `$env:USERPROFILE\\${action.folderRef}\\${action.name}`;
           }
         }
       } else {
-        targetPath = `.\\${action.name}`;
+        targetPath = `$env:USERPROFILE\\${action.name}`;
       }
       const safe = targetPath.replace(/"/g, "");
       const contentPart = action.content ? ` -Value '${action.content.replace(/'/g, "''")}'` : "";
@@ -577,9 +596,10 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
       }
       const safe = raw.replace(/"/g, "");
       let resolved = safe;
-      if (/^downloads$/i.test(safe)) resolved = "C:\\Users\\pilli\\Downloads";
-      else if (/^desktop$/i.test(safe)) resolved = "C:\\Users\\pilli\\Desktop";
-      else if (/^documents$/i.test(safe)) resolved = "C:\\Users\\pilli\\Documents";
+      if (isSpecialFolderName(safe)) resolved = resolveSpecialFolderForPowerShell(safe);
+      else if (/^downloads$/i.test(safe)) resolved = resolveSpecialFolderForPowerShell("downloads");
+      else if (/^desktop$/i.test(safe)) resolved = resolveSpecialFolderForPowerShell("desktop");
+      else if (/^documents$/i.test(safe)) resolved = resolveSpecialFolderForPowerShell("documents");
       else if (safe === "it") {
         // fallback verification of last created folder
         const fb = resolveIt("it");

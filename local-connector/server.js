@@ -143,7 +143,14 @@ const server = http.createServer((req, res) => {
           const { spawn } = require('child_process');
           const start = Date.now();
           let argv, spawnOpts;
-          const cwd = process.cwd();
+          // Respect client cwd when provided and absolute; otherwise use user's home (not repo) for relative safety
+          const rawCwd = (data.cwd || '').toString().trim();
+          let cwd;
+          if (rawCwd && /^[a-zA-Z]:[\\/]/.test(rawCwd)) {
+            cwd = rawCwd;
+          } else {
+            try { cwd = require('os').homedir() || process.cwd(); } catch { cwd = process.cwd(); }
+          }
           const env = { ...process.env };
           // For simple Windows builtins, wrap via cmd.exe
           let spawnCmd, spawnArgs;
