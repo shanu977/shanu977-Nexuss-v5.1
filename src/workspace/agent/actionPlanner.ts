@@ -80,9 +80,9 @@ function extractFolderName(clause: string): string | null {
   // Prefer explicit "called X" / "named X" (handles backticks and avoids mis-capturing "project for testing")
   const m2 = clause.match(/called\s+["'`]?([a-zA-Z0-9_\- ]+)["'`]?/i);
   if (m2) return m2[1].trim().replace(/\s+/g, " ").trim().replace(/["'`]/g, "");
-  // Handle "folder name called X" and "folder called X" with spaces/numbers
+  // Handle "folder name called X", "folder name X", "folder called X" with spaces/numbers/typos (preserve as-is, don't correct "soemthing")
   // Keep full name (e.g., "shanu 1999") - split only on trailing delimiters, not internal spaces
-  const m = clause.match(/(?:folder|directory|project)\s+(?:called\s+|named\s+|name\s+called\s+)?["'`]?([a-zA-Z0-9_\- ]+?)["'`]?(?:\s+and|\s*$|\s+inside|\s+here|\.|,|;)/i);
+  const m = clause.match(/(?:folder|directory|project)\s+(?:called\s+|named\s+|name\s+called\s+|name\s+)?["'`]?([a-zA-Z0-9_\- ]+?)["'`]?(?:\s+and|\s*$|\s+inside|\s+here|\.|,|;)/i);
   if (m) {
     const raw = m[1].trim().replace(/["'`]/g, "");
     // Keep full name but normalize multiple spaces, preserve single spaces

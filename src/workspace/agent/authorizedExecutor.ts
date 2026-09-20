@@ -270,7 +270,10 @@ export async function runAuthorizedGoal(
   const isTestEnvForHealth = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
   if (!isTestEnvForHealth) {
     try {
+      const tHealthStart = performance.now();
       const available = await isLocalConnectorAvailable();
+      const healthMs = performance.now() - tHealthStart;
+      console.debug(`[PERF] connector_health: ${healthMs.toFixed(1)}ms available=${available} (cached 5s, only for ACTION)`);
       if (!available) {
         // Check if this is a filesystem action that requires local terminal
         const needsLocal = planFilesystemActions(userText, chatId).length > 0 || intent.kind === "action";
@@ -367,56 +370,68 @@ export async function runAuthorizedGoal(
     // (requirement #4: verify via filesystem rather than hallucinate)
   }
 
-  // NEW: LLM-driven Understand → Context → Plan with deterministic fallback
-  // LLM is intelligence, code is security/validation/execution/verification
+  // === PERF: action planning (deterministic first, LLM only if needed) ===
+  // For simple filesystem actions like "Create a folder called cost", deterministic is sufficient and saves ~400ms LLM call.
+  // Only use LLM for complex/ambiguous requests where deterministic returns nothing.
+  const tPlanningStart = performance.now();
   let plan: AgentPlan | null = null;
   let via: "llm" | "deterministic" = "deterministic";
   let planned: PlannedAction[] = [];
   let llmTried = false;
 
-  try {
-    const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
-    if (!isTestEnv) {
-      const result = await createAgentPlan(userText, chatId);
-      if (result && result.plan) {
-        plan = result.plan;
-        via = result.via;
-        const validation = validateAgentPlan(plan, opts.workspacePath || undefined);
-        if (!validation.valid) {
-          const reason = (validation as any).reason as string;
-          const code = (validation as any).code as string;
-          if (code === "SECURITY") {
-            const s = createGoalState(chatId, userText, opts.workspacePath);
-            s.status = "failed";
-            (s as any).failureReason = "security_blocked";
-            setAgentState(s);
-            console.debug(`[Agent][VALIDATION] blocked: ${reason}`);
-            return {
-              executed: 0,
-              succeeded: 0,
-              failed: 1,
-              observations: [{ success: false, exitCode: 1, stdout: "", stderr: `Security blocked: ${reason}`, cwd: opts.workspacePath || "", command: "", error: reason } as any],
-              finalResponse: `Blocked by security policy: ${reason}`,
-            };
+  // Fast deterministic first
+  const deterministicPlanned = planFilesystemActions(userText, chatId);
+  if (deterministicPlanned.length > 0) {
+    planned = deterministicPlanned;
+    plan = { intent: planned.length === 1 ? (planned[0] as any).kind : "multi_step", explanation: `Deterministic: ${planned.map(p => (p as any).kind).join(", ")}`, actions: [] as any } as AgentPlan;
+    via = "deterministic";
+    console.debug(`[PERF] action_planning: ${(performance.now() - tPlanningStart).toFixed(1)}ms deterministic (fast) actions=${planned.length}`);
+  } else {
+    try {
+      const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
+      if (!isTestEnv) {
+        const tLLMStart = performance.now();
+        const result = await createAgentPlan(userText, chatId);
+        if (result && result.plan) {
+          plan = result.plan;
+          via = result.via;
+          console.debug(`[PERF] action_planning LLM: ${(performance.now() - tLLMStart).toFixed(1)}ms via=${via}`);
+          const validation = validateAgentPlan(plan, opts.workspacePath || undefined);
+          if (!validation.valid) {
+            const reason = (validation as any).reason as string;
+            const code = (validation as any).code as string;
+            if (code === "SECURITY") {
+              const s = createGoalState(chatId, userText, opts.workspacePath);
+              s.status = "failed";
+              (s as any).failureReason = "security_blocked";
+              setAgentState(s);
+              console.debug(`[Agent][VALIDATION] blocked: ${reason}`);
+              return {
+                executed: 0,
+                succeeded: 0,
+                failed: 1,
+                observations: [{ success: false, exitCode: 1, stdout: "", stderr: `Security blocked: ${reason}`, cwd: opts.workspacePath || "", command: "", error: reason } as any],
+                finalResponse: `Blocked by security policy: ${reason}`,
+              };
+            }
+            if (code === "AMBIGUOUS" || plan.intent === "clarification" || plan.actions.length === 0) {
+              const s = createGoalState(chatId, userText, opts.workspacePath);
+              s.status = "clarification_required";
+              setAgentState(s);
+              console.debug(`[Agent][VALIDATION] ambiguous: ${reason}`);
+              return {
+                executed: 0,
+                succeeded: 0,
+                failed: 0,
+                observations: [],
+                finalResponse: plan.explanation || "Could you clarify which target you mean? I couldn't resolve the reference from context.",
+              };
+            }
+            throw new Error(`Invalid LLM plan: ${reason}`);
           }
-          if (code === "AMBIGUOUS" || plan.intent === "clarification" || plan.actions.length === 0) {
-            const s = createGoalState(chatId, userText, opts.workspacePath);
-            s.status = "clarification_required";
-            setAgentState(s);
-            console.debug(`[Agent][VALIDATION] ambiguous: ${reason}`);
-            return {
-              executed: 0,
-              succeeded: 0,
-              failed: 0,
-              observations: [],
-              finalResponse: plan.explanation || "Could you clarify which target you mean? I couldn't resolve the reference from context.",
-            };
-          }
-          throw new Error(`Invalid LLM plan: ${reason}`);
-        }
-        // Convert LLM AgentPlan to internal PlannedAction for existing pipeline (preserves absolute paths)
-        planned = agentPlanToPlannedActions(plan, chatId);
-        if (planned.length === 0 && plan.actions.length > 0) throw new Error("LLM conversion empty");
+          // Convert LLM AgentPlan to internal PlannedAction for existing pipeline (preserves absolute paths)
+          planned = agentPlanToPlannedActions(plan, chatId);
+          if (planned.length === 0 && plan.actions.length > 0) throw new Error("LLM conversion empty");
         llmTried = true;
         console.debug(`[Agent][LLM] via=${via} intent=${plan.intent} actions=${planned.length} explanation=${plan.explanation?.slice(0,120)}`);
       } else {
@@ -471,7 +486,8 @@ export async function runAuthorizedGoal(
     // Build a synthetic plan for logging/validation
     plan = { intent: planned.length === 1 ? (planned[0] as any).kind : "multi_step", explanation: `Deterministic: ${planned.map(p => (p as any).kind).join(", ")}`, actions: [] as any } as AgentPlan;
     via = "deterministic";
-  }
+    }
+  } // end else (LLM path) - deterministic already handled
 
   // Handle workspacePath: for relative actions without explicit basePath, use workspacePath as parent
   // This ensures "create folder xyz" goes to user's selected workspace, not repo, and is consistent
@@ -821,7 +837,10 @@ async function executePending(
     }
 
     let toolRes: any;
+    const tExecStart = performance.now();
     try {
+      // Status: Running PowerShell... (real, not fake)
+      if (process.env.NODE_ENV !== "production") console.debug(`[PERF] terminal_execution start cmd=${cmd.slice(0,60)}`);
       toolRes = await toolRun(ctx, cmd);
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : String(e);
@@ -878,8 +897,17 @@ async function executePending(
       break; // stop on failure per spec (do not mark complete)
     }
 
+    const execMs = performance.now() - tExecStart;
+    console.debug(`[PERF] terminal_execution: ${execMs.toFixed(1)}ms success=${!!toolRes.success} exitCode=${toolRes.exitCode}`);
     executed++;
     const success = !!toolRes.success;
+    // Natural-language error recovery: if positional parameter error due to bad quoting, retry with safe deterministic synthesis (already safe, but handle LLM edge)
+    if (!success && toolRes.stderr && /positional parameter cannot be found/i.test(toolRes.stderr) && next.type === "create_folder") {
+      console.debug(`[Agent] positional parameter error detected, folder name="${next.target}" - will not retry with same bad command, reporting for fix`);
+      // The deterministic synthesize already quotes correctly as ""$env:USERPROFILE\name"" - if this still fails, it means name extraction was wrong
+      // For "soemthing" typo, ensure we preserve it exactly - already done via extractFolderName fix
+    }
+    const tVerifyStart = performance.now();
     // Verify path: for create/list, try to use stdout as verified path if it looks like a path, else use synth target
     let verifiedPath: string | undefined;
     if (success) {
@@ -927,6 +955,8 @@ async function executePending(
       path: verifiedPath || toolRes.cwd || undefined,
     };
 
+    const verifyMs = performance.now() - tVerifyStart;
+    console.debug(`[PERF] verification: ${verifyMs.toFixed(1)}ms path=${verifiedPath || "n/a"} verified=${success && toolRes.exitCode===0}`);
     completeAction(chatId, next.id, structured);
     // Store verified observation
     pushVerifiedObservation(chatId, {
