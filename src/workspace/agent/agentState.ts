@@ -22,6 +22,10 @@ export interface AuthorizedAction {
 
 export interface StructuredToolResult {
   success: boolean;
+  executed?: boolean; // true only when command actually executed via real terminal
+  verified?: boolean; // true only when filesystem/process result verified
+  executor?: "local-connector" | "bridge" | "fs-fallback" | "none";
+  action?: string; // e.g., createFolder
   exitCode: number | null;
   stdout: string;
   stderr: string;

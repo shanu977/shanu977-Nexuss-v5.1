@@ -9,7 +9,7 @@ import { synthesizeCommand, PlannedAction, planFilesystemActions, hasExplicitTar
 import { getAgentState, setAgentState, createGoalState, updateGoalWithActions, completeAction, AuthorizedAction, StructuredToolResult, newActionId } from "./agentState";
 import { pushVerifiedObservation, getRecentExecutionContext, ExecutionContextEntry } from "./executionContext";
 import { resolveIntent } from "./intent";
-import { createLocalConnectorRuntime } from "@/workspace/localTerminalRuntime";
+import { createLocalConnectorRuntime, isLocalConnectorAvailable } from "@/workspace/localTerminalRuntime";
 import { normalizeRelativePath, assertInsideRoot } from "@/workspace/path";
 import { createAgentPlan } from "./llmPlanner";
 import { validateAgentPlan } from "./planValidator";
@@ -264,6 +264,33 @@ export async function runAuthorizedGoal(
     };
   }
 
+  // Production connector health check: ensure local connector is actually reachable
+  // before claiming we can do local filesystem actions. Browser -> localhost fetch.
+  // If unavailable, return CONNECTOR_UNAVAILABLE immediately (do not fallback to remote fs).
+  const isTestEnvForHealth = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
+  if (!isTestEnvForHealth) {
+    try {
+      const available = await isLocalConnectorAvailable();
+      if (!available) {
+        // Check if this is a filesystem action that requires local terminal
+        const needsLocal = planFilesystemActions(userText, chatId).length > 0 || intent.kind === "action";
+        if (needsLocal) {
+          const s = createGoalState(chatId, userText, opts.workspacePath);
+          s.status = "failed";
+          s.failureReason = "connector_unavailable";
+          setAgentState(s);
+          return {
+            executed: 0,
+            succeeded: 0,
+            failed: 1,
+            observations: [{ success: false, executed: false, verified: false, executor: "none", action: "connector_check", exitCode: null, stdout: "", stderr: "CONNECTOR_UNAVAILABLE", cwd: opts.workspacePath || "", command: "", error: "CONNECTOR_UNAVAILABLE" } as any],
+            finalResponse: `CONNECTOR_UNAVAILABLE: Local connector at http://127.0.0.1:11435 is not reachable. Your command was NOT executed. Please start the local connector with "node local-connector/server.js" and ensure your browser allows Private Network Access (Chrome: allow "Insecure private network requests" for nexuss.in). Then try again.`,
+          };
+        }
+      }
+    } catch {}
+  }
+
   // Deterministic path/continuity resolver: answer "what is the path?" etc from verified executionContext
   // before falling back to terminal verification. This ensures follow-up pronouns ("it", "that") work
   // even without a new terminal execution, and satisfies requirement #2 and #3.
@@ -483,6 +510,11 @@ async function tryBridgeFallback(
   ctx: any,
   opts: { workspacePath: string | null }
 ): Promise<StructuredToolResult | null> {
+  // PRODUCTION SAFETY: fallback is ONLY allowed in test (vitest) environment.
+  // In production (browser, NODE_ENV=production), never use Node fs fallback
+  // as it would run on remote server, not user's PC, and fake success.
+  const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
+  if (!isTestEnv) return null;
   console.log(`[Fallback] opts.workspacePath=${opts.workspacePath} cwd=${opts.workspacePath || getDefaultUserWorkspace()}`);
   const cwd = opts.workspacePath || getDefaultUserWorkspace() || "C:\\mock";
   try {
@@ -795,31 +827,40 @@ async function executePending(
       const rawMsg = e instanceof Error ? e.message : String(e);
       const isNetwork = rawMsg.includes("NETWORK_ERROR") || rawMsg.includes("Failed to fetch") || rawMsg.includes("ECONNREFUSED") || rawMsg.includes("Cannot reach local terminal");
       if (isNetwork) {
-        // Attempt filesystem fallback via bridge or Node fs when connector is unreachable
-        const fallbackResult = await tryBridgeFallback(next, plannedLike, chatId, ctx, opts);
-        if (fallbackResult && fallbackResult.success) {
-          completeAction(chatId, next.id, fallbackResult);
-          pushVerifiedObservation(chatId, {
-            userText,
-            command: cmd,
-            cwd: fallbackResult.cwd,
-            stdout: fallbackResult.stdout,
-            stderr: fallbackResult.stderr,
-            exitCode: fallbackResult.exitCode,
-            success: true,
-            action: (next.type === "create_folder" ? "create" : next.type === "create_file" || next.type === "write_file" ? "create" : "run") as any,
-            object: (next.type === "create_folder" ? "folder" : "file") as any,
-            name: next.target,
-            path: fallbackResult.path,
-          } as any);
-          observations.push(fallbackResult);
-          succeeded++;
-          executed++;
-          continue;
+        // PRODUCTION FIX: Never fabricate success via fallback when local connector is unreachable.
+        // Only in test environment (vitest) allow fs/bridge fallback for CI. In production (browser),
+        // NETWORK_ERROR must be CONNECTOR_UNAVAILABLE, not fallback success.
+        const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
+        let fallbackResult: StructuredToolResult | null = null;
+        if (isTestEnv) {
+          fallbackResult = await tryBridgeFallback(next, plannedLike, chatId, ctx, opts);
+          if (fallbackResult && fallbackResult.success) {
+            completeAction(chatId, next.id, fallbackResult);
+            pushVerifiedObservation(chatId, {
+              userText,
+              command: cmd,
+              cwd: fallbackResult.cwd,
+              stdout: fallbackResult.stdout,
+              stderr: fallbackResult.stderr,
+              exitCode: fallbackResult.exitCode,
+              success: true,
+              action: (next.type === "create_folder" ? "create" : next.type === "create_file" || next.type === "write_file" ? "create" : "run") as any,
+              object: (next.type === "create_folder" ? "folder" : "file") as any,
+              name: next.target,
+              path: fallbackResult.path,
+            } as any);
+            observations.push(fallbackResult);
+            succeeded++;
+            executed++;
+            continue;
+          }
         }
         const cleanMsg = rawMsg.replace(/^NETWORK_ERROR:\s*/i, "").trim();
-        const msg = `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult ? fallbackResult.stderr : "Please ensure node local-connector/server.js is running."}`;
-        const res: StructuredToolResult = { success: false, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
+        // Production: CONNECTOR_UNAVAILABLE — do not execute remotely, do not fabricate success
+        const msg = isTestEnv && fallbackResult
+          ? `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult.stderr} Please ensure node local-connector/server.js is running.`
+          : `CONNECTOR_UNAVAILABLE: Cannot reach local terminal connector at http://127.0.0.1:11435. The local connector is not running or not reachable from your browser. Please start it with "node local-connector/server.js" and ensure your browser allows Private Network Access. Your command was NOT executed and no files were modified. Details: ${cleanMsg || rawMsg}`;
+        const res: StructuredToolResult = { success: false, executed: false, verified: false, executor: "none", action: next.type, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
         completeAction(chatId, next.id, res);
         pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });
         observations.push(res);
@@ -828,7 +869,7 @@ async function executePending(
         break;
       }
       const msg = rawMsg;
-      const res: StructuredToolResult = { success: false, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
+      const res: StructuredToolResult = { success: false, executed: false, verified: false, executor: "none", action: next.type, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
       completeAction(chatId, next.id, res);
       pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });
       observations.push(res);
@@ -874,6 +915,10 @@ async function executePending(
 
     const structured: StructuredToolResult = {
       success,
+      executed: true,
+      verified: success && toolRes.exitCode === 0,
+      executor: "local-connector",
+      action: next.type,
       exitCode: toolRes.exitCode ?? null,
       stdout: toolRes.stdout || "",
       stderr: toolRes.stderr || "",
