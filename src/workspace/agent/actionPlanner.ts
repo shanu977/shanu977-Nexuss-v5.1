@@ -491,8 +491,8 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
         const safeFull = full.replace(/"/g, "");
         return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '${safeFull}' -Force | Select-Object -ExpandProperty FullName"`;
       }
-      // No basePath – use user's home (not repo) for safety; $env:USERPROFILE resolves dynamically
-      return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '$env:USERPROFILE\\${safe}' -Force | Select-Object -ExpandProperty FullName"`;
+      // No basePath – use user's home (not repo) for safety; $env:USERPROFILE resolves dynamically (must use "" for expansion)
+      return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path ""$env:USERPROFILE\\${safe}"" -Force | Select-Object -ExpandProperty FullName"`;
     }
     case "createFile": {
       let targetPath: string;
@@ -524,8 +524,14 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
         targetPath = `$env:USERPROFILE\\${action.name}`;
       }
       const safe = targetPath.replace(/"/g, "");
+      let pathArg: string;
+      if (safe.includes("$env:USERPROFILE")) {
+        pathArg = `""${safe}""`;
+      } else {
+        pathArg = `'${safe}'`;
+      }
       const contentPart = action.content ? ` -Value '${action.content.replace(/'/g, "''")}'` : "";
-      return `powershell -NoProfile -Command "New-Item -ItemType File -Path '${safe}'${contentPart} -Force | Select-Object -ExpandProperty FullName"`;
+      return `powershell -NoProfile -Command "New-Item -ItemType File -Path ${pathArg}${contentPart} -Force | Select-Object -ExpandProperty FullName"`;
     }
     case "writeFile": {
       let targetPath: string;

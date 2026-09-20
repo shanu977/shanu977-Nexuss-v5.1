@@ -114,7 +114,7 @@ const server = http.createServer((req, res) => {
             res.end(JSON.stringify({ error: 'Shell metacharacters are not allowed.' }));
             return;
           }
-          if (isPowerShell && /[&;<>`\r\n%^$]/.test(command)) {
+          if (isPowerShell && /[&;<>`\r\n%^]/.test(command)) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Shell metacharacters are not allowed.' }));
             return;
@@ -149,7 +149,12 @@ const server = http.createServer((req, res) => {
           if (rawCwd && /^[a-zA-Z]:[\\/]/.test(rawCwd)) {
             cwd = rawCwd;
           } else {
-            try { cwd = require('os').homedir() || process.cwd(); } catch { cwd = process.cwd(); }
+            try { cwd = require('os').homedir() || process.env.USERPROFILE || process.env.HOME || process.cwd(); } catch { cwd = process.env.USERPROFILE || process.env.HOME || process.cwd(); }
+            // Never default to repo if homedir available; ensure we don't use Next.js repo dir
+            if (!cwd || cwd === process.cwd()) {
+              const home = process.env.USERPROFILE || process.env.HOME || require('os').homedir();
+              if (home && home !== process.cwd()) cwd = home;
+            }
           }
           const env = { ...process.env };
           // For simple Windows builtins, wrap via cmd.exe
