@@ -125,3 +125,34 @@ def test_global_settings_distinct_from_user_settings(client):
     user_settings = client.get("/settings", headers=user_headers)
     assert user_settings.status_code == 200
     assert user_settings.json()["theme"] == "light"
+def test_settings_audit_does_not_store_values(client):
+    """Audit logs must not contain old or new setting values."""
+    from app.models import AuditLog
+
+    admin_headers = make_admin(client, auth_headers(client))
+
+    secret_value = "SUPER_SECRET_TEST_VALUE_12345"
+
+    res = client.put(
+        "/admin/settings",
+        headers=admin_headers,
+        json=[
+            {
+                "key": "feature:test_setting",
+                "value": secret_value,
+                "value_type": "string",
+            }
+        ],
+    )
+    assert res.status_code == 200
+
+    db = TestingSessionLocal()
+    try:
+        logs = db.query(AuditLog).all()
+        assert logs
+
+        for log in logs:
+            if log.details:
+                assert secret_value not in log.details
+    finally:
+        db.close()
