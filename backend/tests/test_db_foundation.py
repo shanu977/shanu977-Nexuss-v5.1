@@ -290,7 +290,7 @@ def test_migration_upgrade_and_downgrade(tmp_path):
         cfg.set_main_option("sqlalchemy.url", url)
 
         command.upgrade(cfg, "a1b2c3d4e5f6")
-        command.stamp(cfg, "d5e6f7a8b9c0")
+        command.stamp(cfg, "c4d5e6f7a8b9")
         command.upgrade(cfg, "head")
 
         engine = create_engine(url)
@@ -307,7 +307,7 @@ def test_migration_upgrade_and_downgrade(tmp_path):
             assert "ix_usage_records_user_id" in usage_indexes
             assert "ix_usage_records_provider" in usage_indexes
 
-            command.downgrade(cfg, "-1")
+            command.downgrade(cfg, "e1f2a3b4c5d6")
 
             inspector = inspect(engine)
             tables_after = set(inspector.get_table_names())

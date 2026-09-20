@@ -84,7 +84,10 @@ def test_settings_update_records_audit(client):
     assert rows[0].target_type == "app_settings"
     assert rows[0].target_id == "feature:flag"
     details = json.loads(rows[0].details)
-    assert details["to"] == "true"
+    assert details["key"] == "feature:flag"
+    assert details["changed"] is True
+    assert "to" not in details
+    assert "from" not in details
 
 
 def test_feedback_status_change_records_audit(client):

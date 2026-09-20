@@ -155,6 +155,7 @@ class EmailOTP(Base):
     max_attempts = Column(Integer, nullable=False, default=3)
     resend_available_at = Column(BigInteger, nullable=False, default=0)
     used = Column(Boolean, nullable=False, default=False)
+    verification_ticket_used = Column(Boolean, nullable=False, default=False)
     created_at = Column(BigInteger, nullable=False, default=utc_now_ms)
 
 

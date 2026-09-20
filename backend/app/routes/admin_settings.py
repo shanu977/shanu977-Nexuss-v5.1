@@ -90,7 +90,7 @@ def put_settings(
             target_type="app_settings",
             target_id=item.key,
             details={
-                "key": item.key
+                "key": item.key,
                  "changed": old_value != item.value,
 },
             ip_address=audit_service.client_ip(request),

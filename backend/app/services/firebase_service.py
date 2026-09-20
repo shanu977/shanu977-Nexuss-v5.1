@@ -217,11 +217,15 @@ def get_user_by_email(email: str) -> dict | None:
 
 def update_user_password(uid: str, password: str) -> bool:
     """Attach/update password credential for existing Firebase user."""
+
     initialize_firebase()
+
     try:
         from firebase_admin import auth
+
         auth.update_user(uid, password=password)
         return True
-    except Exception as e:
-        logger.error(f"Failed to update Firebase password for UID {uid}: {e}")
-        raise ValueError(f"Failed to update password: {str(e)}")
+
+    except Exception:
+        logger.exception("Failed to update Firebase password for user")
+        raise ValueError("Failed to update password.")

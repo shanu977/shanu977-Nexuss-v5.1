@@ -243,6 +243,7 @@ def verify_otp(
     token_payload = {
         "email": email,
         "purpose": "password_linking",
+        "jti": record.id,
         "exp": exp_timestamp,
     }
     verification_token = jwt.encode(
@@ -255,19 +256,35 @@ def verify_otp(
     )
 
 
-def _verify_verification_token(email: str, token: str) -> None:
-    """Validate the signed OTP-verification ticket for `email`.
-
-    The ticket is issued only by a successful /auth/otp/verify (single-use OTP)
-    and binds the exact email it was issued to. Raises 401 if the token is
-    missing, forged, expired, or bound to a different address.
-    """
+def _verify_verification_token(email: str, token: str, db: Session):
     try:
         decoded = jwt.decode(
             token, settings.otp_secret_key, algorithms=["HS256"]
         )
-        if decoded.get("email") != email or decoded.get("purpose") != "password_linking":
+
+        if (
+            decoded.get("email") != email
+            or decoded.get("purpose") != "password_linking"
+        ):
             raise ValueError("Token verification failed")
+
+        ticket_id = decoded.get("jti")
+        if not ticket_id:
+            raise ValueError("Missing verification ticket")
+
+        record = db.query(EmailOTP).filter(EmailOTP.id == ticket_id).first()
+
+        if not record:
+            raise ValueError("Verification ticket not found")
+
+        if record.email != email:
+            raise ValueError("Verification ticket email mismatch")
+
+        if record.verification_ticket_used:
+            raise ValueError("Verification ticket already used")
+
+        return record
+
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -278,6 +295,7 @@ def _verify_verification_token(email: str, token: str) -> None:
 @router.post("/set-password")
 def set_password(
     payload: SetPasswordRequest,
+    db: Session = Depends(get_db),
 ):
     """Set password for an existing account after OTP email verification.
 
@@ -292,13 +310,15 @@ def set_password(
             detail="Password must be at least 6 characters long.",
         )
 
-    _verify_verification_token(email, payload.verification_token)
+    record=_verify_verification_token(email, payload.verification_token,db)
 
     # Fetch user from Firebase to find existing UID
     fb_user = firebase_service.get_user_by_email(email)
     if fb_user:
         uid = fb_user["uid"]
         firebase_service.update_user_password(uid, password)
+        record.verification_ticket_used = True
+        db.commit()
         return {
             "success": True,
             "message": "Password successfully created and linked to your account.",
@@ -308,6 +328,8 @@ def set_password(
         try:
             from firebase_admin import auth
             auth.create_user(email=email, password=password)
+            record.verification_ticket_used = True
+            db.commit()  
             return {
                 "success": True,
                 "message": "Account created successfully with email and password.",
@@ -323,6 +345,7 @@ def set_password(
 @router.post("/reset-password")
 def reset_password(
     payload: SetPasswordRequest,
+     db: Session = Depends(get_db),
 ):
     """Reset the password of an EXISTING account after OTP email verification.
 
@@ -342,7 +365,7 @@ def reset_password(
             detail="Password must be at least 6 characters long.",
         )
 
-    _verify_verification_token(email, payload.verification_token)
+    record=_verify_verification_token(email, payload.verification_token,db)
 
     # Resolve the account server-side. Never trust a UID from the client.
     fb_user = firebase_service.get_user_by_email(email)
@@ -355,6 +378,8 @@ def reset_password(
 
     uid = fb_user["uid"]
     firebase_service.update_user_password(uid, password)
+    record.verification_ticket_used = True
+    db.commit()
     return {
         "success": True,
         "message": "Password reset successfully.",

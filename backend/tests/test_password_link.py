@@ -254,6 +254,40 @@ def test_set_password_links_to_existing_uid(client, mock_firebase, fixed_otp):
     assert mock_firebase["update_user_password"] == [(UID_A, "new-secret-1")]
     assert mock_firebase["create_user_calls"] == 0
 
+def test_set_password_verification_ticket_cannot_be_reused(
+    client, mock_firebase, fixed_otp
+):
+    mock_firebase["user"] = _google_only_user()
+
+    client.post("/auth/otp/send", json={"email": EMAIL})
+    token = client.post(
+        "/auth/otp/verify", json={"email": EMAIL, "otp": "555555"}
+    ).json()["verification_token"]
+
+    first = client.post(
+        "/auth/set-password",
+        json={
+            "email": EMAIL,
+            "verification_token": token,
+            "password": "first-secret-1",
+        },
+    )
+
+    second = client.post(
+        "/auth/set-password",
+        json={
+            "email": EMAIL,
+            "verification_token": token,
+            "password": "second-secret-1",
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 401
+    assert mock_firebase["update_user_password"] == [
+        (UID_A, "first-secret-1")
+    ]
+
 
 def test_set_password_never_creates_duplicate_account(client, mock_firebase, fixed_otp):
     mock_firebase["user"] = _google_and_password_user()

@@ -277,6 +277,33 @@ def test_reset_otp_is_single_use(client, mock_firebase, fixed_otp):
     second = client.post("/auth/otp/verify", json={"email": EMAIL, "otp": "555555"})
     assert second.status_code == 400
 
+def test_verification_ticket_reuse_behavior(client, mock_firebase, fixed_otp):
+    """Check whether the verification ticket can be reused."""
+    mock_firebase["user"] = _password_user()
+
+    token = _obtain_token(client)
+
+    first = client.post(
+        "/auth/reset-password",
+        json={
+            "email": EMAIL,
+            "verification_token": token,
+            "password": "first-pass-1",
+        },
+    )
+
+    second = client.post(
+        "/auth/reset-password",
+        json={
+            "email": EMAIL,
+            "verification_token": token,
+            "password": "second-pass-1",
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 401
+
 
 def test_resend_cooldown_applies(client, mock_firebase, fixed_otp):
     mock_firebase["user"] = _password_user()

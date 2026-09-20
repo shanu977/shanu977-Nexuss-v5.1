@@ -4,6 +4,7 @@ import { auth } from "@/lib/firebase";
 import { useChatStore } from "@/store/chatStore";
 import { useUsageStore } from "@/store/usageStore";
 import { useLocalModelStore } from "@/store/localModelStore";
+import { clearAuthCache } from "@/services/api";
 
 interface AuthState {
   user: User | null;
@@ -69,6 +70,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch (err) {
       console.error("Sign out error:", err);
     } finally {
+      clearAuthCache();
       // Clear sensitive auth state.
       set({ user: null, idToken: null, loading: false });
       // Clear all in-memory chat/usage state and account-scoped localStorage
