@@ -125,6 +125,7 @@ def test_global_settings_distinct_from_user_settings(client):
     user_settings = client.get("/settings", headers=user_headers)
     assert user_settings.status_code == 200
     assert user_settings.json()["theme"] == "light"
+
 def test_settings_audit_does_not_store_values(client):
     """Audit logs must not contain old or new setting values."""
     from app.models import AuditLog
