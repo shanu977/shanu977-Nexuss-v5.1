@@ -27,6 +27,7 @@ curl -i -H "Origin: https://www.nexuss.in" \
 
 Expected: 200 with CORS headers and {"status": "ok", "database": "ok"}
 
+
 ---
 
 ## 2. Test /settings (Requires Auth)
