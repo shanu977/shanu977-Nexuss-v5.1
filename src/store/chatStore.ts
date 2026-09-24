@@ -279,20 +279,33 @@ async function requestAssistant(
       }
     };
 
-    // Fast path for terminal tasks: skip the initial chat LLM and go directly to authorized executor
-    // This saves one full model call (2-4s) for every filesystem action (e.g., "Create folder kumar19")
-    // Use static resolveIntent – no dynamic import per message, no extra tick.
-    // Also determine lightweight vs full context path for prompt prefill optimization.
+    // === FAST INTENT GATE (extremely cheap, before any expensive pipeline) ===
+    // Normal chat like "Hi" must NOT pay terminal costs: no planning, no connector, no PowerShell.
+    const intentGateStart = performance.now();
     let shouldSkipChatForAction = false;
     let preIntent: ReturnType<typeof resolveIntent> | null = null;
-    try {
-      preIntent = resolveIntent(text);
-      if (preIntent.kind === "action") {
-        shouldSkipChatForAction = true;
-        perf.mark("skip_chat_for_action");
-        if (process.env.NODE_ENV !== "production") console.debug(`[Perf] skipping chat LLM for action intent, will use executor only`);
-      }
-    } catch {}
+    // Ultra-fast deterministic check for obviously normal chat (single-word greetings etc.)
+    // This avoids even calling the full intent regex for the most common case.
+    const trimmedLowerFast = text.trim().toLowerCase();
+    const isObviouslyNormal = trimmedLowerFast.length <= 20 && /^(hi|hello|hey|hiya|yo|sup|howdy|greetings|thanks|thank you|okay|ok|good morning|good afternoon|good evening)(\s*[!?.]*)?$/.test(trimmedLowerFast);
+    if (isObviouslyNormal) {
+      preIntent = { kind: "none" as const, isTerminalExplicit: false, raw: text };
+      perf.mark("intent_gate_normal_fast");
+      if (process.env.NODE_ENV !== "production" || typeof window !== "undefined") console.debug(`[PERF] intent_gate: ${(performance.now() - intentGateStart).toFixed(1)}ms CHAT (obvious normal) text="${text.slice(0,20)}"`);
+    } else {
+      try {
+        preIntent = resolveIntent(text);
+        const intentGateMs = performance.now() - intentGateStart;
+        perf.mark(`intent_gate_${preIntent.kind}`);
+        // Log for dev: distinguish LLM vs terminal latency later
+        if (process.env.NODE_ENV !== "production" || typeof window !== "undefined") console.debug(`[PERF] intent_gate: ${intentGateMs.toFixed(1)}ms kind=${preIntent.kind} text="${text.slice(0,30).replace(/\n/g,' ')}"`);
+        if (preIntent.kind === "action") {
+          shouldSkipChatForAction = true;
+          perf.mark("skip_chat_for_action");
+          if (process.env.NODE_ENV !== "production") console.debug(`[Perf] skipping chat LLM for action intent, will use executor only`);
+        }
+      } catch {}
+    }
 
     if (shouldSkipChatForAction) {
       perf.mark("T2_skipped_chat_llm");

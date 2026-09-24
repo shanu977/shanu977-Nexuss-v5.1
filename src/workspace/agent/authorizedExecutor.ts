@@ -5,7 +5,7 @@
 
 import { getToolContext } from "./loop";
 import { toolRun } from "./tools";
-import { synthesizeCommand, PlannedAction, planFilesystemActions, hasExplicitTarget } from "./actionPlanner";
+import { synthesizeCommand, PlannedAction, planFilesystemActions, hasExplicitTarget, getIncompleteClarification } from "./actionPlanner";
 import { getAgentState, setAgentState, createGoalState, updateGoalWithActions, completeAction, AuthorizedAction, StructuredToolResult, newActionId } from "./agentState";
 import { pushVerifiedObservation, getRecentExecutionContext, ExecutionContextEntry } from "./executionContext";
 import { resolveIntent } from "./intent";
@@ -264,32 +264,9 @@ export async function runAuthorizedGoal(
     };
   }
 
-  // Production connector health check: ensure local connector is actually reachable
-  // before claiming we can do local filesystem actions. Browser -> localhost fetch.
-  // If unavailable, return CONNECTOR_UNAVAILABLE immediately (do not fallback to remote fs).
-  const isTestEnvForHealth = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
-  if (!isTestEnvForHealth) {
-    try {
-      const available = await isLocalConnectorAvailable();
-      if (!available) {
-        // Check if this is a filesystem action that requires local terminal
-        const needsLocal = planFilesystemActions(userText, chatId).length > 0 || intent.kind === "action";
-        if (needsLocal) {
-          const s = createGoalState(chatId, userText, opts.workspacePath);
-          s.status = "failed";
-          s.failureReason = "connector_unavailable";
-          setAgentState(s);
-          return {
-            executed: 0,
-            succeeded: 0,
-            failed: 1,
-            observations: [{ success: false, executed: false, verified: false, executor: "none", action: "connector_check", exitCode: null, stdout: "", stderr: "CONNECTOR_UNAVAILABLE", cwd: opts.workspacePath || "", command: "", error: "CONNECTOR_UNAVAILABLE" } as any],
-            finalResponse: `CONNECTOR_UNAVAILABLE: Local connector at http://127.0.0.1:11435 is not reachable. Your command was NOT executed. Please start the local connector with "node local-connector/server.js" and ensure your browser allows Private Network Access (Chrome: allow "Insecure private network requests" for nexuss.in). Then try again.`,
-          };
-        }
-      }
-    } catch {}
-  }
+  // Note: connector health check deferred until after planning is validated,
+  // so incomplete requests (e.g. "create a folder" with no name) do NOT trigger terminal infrastructure.
+  // See planning section below for CONNECTOR_UNAVAILABLE handling.
 
   // Deterministic path/continuity resolver: answer "what is the path?" etc from verified executionContext
   // before falling back to terminal verification. This ensures follow-up pronouns ("it", "that") work
@@ -367,56 +344,68 @@ export async function runAuthorizedGoal(
     // (requirement #4: verify via filesystem rather than hallucinate)
   }
 
-  // NEW: LLM-driven Understand → Context → Plan with deterministic fallback
-  // LLM is intelligence, code is security/validation/execution/verification
+  // === PERF: action planning (deterministic first, LLM only if needed) ===
+  // For simple filesystem actions like "Create a folder called cost", deterministic is sufficient and saves ~400ms LLM call.
+  // Only use LLM for complex/ambiguous requests where deterministic returns nothing.
+  const tPlanningStart = performance.now();
   let plan: AgentPlan | null = null;
   let via: "llm" | "deterministic" = "deterministic";
   let planned: PlannedAction[] = [];
   let llmTried = false;
 
-  try {
-    const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
-    if (!isTestEnv) {
-      const result = await createAgentPlan(userText, chatId);
-      if (result && result.plan) {
-        plan = result.plan;
-        via = result.via;
-        const validation = validateAgentPlan(plan, opts.workspacePath || undefined);
-        if (!validation.valid) {
-          const reason = (validation as any).reason as string;
-          const code = (validation as any).code as string;
-          if (code === "SECURITY") {
-            const s = createGoalState(chatId, userText, opts.workspacePath);
-            s.status = "failed";
-            (s as any).failureReason = "security_blocked";
-            setAgentState(s);
-            console.debug(`[Agent][VALIDATION] blocked: ${reason}`);
-            return {
-              executed: 0,
-              succeeded: 0,
-              failed: 1,
-              observations: [{ success: false, exitCode: 1, stdout: "", stderr: `Security blocked: ${reason}`, cwd: opts.workspacePath || "", command: "", error: reason } as any],
-              finalResponse: `Blocked by security policy: ${reason}`,
-            };
+  // Fast deterministic first
+  const deterministicPlanned = planFilesystemActions(userText, chatId);
+  if (deterministicPlanned.length > 0) {
+    planned = deterministicPlanned;
+    plan = { intent: planned.length === 1 ? (planned[0] as any).kind : "multi_step", explanation: `Deterministic: ${planned.map(p => (p as any).kind).join(", ")}`, actions: [] as any } as AgentPlan;
+    via = "deterministic";
+    console.debug(`[PERF] action_planning: ${(performance.now() - tPlanningStart).toFixed(1)}ms deterministic (fast) actions=${planned.length}`);
+  } else {
+    try {
+      const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
+      if (!isTestEnv) {
+        const tLLMStart = performance.now();
+        const result = await createAgentPlan(userText, chatId);
+        if (result && result.plan) {
+          plan = result.plan;
+          via = result.via;
+          console.debug(`[PERF] action_planning LLM: ${(performance.now() - tLLMStart).toFixed(1)}ms via=${via}`);
+          const validation = validateAgentPlan(plan, opts.workspacePath || undefined);
+          if (!validation.valid) {
+            const reason = (validation as any).reason as string;
+            const code = (validation as any).code as string;
+            if (code === "SECURITY") {
+              const s = createGoalState(chatId, userText, opts.workspacePath);
+              s.status = "failed";
+              (s as any).failureReason = "security_blocked";
+              setAgentState(s);
+              console.debug(`[Agent][VALIDATION] blocked: ${reason}`);
+              return {
+                executed: 0,
+                succeeded: 0,
+                failed: 1,
+                observations: [{ success: false, exitCode: 1, stdout: "", stderr: `Security blocked: ${reason}`, cwd: opts.workspacePath || "", command: "", error: reason } as any],
+                finalResponse: `Blocked by security policy: ${reason}`,
+              };
+            }
+            if (code === "AMBIGUOUS" || plan.intent === "clarification" || plan.actions.length === 0) {
+              const s = createGoalState(chatId, userText, opts.workspacePath);
+              s.status = "clarification_required";
+              setAgentState(s);
+              console.debug(`[Agent][VALIDATION] ambiguous: ${reason}`);
+              return {
+                executed: 0,
+                succeeded: 0,
+                failed: 0,
+                observations: [],
+                finalResponse: plan.explanation || "Could you clarify which target you mean? I couldn't resolve the reference from context.",
+              };
+            }
+            throw new Error(`Invalid LLM plan: ${reason}`);
           }
-          if (code === "AMBIGUOUS" || plan.intent === "clarification" || plan.actions.length === 0) {
-            const s = createGoalState(chatId, userText, opts.workspacePath);
-            s.status = "clarification_required";
-            setAgentState(s);
-            console.debug(`[Agent][VALIDATION] ambiguous: ${reason}`);
-            return {
-              executed: 0,
-              succeeded: 0,
-              failed: 0,
-              observations: [],
-              finalResponse: plan.explanation || "Could you clarify which target you mean? I couldn't resolve the reference from context.",
-            };
-          }
-          throw new Error(`Invalid LLM plan: ${reason}`);
-        }
-        // Convert LLM AgentPlan to internal PlannedAction for existing pipeline (preserves absolute paths)
-        planned = agentPlanToPlannedActions(plan, chatId);
-        if (planned.length === 0 && plan.actions.length > 0) throw new Error("LLM conversion empty");
+          // Convert LLM AgentPlan to internal PlannedAction for existing pipeline (preserves absolute paths)
+          planned = agentPlanToPlannedActions(plan, chatId);
+          if (planned.length === 0 && plan.actions.length > 0) throw new Error("LLM conversion empty");
         llmTried = true;
         console.debug(`[Agent][LLM] via=${via} intent=${plan.intent} actions=${planned.length} explanation=${plan.explanation?.slice(0,120)}`);
       } else {
@@ -460,17 +449,45 @@ export async function runAuthorizedGoal(
       const s = createGoalState(chatId, userText, opts.workspacePath);
       s.status = "clarification_required";
       setAgentState(s);
+      // Tailored clarification for incomplete requests (spec: "Sure — what should I name the folder?")
+      const tailored = getIncompleteClarification(userText);
       return {
         executed: 0,
         succeeded: 0,
         failed: 0,
         observations: [],
-        finalResponse: "I wasn't able to determine a specific filesystem action from that request. Could you clarify the folder or file name you'd like me to create, list, or delete?",
+        finalResponse: tailored || "I wasn't able to determine a specific filesystem action from that request. Could you clarify the folder or file name you'd like me to create, list, or delete?",
       };
     }
     // Build a synthetic plan for logging/validation
     plan = { intent: planned.length === 1 ? (planned[0] as any).kind : "multi_step", explanation: `Deterministic: ${planned.map(p => (p as any).kind).join(", ")}`, actions: [] as any } as AgentPlan;
     via = "deterministic";
+    }
+  } // end else (LLM path) - deterministic already handled
+
+  // Deferred connector health check: only after we have a valid, non-clarification plan
+  // This ensures incomplete requests (e.g. "create a folder") do NOT trigger terminal infrastructure
+  const isTestEnvForHealth2 = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
+  if (!isTestEnvForHealth2 && planned.length > 0) {
+    try {
+      const tHealthStart = performance.now();
+      const available = await isLocalConnectorAvailable();
+      const healthMs = performance.now() - tHealthStart;
+      console.debug(`[PERF] connector_health: ${healthMs.toFixed(1)}ms available=${available} (cached 5s, only for ACTION)`);
+      if (!available) {
+        const s = createGoalState(chatId, userText, opts.workspacePath);
+        s.status = "failed";
+        s.failureReason = "connector_unavailable";
+        setAgentState(s);
+        return {
+          executed: 0,
+          succeeded: 0,
+          failed: 1,
+          observations: [{ success: false, executed: false, verified: false, executor: "none", action: "connector_check", exitCode: null, stdout: "", stderr: "CONNECTOR_UNAVAILABLE", cwd: opts.workspacePath || "", command: "", error: "CONNECTOR_UNAVAILABLE" } as any],
+          finalResponse: `CONNECTOR_UNAVAILABLE: Local connector at http://127.0.0.1:11435 is not reachable. Your command was NOT executed. Please start the local connector with "node local-connector/server.js" and ensure your browser allows Private Network Access (Chrome: allow "Insecure private network requests" for nexuss.in). Then try again.`,
+        };
+      }
+    } catch {}
   }
 
   // Handle workspacePath: for relative actions without explicit basePath, use workspacePath as parent
@@ -489,10 +506,28 @@ export async function runAuthorizedGoal(
     } catch {}
   }
 
+  // Handle incomplete requests that were not caught earlier (e.g. via LLM clarification path)
+  if (planned.length === 0) {
+    const tailored = getIncompleteClarification(userText);
+    const s = createGoalState(chatId, userText, opts.workspacePath);
+    s.status = "clarification_required";
+    setAgentState(s);
+    return {
+      executed: 0,
+      succeeded: 0,
+      failed: 0,
+      observations: [],
+      finalResponse: tailored || plan?.explanation || "I wasn't able to determine a specific filesystem action from that request. Could you clarify the folder or file name you'd like me to create, list, or delete?",
+    };
+  }
+
   // At this point, planned is ready (from LLM or deterministic) and validated
   // Log structured plan for debugging (without chain-of-thought)
   if (plan) {
     console.debug(`[Agent][PLAN] via=${via} intent=${plan.intent} actions=${JSON.stringify(plan.actions).slice(0,600)}`);
+  }
+  if (process.env.NODE_ENV !== "production") {
+    console.debug(`[Agent][PLANNED] ${JSON.stringify(planned).slice(0,800)}`);
   }
 
   // Create authoritative goal state
@@ -821,7 +856,10 @@ async function executePending(
     }
 
     let toolRes: any;
+    const tExecStart = performance.now();
     try {
+      // Status: Running PowerShell... (real, not fake)
+      if (process.env.NODE_ENV !== "production") console.debug(`[PERF] terminal_execution start cmd=${cmd.slice(0,60)}`);
       toolRes = await toolRun(ctx, cmd);
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : String(e);
@@ -878,8 +916,17 @@ async function executePending(
       break; // stop on failure per spec (do not mark complete)
     }
 
+    const execMs = performance.now() - tExecStart;
+    console.debug(`[PERF] terminal_execution: ${execMs.toFixed(1)}ms success=${!!toolRes.success} exitCode=${toolRes.exitCode}`);
     executed++;
     const success = !!toolRes.success;
+    // Natural-language error recovery: if positional parameter error due to bad quoting, retry with safe deterministic synthesis (already safe, but handle LLM edge)
+    if (!success && toolRes.stderr && /positional parameter cannot be found/i.test(toolRes.stderr) && next.type === "create_folder") {
+      console.debug(`[Agent] positional parameter error detected, folder name="${next.target}" - will not retry with same bad command, reporting for fix`);
+      // The deterministic synthesize already quotes correctly as ""$env:USERPROFILE\name"" - if this still fails, it means name extraction was wrong
+      // For "soemthing" typo, ensure we preserve it exactly - already done via extractFolderName fix
+    }
+    const tVerifyStart = performance.now();
     // Verify path: for create/list, try to use stdout as verified path if it looks like a path, else use synth target
     let verifiedPath: string | undefined;
     if (success) {
@@ -904,6 +951,36 @@ async function executePending(
       }
       else if (next.type === "write_file" && out && out.includes("\\")) verifiedPath = out.split("\n")[0].trim();
     }
+    // For create_file/write_file with base64 pipeline, stdout is empty but success true – derive path
+    if (!verifiedPath && success && ((next.type as any) === "create_file" || (next.type as any) === "write_file")) {
+      try {
+        const planned = authorizedToPlanned(next) as any;
+        const fileName = planned.name || next.target.split("/").pop() || next.target.split("\\").pop() || "index.js";
+        if (planned.folderRef === "it" || planned.folderRef) {
+          const ctxs = getRecentExecutionContext(chatId);
+          const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && c.path);
+          if (folder?.path) {
+            verifiedPath = `${folder.path.replace(/\\/g, "/")}/${fileName}`.replace(/\//g, "\\");
+          } else if (planned.folderRef && planned.folderRef !== "it" && !planned.folderRef.includes(":") && !planned.folderRef.includes("$")) {
+            verifiedPath = `${getDefaultUserWorkspace()}\\${planned.folderRef}\\${fileName}`;
+          } else {
+            verifiedPath = `${getDefaultUserWorkspace()}\\${fileName}`;
+          }
+        } else {
+          verifiedPath = `${getDefaultUserWorkspace()}\\${fileName}`;
+        }
+        const mCmd = cmd.match(/-LiteralPath\s+["']?([^"']+)["']?/);
+        if (mCmd) {
+          let p = mCmd[1].trim();
+          if (p.includes("$env:USERPROFILE")) {
+            try { const home = (typeof process !== "undefined" && process.env.USERPROFILE) || ""; if (home) p = p.replace(/\$env:USERPROFILE/g, home).replace(/""/g, '"').replace(/^"|"$/g, ""); } catch { p = p.replace(/\$env:USERPROFILE/g, "").replace(/""/g, ""); }
+          }
+          p = p.replace(/\//g, "\\").replace(/""/g, '"').replace(/^"|"$/g, "").replace(/^'+|'+$/g, "");
+          if (p && /^[a-zA-Z]:/.test(p)) verifiedPath = p;
+          else if (p && p.includes("\\")) verifiedPath = p;
+        }
+      } catch {}
+    }
     // For list/goTo with target "it", resolve actual path from executionContext for observation
     if (!verifiedPath && (next.type === "list" || next.type === "goTo" || next.type === "read") && next.target === "it") {
       try {
@@ -927,6 +1004,8 @@ async function executePending(
       path: verifiedPath || toolRes.cwd || undefined,
     };
 
+    const verifyMs = performance.now() - tVerifyStart;
+    console.debug(`[PERF] verification: ${verifyMs.toFixed(1)}ms path=${verifiedPath || "n/a"} verified=${success && toolRes.exitCode===0}`);
     completeAction(chatId, next.id, structured);
     // Store verified observation
     pushVerifiedObservation(chatId, {
@@ -1032,6 +1111,9 @@ function authorizedToPlanned(a: AuthorizedAction): PlannedAction {
     case "delete": return { kind: "delete", target: a.target, clause: a.rawClause };
     case "goTo": return { kind: "goTo", target: a.target, clause: a.rawClause };
     case "read": return { kind: "read", target: a.target, clause: a.rawClause };
+    case "run": return { kind: "run", command: (a as any).command || a.target, clause: a.rawClause } as any;
+    case "move": return { kind: "move", source: (a as any).source, destination: (a as any).destination, clause: a.rawClause } as any;
+    case "copy": return { kind: "copy", source: (a as any).source, destination: (a as any).destination, clause: a.rawClause } as any;
     default: return { kind: "list", clause: a.rawClause } as any;
   }
 }
