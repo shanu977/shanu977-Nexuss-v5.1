@@ -8,7 +8,7 @@ const nextConfig = {
         headers: [
           {
             key: "Permissions-Policy",
-            value: "local-network-access=(self), private-network-access=(self)",
+            value: "local-network-access=(self)",
           },
         ],
       },

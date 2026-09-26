@@ -483,7 +483,7 @@ export async function runAuthorizedGoal(
           succeeded: 0,
           failed: 1,
           observations: [{ success: false, executed: false, verified: false, executor: "none", action: "connector_check", exitCode: null, stdout: "", stderr: "CONNECTOR_UNAVAILABLE", cwd: opts.workspacePath || "", command: "", error: "CONNECTOR_UNAVAILABLE" } as any],
-          finalResponse: `CONNECTOR_UNAVAILABLE: Local connector at http://127.0.0.1:11435 is not reachable. Your command was NOT executed. Please start the local connector with "node local-connector/server.js" and ensure your browser allows Private Network Access (Chrome: allow "Insecure private network requests" for nexuss.in). Then try again.`,
+          finalResponse: `CONNECTOR_UNAVAILABLE: Local connector at http://127.0.0.1:11435 is not reachable. Your command was NOT executed. Please start the local connector with "node local-connector/server.js" and when Chrome prompts "Allow www.nexuss.in to access your local network" click Allow (or enable chrome://flags#block-insecure-private-network-requests). Then try again.`,
         };
       }
     } catch {}
@@ -898,7 +898,7 @@ async function executePending(
         // Production: CONNECTOR_UNAVAILABLE — do not execute remotely, do not fabricate success
         const msg = isTestEnv && fallbackResult
           ? `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult.stderr} Please ensure node local-connector/server.js is running.`
-          : `CONNECTOR_UNAVAILABLE: Cannot reach local terminal connector at http://127.0.0.1:11435. The local connector is not running or not reachable from your browser. Please start it with "node local-connector/server.js" and ensure your browser allows Private Network Access. Your command was NOT executed and no files were modified. Details: ${cleanMsg || rawMsg}`;
+          : `CONNECTOR_UNAVAILABLE: Cannot reach local terminal connector at http://127.0.0.1:11435. The local connector is not running or not reachable from your browser. Please start it with "node local-connector/server.js" and when Chrome prompts "Allow www.nexuss.in to access your local network" click Allow. Your command was NOT executed and no files were modified. Details: ${cleanMsg || rawMsg}`;
         const res: StructuredToolResult = { success: false, executed: false, verified: false, executor: "none", action: next.type, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
         completeAction(chatId, next.id, res);
         pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });

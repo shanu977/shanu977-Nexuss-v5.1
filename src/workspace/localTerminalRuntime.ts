@@ -27,7 +27,7 @@ export async function isLocalConnectorAvailable(): Promise<boolean> {
     const t = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
     // Use simple GET without custom Content-Type to avoid extra preflight; PNA preflight for
     // https://www.nexuss.in (public) -> http://127.0.0.1:11435 (private) is still required and handled by server.
-    const res = await fetch(`${CONNECTOR_URL}/health`, { signal: controller.signal, method: "GET" });
+    const res = await fetch(`${CONNECTOR_URL}/health`, { signal: controller.signal, method: "GET", mode: "cors" });
     clearTimeout(t);
     if (!res.ok) { cachedAvailable = false; return false; }
     const data = await res.json().catch(() => ({}));
@@ -51,14 +51,15 @@ export function createLocalConnectorRuntime(): {
       try {
         res = await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
           method: "POST",
+          mode: "cors",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ command: req.command, cwd: req.cwd, timeoutMs: req.timeoutMs })
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        // Network/CORS/mixed-content failure — distinguish from terminal command failure
-        if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("ECONNREFUSED") || msg.includes("fetch")) {
-          throw new Error(`NETWORK_ERROR: Cannot reach local terminal connector at ${CONNECTOR_URL}. Ensure it is running (node local-connector/server.js) and your browser allows Private Network Access. Details: ${msg}`);
+        // Network/CORS/mixed-content/PNA failure — distinguish from terminal command failure
+        if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("ECONNREFUSED") || msg.includes("fetch") || msg.includes("Permission")) {
+          throw new Error(`NETWORK_ERROR: Cannot reach local terminal connector at ${CONNECTOR_URL}. Ensure it is running (node local-connector/server.js) and when Chrome prompts "Allow www.nexuss.in to access your local network" click Allow. Also check chrome://flags#block-insecure-private-network-requests if needed. Details: ${msg}`);
         }
         throw new Error(`NETWORK_ERROR: ${msg}`);
       }
@@ -93,12 +94,13 @@ export function createLocalConnectorRuntime(): {
       try {
         res = await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
           method: "POST",
+          mode: "cors",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ command: "npm test", cwd: req.cwd, timeoutMs: req.timeoutMs })
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("ECONNREFUSED") || msg.includes("fetch")) {
+        if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("ECONNREFUSED") || msg.includes("fetch") || msg.includes("Permission")) {
           throw new Error(`NETWORK_ERROR: Cannot reach local terminal connector at ${CONNECTOR_URL}. Details: ${msg}`);
         }
         throw new Error(`NETWORK_ERROR: ${msg}`);
