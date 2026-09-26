@@ -124,7 +124,7 @@ def test_global_settings_distinct_from_user_settings(client):
     # The per-user settings endpoint still returns the user's own settings.
     user_settings = client.get("/settings", headers=user_headers)
     assert user_settings.status_code == 200
-    assert user_settings.json()["theme"] == "light"
+    assert user_settings.json()["theme"] == "dark"
 
 def test_settings_audit_does_not_store_values(client):
     """Audit logs must not contain old or new setting values."""

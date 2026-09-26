@@ -126,7 +126,7 @@ def get_current_user(
         settings = UserSettings(
             id=str(uuid.uuid4()),
             user_id=user.id,
-            theme="light",
+            theme="dark",
             language="en",
             provider="groq",
             model="openai/gpt-oss-120b",

@@ -63,7 +63,7 @@ def test_existing_normal_user_data_intact_and_role_defaults_to_user(client):
 
     get = client.get("/settings", headers=headers)
     assert get.status_code == 200
-    assert get.json()["theme"] == "light"
+    assert get.json()["theme"] == "dark"
 
     # The existing user record is intact, with the default role.
     db = TestingSessionLocal()

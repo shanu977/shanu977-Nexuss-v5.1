@@ -207,7 +207,7 @@ def test_forged_user_id_in_body_is_rejected(client):
     )
 
     # None of the rejected requests mutated A's own data.
-    assert client.get("/settings", headers=HEADERS_A).json()["theme"] == "light"
+    assert client.get("/settings", headers=HEADERS_A).json()["theme"] == "dark"
     assert client.get("/conversations", headers=HEADERS_A).json() == []
 
 

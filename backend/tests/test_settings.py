@@ -6,7 +6,7 @@ def test_settings_default_and_update(client):
     get = client.get("/settings", headers=headers)
     assert get.status_code == 200
     body = get.json()
-    assert body["theme"] == "light"
+    assert body["theme"] == "dark"
     assert body["language"] == "en"
     assert body["provider"] == "groq"
     assert body["model"] == "openai/gpt-oss-120b"
@@ -169,5 +169,5 @@ def test_settings_null_field_is_ignored_not_500(client):
     headers = auth_headers(client)
     resp = client.put("/settings", headers=headers, json={"theme": None})
     assert resp.status_code == 200
-    assert resp.json()["theme"] == "light"
+    assert resp.json()["theme"] == "dark"
     assert resp.json()["language"] == "en"

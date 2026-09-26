@@ -109,7 +109,7 @@ class UserSettings(Base):
         unique=True,
         index=True,
     )
-    theme = Column(String, nullable=False, default="light")
+    theme = Column(String, nullable=False, default="dark")
     language = Column(String, nullable=False, default="en")
     provider = Column(String, nullable=False, default="groq")
     model = Column(String, nullable=False, default="openai/gpt-oss-120b")
