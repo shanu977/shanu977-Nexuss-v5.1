@@ -15,10 +15,19 @@ export async function isLocalConnectorAvailable(): Promise<boolean> {
   const now = Date.now();
   if (cachedAvailable !== null && now - lastCheck < CACHE_TTL_MS) return cachedAvailable;
   lastCheck = now;
+  // Best-effort: trigger Local Network Access permission prompt on Chrome 130+ (public -> private)
+  // This is a no-op on browsers that don't support the permission; we ignore failures.
+  try {
+    if (typeof navigator !== "undefined" && (navigator as unknown as { permissions?: { query: (opts: unknown) => Promise<unknown> } }).permissions?.query) {
+      await (navigator as unknown as { permissions: { query: (opts: unknown) => Promise<unknown> } }).permissions.query({ name: "local-network-access" } as unknown as never).catch(() => {});
+    }
+  } catch {}
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-    const res = await fetch(`${CONNECTOR_URL}/health`, { signal: controller.signal, headers: { "Content-Type": "application/json" } });
+    // Use simple GET without custom Content-Type to avoid extra preflight; PNA preflight for
+    // https://www.nexuss.in (public) -> http://127.0.0.1:11435 (private) is still required and handled by server.
+    const res = await fetch(`${CONNECTOR_URL}/health`, { signal: controller.signal, method: "GET" });
     clearTimeout(t);
     if (!res.ok) { cachedAvailable = false; return false; }
     const data = await res.json().catch(() => ({}));
