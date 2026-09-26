@@ -482,7 +482,7 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
     if (/\brun\b/i.test(lower)) {
       const mRun = clause.match(/\brun\b\s+(.+)/i);
       if (mRun) {
-        let cmd = mRun[1].trim().replace(/\s+using\s+the\s+terminal\s*$/i, '').replace(/\s+via\s+terminal\s*$/i, '').trim();
+        const cmd = mRun[1].trim().replace(/\s+using\s+the\s+terminal\s*$/i, '').replace(/\s+via\s+terminal\s*$/i, '').trim();
         // Strip leading "node " handling: keep as is, executor will validate
         if (cmd) {
           // If cmd is like "node folder\file" and folder is UID, ensure we use correct separator
@@ -757,7 +757,7 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
 }
 
 export function synthesizeCommand(action: PlannedAction, chatId: string, hasExplicitTargetFlag = false): string {
-  const isValidPath = (p: string) => p && (p.includes(":\\") || p.includes(":/") || p.includes("$env") || /^[a-zA-Z]:[\\/]/.test(p));
+  const isValidPath = (p: string | undefined) => !!p && (p.includes(":\\") || p.includes(":/") || p.includes("$env") || /^[a-zA-Z]:[\\/]/.test(p));
   const resolveIt = (target?: string) => {
     if (!target) {
       if (hasExplicitTargetFlag) return undefined;
@@ -1019,7 +1019,7 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
           try {
             const ctxs = getRecentExecutionContext(chatId);
             // First try to find exact file by name
-            const fileMatch = [...ctxs].reverse().find(c => c.object === "file" && c.path && c.path.toLowerCase().endsWith(targetPath.toLowerCase()) && isValidPath(c.path));
+            const fileMatch = [...ctxs].reverse().find(c => c.object === "file" && c.path && c.path.toLowerCase().endsWith((targetPath ?? "").toLowerCase()) && isValidPath(c.path));
             if (fileMatch?.path) targetPath = fileMatch.path;
             else {
               // Fallback: prepend recent folder path
