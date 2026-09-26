@@ -54,10 +54,10 @@ def test_account_isolation(client):
     assert res.status_code == 200
     assert res.json()["theme"] == "dark"
 
-    # User B checks setting - should still be default 'light'
+    # User B checks setting - should still be default 'dark'
     res_b = client.get("/settings", headers=headers_b)
     assert res_b.status_code == 200
-    assert res_b.json()["theme"] == "light"
+    assert res_b.json()["theme"] == "dark"
 
 
 def test_otp_generation_and_hashing(client):

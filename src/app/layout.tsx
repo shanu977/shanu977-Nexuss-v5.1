@@ -6,10 +6,13 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: {
-    default: "Chatbot",
-    template: "%s · Chatbot"
+    default: "Nexuss",
+    template: "%s · Nexuss"
   },
-  description: "Local AI chat app"
+  description: "Nexuss AI chat app",
+  icons: {
+    icon: "/nexuss-logo.png"
+  }
 };
 
 // Mobile-first viewport: no user scaling lock, safe-area insets are exposed
@@ -36,7 +39,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{(function(){var t=JSON.parse(window.localStorage.getItem("theme")||"null");if(t==="dark"){document.documentElement.classList.add("dark")}})()}catch(e){}`
+            __html: `try{(function(){var t=JSON.parse(window.localStorage.getItem("theme")||"null");if(t==="light"){document.documentElement.classList.remove("dark")}else{document.documentElement.classList.add("dark")}})()}catch(e){document.documentElement.classList.add("dark")}`
           }}
         />
       </head>

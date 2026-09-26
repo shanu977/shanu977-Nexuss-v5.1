@@ -2,6 +2,7 @@
 
 import { useChatStore } from "@/store";
 import { PanelLeftIcon } from "@/components/icons";
+import { NexussLogo } from "@/components/admin/NexussLogo";
 
 interface ChatHeaderProps {
   sidebarOpen: boolean;
@@ -30,6 +31,7 @@ export default function ChatHeader({
 
         <div className="flex min-w-0 flex-col">
           <div className="flex items-center gap-2">
+            <NexussLogo size={22} color="currentColor" className="text-foreground shrink-0" />
             <span className="text-xs font-mono font-bold uppercase tracking-widest text-muted-foreground">
               NEXUSS AI
             </span>

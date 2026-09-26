@@ -66,7 +66,10 @@ export function isFilesystemActionRequest(t: string): boolean {
     /\bfind.*bug\b/.test(lower) ||
     /\bfix.*bug\b/.test(lower) ||
     /\b(find|fix)\b.*\b(bug|error)\b/.test(lower) ||
-    /\brun\b.*\b(check|test|node|code)\b/.test(lower)
+    /\brun\b.*\b(check|test|node|code)\b/.test(lower) ||
+    /\bcopy\b.*\b(to|inside)\b/.test(lower) ||
+    /\bmove\b.*\b(to|inside)\b/.test(lower) ||
+    /\brun\b.*\.js\b/.test(lower)
   );
 }
 
@@ -87,13 +90,14 @@ function extractFolderName(clause: string): string | null {
   const m2 = clause.match(/called\s+["'`]?([a-zA-Z0-9_\- ]+)["'`]?/i);
   if (m2) {
     let raw = m2[1].trim().replace(/\s+/g, " ").trim().replace(/["'`]/g, "");
-    // Cut at delimiters like " and ", " inside", " here" to avoid capturing trailing natural language
+    // Cut at delimiters like " and ", " inside", " here", " using" to avoid capturing trailing natural language (e.g. "using the terminal")
+    raw = raw.split(/\s+using\s+/i)[0].trim();
     raw = raw.split(/\s+and\s+/i)[0].trim();
     raw = raw.split(/\s+inside\s+/i)[0].trim();
     raw = raw.split(/\s+here\s*/i)[0].trim();
     // For compound requests, ensure we don't include trailing "write..." etc
     // If raw still contains multiple words where second word is action verb, take first word/phrase before verb
-    const verbCut = raw.match(/^([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)?)\s+(write|create|make|delete|list|run|and)\b/i);
+    const verbCut = raw.match(/^([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)?)\s+(write|create|make|delete|list|run|and|using|via)\b/i);
     if (verbCut) raw = verbCut[1].trim();
     if (raw) return raw;
   }
@@ -376,7 +380,9 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
 
   const actions: PlannedAction[] = [];
 
-  for (const clause of clauses) {
+  for (let clause of clauses) {
+    // Strip trailing terminal qualifiers that should not be part of names/paths
+    clause = clause.replace(/\s+using\s+the\s+terminal\s*$/i, '').replace(/\s+via\s+terminal\s*$/i, '').replace(/\s+with\s+terminal\s*$/i, '').trim();
     const lower = clause.toLowerCase();
     // Security: block traversal attempts early (covers folder and file)
     if (clause.includes("..") && (clause.includes("../") || clause.includes("..\\") || /\b\.\.\b/.test(clause))) {
@@ -402,6 +408,88 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
           continue;
         }
       } catch {}
+    }
+
+    // copy / move (must be before delete/list to avoid misclassification)
+    const copyMatch = clause.match(/\bcopy\b\s+["']?([a-zA-Z0-9_\-\.]+)["']?\s+to\s+["']?([a-zA-Z0-9_\-\.]+)["']?(?:\s+inside\s+["']?([a-zA-Z0-9_\-]+)["']?)?/i);
+    if (copyMatch) {
+      const src = copyMatch[1].trim();
+      const dst = copyMatch[2].trim();
+      const inside = copyMatch[3]?.trim();
+      // If inside folder specified, make destinations relative to that folder
+      let dstFull = dst;
+      if (inside) {
+        // Resolve inside folder via execution context or direct name
+        try {
+          const ctxs = getRecentExecutionContext(chatId);
+          const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.path && c.path.toLowerCase().includes(inside.toLowerCase()));
+          if (folder?.path) dstFull = `${folder.path.replace(/\\/g, "/")}/${dst}`;
+          else dstFull = `${inside}/${dst}`;
+        } catch { dstFull = `${inside}/${dst}`; }
+      } else if (clause.toLowerCase().includes("inside")) {
+        // inside it / inside that
+        try {
+          const ctxs = getRecentExecutionContext(chatId);
+          const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && c.path);
+          if (folder?.path) dstFull = `${folder.path.replace(/\\/g, "/")}/${dst}`;
+        } catch {}
+      }
+      // Source also may be inside same folder
+      let srcFull = src;
+      if (inside) {
+        try {
+          const ctxs = getRecentExecutionContext(chatId);
+          const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.path && c.path.toLowerCase().includes(inside.toLowerCase()));
+          if (folder?.path) srcFull = `${folder.path.replace(/\\/g, "/")}/${src}`;
+          else srcFull = `${inside}/${src}`;
+        } catch { srcFull = `${inside}/${src}`; }
+      } else if (clause.toLowerCase().includes("inside")) {
+         try {
+          const ctxs = getRecentExecutionContext(chatId);
+          const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && c.path);
+          if (folder?.path) srcFull = `${folder.path.replace(/\\/g, "/")}/${src}`;
+        } catch {}
+      }
+      actions.push({ kind: "copy", source: srcFull, destination: dstFull, clause } as any);
+      continue;
+    }
+    const moveMatch = clause.match(/\bmove\b\s+["']?([a-zA-Z0-9_\-\.]+)["']?\s+to\s+["']?([a-zA-Z0-9_\-\.]+)["']?(?:\s+inside\s+["']?([a-zA-Z0-9_\-]+)["']?)?/i);
+    if (moveMatch) {
+      const src = moveMatch[1].trim();
+      const dst = moveMatch[2].trim();
+      const inside = moveMatch[3]?.trim();
+      let dstFull = dst;
+      let srcFull = src;
+      if (inside) {
+        try {
+          const ctxs = getRecentExecutionContext(chatId);
+          const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.path && c.path.toLowerCase().includes(inside.toLowerCase()));
+          if (folder?.path) { dstFull = `${folder.path.replace(/\\/g, "/")}/${dst}`; srcFull = `${folder.path.replace(/\\/g, "/")}/${src}`; }
+          else { dstFull = `${inside}/${dst}`; srcFull = `${inside}/${src}`; }
+        } catch { dstFull = `${inside}/${dst}`; srcFull = `${inside}/${src}`; }
+      } else if (clause.toLowerCase().includes("inside")) {
+        try {
+          const ctxs = getRecentExecutionContext(chatId);
+          const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && c.path);
+          if (folder?.path) { dstFull = `${folder.path.replace(/\\/g, "/")}/${dst}`; srcFull = `${folder.path.replace(/\\/g, "/")}/${src}`; }
+        } catch {}
+      }
+      actions.push({ kind: "move", source: srcFull, destination: dstFull, clause } as any);
+      continue;
+    }
+
+    // run node / run command (generic)
+    if (/\brun\b/i.test(lower)) {
+      const mRun = clause.match(/\brun\b\s+(.+)/i);
+      if (mRun) {
+        const cmd = mRun[1].trim().replace(/\s+using\s+the\s+terminal\s*$/i, '').replace(/\s+via\s+terminal\s*$/i, '').trim();
+        // Strip leading "node " handling: keep as is, executor will validate
+        if (cmd) {
+          // If cmd is like "node folder\file" and folder is UID, ensure we use correct separator
+          actions.push({ kind: "run", command: cmd, clause } as any);
+          continue;
+        }
+      }
     }
 
     // go to
@@ -669,14 +757,15 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
 }
 
 export function synthesizeCommand(action: PlannedAction, chatId: string, hasExplicitTargetFlag = false): string {
+  const isValidPath = (p: string | undefined) => !!p && (p.includes(":\\") || p.includes(":/") || p.includes("$env") || /^[a-zA-Z]:[\\/]/.test(p));
   const resolveIt = (target?: string) => {
     if (!target) {
       if (hasExplicitTargetFlag) return undefined;
       try {
         const ctxs = getRecentExecutionContext(chatId);
-        const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success);
+        const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && isValidPath(c.path));
         if (folder?.path) return folder.path;
-        const any = [...ctxs].reverse().find(c => c.success);
+        const any = [...ctxs].reverse().find(c => c.success && isValidPath(c.path));
         if (any?.path) return any.path;
       } catch {}
       return undefined;
@@ -686,9 +775,9 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
       // (compound tasks like "create folder X and write file inside it" need this)
       try {
         const ctxs = getRecentExecutionContext(chatId);
-        const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success);
+        const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && isValidPath(c.path));
         if (folder?.path) return folder.path;
-        const any = [...ctxs].reverse().find(c => c.success);
+        const any = [...ctxs].reverse().find(c => c.success && isValidPath(c.path));
         if (any?.path) return any.path;
       } catch {}
       // If no context yet but hasExplicit, still return undefined to avoid using old context incorrectly
@@ -731,7 +820,7 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
           let base: string | undefined;
           try {
             const ctxs = getRecentExecutionContext(chatId);
-            const match = [...ctxs].reverse().find(c => c.object === "folder" && c.path && c.path.toLowerCase().includes(action.folderRef!.toLowerCase()));
+            const match = [...ctxs].reverse().find(c => c.object === "folder" && c.path && isValidPath(c.path) && c.path.toLowerCase().includes(action.folderRef!.toLowerCase()));
             if (match?.path) base = match.path;
           } catch {}
           if (base) {
@@ -916,15 +1005,29 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
       if (action.target === "it" || action.target.toLowerCase().includes("it") || action.target.toLowerCase().includes("that")) {
         try {
           const ctxs = getRecentExecutionContext(chatId);
-          const file = [...ctxs].reverse().find(c => c.object === "file" && c.success && c.path);
+          const file = [...ctxs].reverse().find(c => c.object === "file" && c.success && isValidPath(c.path));
           if (file?.path) targetPath = file.path;
           else {
-            const any = [...ctxs].reverse().find(c => c.success && c.path);
+            const any = [...ctxs].reverse().find(c => c.success && isValidPath(c.path));
             if (any?.path) targetPath = any.path;
           }
         } catch {}
       } else {
         targetPath = action.target;
+        // If target is just a file name (e.g. hello.js) and we have a recent folder/file, resolve to full path
+        if (targetPath && !targetPath.includes(":\\") && !targetPath.includes(":/") && !targetPath.includes("/") && !targetPath.includes("\\") && !targetPath.includes("$env")) {
+          try {
+            const ctxs = getRecentExecutionContext(chatId);
+            // First try to find exact file by name
+            const fileMatch = [...ctxs].reverse().find(c => c.object === "file" && c.path && c.path.toLowerCase().endsWith((targetPath ?? "").toLowerCase()) && isValidPath(c.path));
+            if (fileMatch?.path) targetPath = fileMatch.path;
+            else {
+              // Fallback: prepend recent folder path
+              const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && isValidPath(c.path));
+              if (folder?.path) targetPath = `${folder.path.replace(/\\/g, "/")}/${targetPath}`;
+            }
+          } catch {}
+        }
       }
       const safe = (targetPath || action.target).replace(/"/g, "");
       return `powershell -NoProfile -Command "Get-Content -LiteralPath '${safe}' | Out-String"`;

@@ -716,7 +716,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
   isStreaming: false,
   streamingMessageId: null,
   fallbackNotice: null,
-  theme: "light",
+  theme: "dark",
 
   reset: (clearStorage = false) => {
     set({
@@ -730,10 +730,10 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       isStreaming: false,
       streamingMessageId: null,
       fallbackNotice: null,
-      theme: "light"
+      theme: "dark"
     });
     if (clearStorage) {
-      applyTheme("light");
+      applyTheme("dark");
       clearAccountStorage();
     }
   },

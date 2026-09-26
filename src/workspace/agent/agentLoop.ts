@@ -347,8 +347,8 @@ async function verifyAction(action: AuthorizedAction, result: StructuredToolResu
     if (!p) return false;
     // Try to verify via Node fs if available
     try {
-      const fs = await import("fs/promises");
-      const pathMod = await import("path");
+      const fs = await import(/* webpackIgnore: true */ "fs/promises");
+      const pathMod = await import(/* webpackIgnore: true */ "path");
       // If p is absolute, check directly
       let checkPath = p;
       if (!/^[a-zA-Z]:[\\/]/.test(p)) {
@@ -366,8 +366,8 @@ async function verifyAction(action: AuthorizedAction, result: StructuredToolResu
   if (action.type === "create_file" as any) {
     const p = result.path || action.target;
     try {
-      const fs = await import("fs/promises");
-      const pathMod = await import("path");
+      const fs = await import(/* webpackIgnore: true */ "fs/promises");
+      const pathMod = await import(/* webpackIgnore: true */ "path");
       let checkPath = p;
       if (!/^[a-zA-Z]:[\\/]/.test(p)) checkPath = pathMod.join(process.cwd(), p);
       const stat = await fs.stat(checkPath).catch(() => null);
@@ -380,8 +380,8 @@ async function verifyAction(action: AuthorizedAction, result: StructuredToolResu
   if ((action.type as any) === "move") {
     const dst = (action as any).destination;
     try {
-      const fs = await import("fs/promises");
-      const pathMod = await import("path");
+      const fs = await import(/* webpackIgnore: true */ "fs/promises");
+      const pathMod = await import(/* webpackIgnore: true */ "path");
       let checkPath = dst;
       if (!/^[a-zA-Z]:[\\/]/.test(dst)) checkPath = pathMod.join(process.cwd(), dst);
       const stat = await fs.stat(checkPath).catch(() => null);

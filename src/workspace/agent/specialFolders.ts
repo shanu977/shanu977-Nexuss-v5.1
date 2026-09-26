@@ -1,8 +1,6 @@
 // Resolves Windows special folders without hardcoding username.
 // Works both in Node (via process.env/os.homedir) and browser (via PowerShell env var for command).
 
-import * as path from "path";
-
 export type SpecialFolderName = "downloads" | "desktop" | "documents" | "pictures" | "videos" | "music";
 
 const SPECIAL_NAMES: SpecialFolderName[] = ["downloads","desktop","documents","pictures","videos","music"];
@@ -19,14 +17,15 @@ export function normalizeSpecialName(name: string): SpecialFolderName | null {
 
 // Node-side resolution to absolute fs path (e.g., C:\Users\alice\Downloads)
 // Uses USERPROFILE / HOME – never hardcodes pilli. Works in browser (process.env) and Node.
+// Client-safe: no Node `path` import – simple string join.
 export function resolveSpecialFolderAbsolute(name: SpecialFolderName | string): string {
   const normalized = normalizeSpecialName(name);
   if (!normalized) return name;
-  const home = (typeof process !== 'undefined' ? (process.env.USERPROFILE || process.env.HOME) : '') || process.cwd();
+  const home = (typeof process !== 'undefined' ? (process.env.USERPROFILE || process.env.HOME) : '') || (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '');
   const capital = normalized.charAt(0).toUpperCase() + normalized.slice(1);
   // Windows capitalization: Downloads, Desktop etc
-  // For cross-platform, just join
-  return path.join(home, capital);
+  const cleanHome = home.replace(/[\\/]+$/, "");
+  return cleanHome ? `${cleanHome}\\${capital}` : capital;
 }
 
 // For PowerShell commands in browser, use $env:USERPROFILE to avoid hardcoding username.
@@ -66,10 +65,12 @@ export function extractBasePath(text: string): string | null {
 
 // Get default user workspace when no workspacePath selected.
 // Never returns repo dir (process.cwd as repo) unless homedir unavailable.
+// Client-safe: avoids static `process.cwd()` reliance in browser.
 export function getDefaultUserWorkspace(): string {
   const home = (typeof process !== 'undefined' ? (process.env.USERPROFILE || process.env.HOME) : '') || '';
-  if (home && home !== process.cwd()) return home;
+  const cwd = (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '');
+  if (home && home !== cwd) return home;
   // Fallback to cwd if homedir equals repo or unavailable – still better than repo for tests
-  // For tests, process.cwd() is repo but workspacePath is mocked, so this branch rarely used
-  return home || process.cwd();
+  // For tests, cwd is repo but workspacePath is mocked, so this branch rarely used
+  return home || cwd || "";
 }

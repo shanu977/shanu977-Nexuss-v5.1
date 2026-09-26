@@ -38,7 +38,7 @@ export function setLastChatId(uid: string, id: string | null): void {
 }
 
 export function getLocalTheme(): string {
-  return getItem<string>(STORAGE_KEYS.THEME, "light");
+  return getItem<string>(STORAGE_KEYS.THEME, "dark");
 }
 
 export function setLocalTheme(theme: string): void {

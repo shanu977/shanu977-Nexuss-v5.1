@@ -14,7 +14,6 @@ import { normalizeRelativePath, assertInsideRoot } from "@/workspace/path";
 import { createAgentPlan } from "./llmPlanner";
 import { validateAgentPlan } from "./planValidator";
 import type { AgentPlan, AgentAction } from "./llmTypes";
-import path from "path";
 import { isSpecialFolderName, resolveSpecialFolderAbsolute, getDefaultUserWorkspace } from "./specialFolders";
 
 function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): AuthorizedAction[] {
@@ -495,7 +494,9 @@ export async function runAuthorizedGoal(
   // for both terminal and fallback. Previously only handled subfolder case, now handles any workspace.
   if (opts.workspacePath) {
     try {
-      const wsResolved = path.resolve(opts.workspacePath);
+      // Client-safe: avoid Node `path.resolve` in browser bundle. WorkspacePath is already absolute
+      // when provided (e.g., C:\Users\... or /home/...). Just normalize trailing separators.
+      const wsResolved = opts.workspacePath.replace(/[\\/]+$/, "");
       for (const p of planned) {
         if (p.kind === "createFolder" && !(p as any).basePath) {
           (p as any).basePath = wsResolved;
@@ -577,7 +578,7 @@ async function tryBridgeFallback(
       if (basePath) {
         if (isSpecialFolderName(basePath)) {
           const specialAbs = resolveSpecialFolderAbsolute(basePath);
-          const pathMod = await import("path");
+          const pathMod = await import(/* webpackIgnore: true */ "path");
           fullPath = pathMod.join(specialAbs, name);
         } else {
           const cleanBase = basePath.replace(/["'`$]/g, "");
@@ -601,8 +602,8 @@ async function tryBridgeFallback(
       }
       // Node fs fallback (for tests / local dev without bridge)
       try {
-        const fs = await import("fs/promises");
-        const pathMod = await import("path");
+        const fs = await import(/* webpackIgnore: true */ "fs/promises");
+        const pathMod = await import(/* webpackIgnore: true */ "path");
         // Determine actual fs path: if workspacePath is absolute, use it; otherwise use user's default workspace (homedir), not repo
         const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         // Re-validate full fs path stays inside allowed parent (actualCwd or basePath)
@@ -658,7 +659,7 @@ async function tryBridgeFallback(
         // Special folder handling – resolve to absolute homedir path for Node fallback
         if (isSpecialFolderName(folderBase)) {
           const specialAbs = resolveSpecialFolderAbsolute(folderBase);
-          const pathMod = await import("path");
+          const pathMod = await import(/* webpackIgnore: true */ "path");
           fsPath = pathMod.join(specialAbs, fileName);
           bridgeRel = `${specialAbs.replace(/\\/g, "/")}/${fileName}`;
         } else {
@@ -666,10 +667,10 @@ async function tryBridgeFallback(
           fsPath = folderBase;
           // If folderBase is absolute (contains :\), build fsPath correctly
           if (/^[a-zA-Z]:[\\/]/.test(folderBase)) {
-            const pathMod = await import("path");
+            const pathMod = await import(/* webpackIgnore: true */ "path");
             fsPath = pathMod.join(folderBase, fileName);
           } else {
-            const pathMod = await import("path");
+            const pathMod = await import(/* webpackIgnore: true */ "path");
             const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
             fsPath = pathMod.join(actualCwd, folderBase, fileName);
             // If folderBase came from fallback (absolute), above join will double; fix
@@ -677,7 +678,7 @@ async function tryBridgeFallback(
           }
         }
       } else {
-        const pathMod = await import("path");
+        const pathMod = await import(/* webpackIgnore: true */ "path");
         const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         fsPath = pathMod.join(actualCwd, fileName);
         bridgeRel = fileName;
@@ -708,8 +709,8 @@ async function tryBridgeFallback(
       }
       // Node fs fallback – enforce boundary
       try {
-        const fs = await import("fs/promises");
-        const pathMod = await import("path");
+        const fs = await import(/* webpackIgnore: true */ "fs/promises");
+        const pathMod = await import(/* webpackIgnore: true */ "path");
         // Ensure file path stays inside its parent folderBase or actualCwd
         const parentDir = pathMod.dirname(fsPath);
         const resolvedParent = pathMod.resolve(parentDir);
@@ -752,8 +753,8 @@ async function tryBridgeFallback(
         } catch {}
       }
       try {
-        const fs = await import("fs/promises");
-        const pathMod = await import("path");
+        const fs = await import(/* webpackIgnore: true */ "fs/promises");
+        const pathMod = await import(/* webpackIgnore: true */ "path");
         const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         const srcPath = /^[a-zA-Z]:[\\/]/.test(src) ? src : pathMod.join(actualCwd, src);
         const dstPath = /^[a-zA-Z]:[\\/]/.test(dst) ? dst : pathMod.join(actualCwd, dst);
@@ -777,8 +778,8 @@ async function tryBridgeFallback(
         return { success: false, exitCode: 1, stdout: "", stderr: msg, cwd, command: `copy fallback`, path: undefined, error: msg };
       }
       try {
-        const fs = await import("fs/promises");
-        const pathMod = await import("path");
+        const fs = await import(/* webpackIgnore: true */ "fs/promises");
+        const pathMod = await import(/* webpackIgnore: true */ "path");
         const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         const srcPath = /^[a-zA-Z]:[\\/]/.test(src) ? src : pathMod.join(actualCwd, src);
         const dstPath = /^[a-zA-Z]:[\\/]/.test(dst) ? dst : pathMod.join(actualCwd, dst);
@@ -805,8 +806,8 @@ async function tryBridgeFallback(
         } catch {}
       }
       try {
-        const fs = await import("fs/promises");
-        const pathMod = await import("path");
+        const fs = await import(/* webpackIgnore: true */ "fs/promises");
+        const pathMod = await import(/* webpackIgnore: true */ "path");
         const actualCwd = opts.workspacePath && /^[a-zA-Z]:[\\/]/.test(opts.workspacePath) ? opts.workspacePath : getDefaultUserWorkspace();
         const fsPath = /^[a-zA-Z]:[\\/]/.test(p) ? p : pathMod.join(actualCwd, p);
         await fs.rm(fsPath, { recursive: true, force: true });

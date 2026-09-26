@@ -29,7 +29,7 @@ def get_or_create_settings(db: Session, user: User) -> UserSettings:
     if settings is None:
         settings = UserSettings(
             user_id=user.id,
-            theme="light",
+            theme="dark",
             language="en",
             provider="groq",
             model=DEFAULT_MODELS["groq"],
