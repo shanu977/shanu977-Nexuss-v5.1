@@ -1,0 +1,7 @@
+2026/09/26-22:01:58.033 3f2c Reusing MANIFEST C:\Users\pilli\Downloads\shanu977-Nexuss-v5.1\.chrome-lna-profile\Default\IndexedDB\https_www.nexuss.in_0.indexeddb.leveldb/MANIFEST-000001
+2026/09/26-22:01:58.034 3f2c Recovering log #4
+2026/09/26-22:01:58.035 3f2c Reusing old log C:\Users\pilli\Downloads\shanu977-Nexuss-v5.1\.chrome-lna-profile\Default\IndexedDB\https_www.nexuss.in_0.indexeddb.leveldb/000004.log 
+2026/09/26-22:01:58.041 1204 Level-0 table #8: started
+2026/09/26-22:01:58.043 1204 Level-0 table #8: 1799 bytes OK
+2026/09/26-22:01:58.044 1204 Delete type=0 #4
+2026/09/26-22:01:58.044 1204 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
