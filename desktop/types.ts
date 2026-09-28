@@ -16,7 +16,13 @@ export const RUNTIME_CHANNELS = {
 
 export const OLLAMA_CHANNELS = {
   test: "nexuss:ollama:test",
-  chat: "nexuss:ollama:chat"
+  chat: "nexuss:ollama:chat",
+  state: "nexuss:ollama:state",
+  ensureRunning: "nexuss:ollama:ensure-running",
+  discoverModels: "nexuss:ollama:discover-models",
+  recommendModel: "nexuss:ollama:recommend-model",
+  pullModel: "nexuss:ollama:pull-model",
+  pullProgress: "nexuss:ollama:pull-progress"
 } as const;
 
 export const WORKSPACE_CHANNELS = {
@@ -57,3 +63,7 @@ export interface RenameFilePayload {
   from: string;
   to: string;
 }
+
+
+
+
