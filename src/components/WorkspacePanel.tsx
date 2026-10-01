@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWorkspaceStore } from "@/workspace/store";
+import { getLocalConnectorStatus } from "@/workspace/localTerminalRuntime";
 import {
   ArrowRightLeftIcon,
   CheckIcon,
@@ -58,7 +59,16 @@ export default function WorkspacePanel() {
   const clearLastCommandResult = useWorkspaceStore((s) => s.clearLastCommandResult);
   const [query, setQuery] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
+  const [connectorState, setConnectorState] = useState<"checking" | "connected" | "unavailable" | "failed">("checking");
   const panelId = "workspace-details";
+
+  useEffect(() => {
+    let active = true;
+    void getLocalConnectorStatus().then((nextState) => {
+      if (active) setConnectorState(nextState);
+    });
+    return () => { active = false; };
+  }, []);
 
   const connectingLabel =
     status === "indexing"
@@ -136,11 +146,17 @@ export default function WorkspacePanel() {
           {!connected ? (
             <div className="border-t border-border p-4 animate-fade-in-up">
               <div className="flex items-center gap-2 text-[11px] font-mono font-medium text-muted-foreground">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                Terminal ready
+                <span className={`h-2 w-2 rounded-full ${connectorState === "connected" ? "bg-emerald-500" : connectorState === "checking" ? "bg-amber-500 animate-pulse" : "bg-destructive"}`} />
+                {connectorState === "checking" ? "Checking terminal connector…" : connectorState === "connected" ? "Terminal ready" : connectorState === "failed" ? "Terminal connector failed" : "Terminal unavailable"}
               </div>
               <p className="mt-2 text-[11px] font-mono text-muted-foreground">
-                Nexuss can execute commands when needed.
+                {connectorState === "connected"
+                  ? "Nexuss can execute commands when needed."
+                  : connectorState === "checking"
+                    ? "Checking http://127.0.0.1:11435/health."
+                    : connectorState === "failed"
+                      ? "The local connector returned a failed health response at http://127.0.0.1:11435."
+                      : "The local connector could not be reached at http://127.0.0.1:11435."}
               </p>
               <div className="mt-3 rounded-lg bg-muted/30 p-3 font-mono text-xs text-muted-foreground">
                 <span className="text-primary">›</span> <span className="animate-pulse">_</span>

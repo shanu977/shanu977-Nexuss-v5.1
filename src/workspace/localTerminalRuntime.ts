@@ -10,10 +10,12 @@ const HEALTH_TIMEOUT_MS = 1500;
 let cachedAvailable: boolean | null = null;
 let lastCheck = 0;
 const CACHE_TTL_MS = 5000;
+export type LocalConnectorStatus = "connected" | "unavailable" | "failed";
+let cachedStatus: LocalConnectorStatus | null = null;
 
-export async function isLocalConnectorAvailable(): Promise<boolean> {
+export async function getLocalConnectorStatus(): Promise<LocalConnectorStatus> {
   const now = Date.now();
-  if (cachedAvailable !== null && now - lastCheck < CACHE_TTL_MS) return cachedAvailable;
+  if (cachedStatus !== null && now - lastCheck < CACHE_TTL_MS) return cachedStatus;
   lastCheck = now;
   // Best-effort: trigger Local Network Access permission prompt on Chrome 130+ (public -> private)
   // This is a no-op on browsers that don't support the permission; we ignore failures.
@@ -21,6 +23,7 @@ export async function isLocalConnectorAvailable(): Promise<boolean> {
     if (typeof navigator !== "undefined" && (navigator as unknown as { permissions?: { query: (opts: unknown) => Promise<unknown> } }).permissions?.query) {
       await (navigator as unknown as { permissions: { query: (opts: unknown) => Promise<unknown> } }).permissions.query({ name: "local-network-access" } as unknown as never).catch(() => {});
     }
+
   } catch {}
   try {
     const controller = new AbortController();
@@ -29,15 +32,27 @@ export async function isLocalConnectorAvailable(): Promise<boolean> {
     // https://www.nexuss.in (public) -> http://127.0.0.1:11435 (private) is still required and handled by server.
     const res = await fetch(`${CONNECTOR_URL}/health`, { signal: controller.signal, method: "GET", mode: "cors" });
     clearTimeout(t);
-    if (!res.ok) { cachedAvailable = false; return false; }
+    if (!res.ok) {
+      cachedAvailable = false;
+      cachedStatus = "failed";
+      return "failed";
+    }
     const data = await res.json().catch(() => ({}));
     cachedAvailable = data.terminal === "enabled" || data.connector === "nexuss-local";
-    return cachedAvailable;
+    cachedStatus = cachedAvailable ? "connected" : "failed";
+    return cachedStatus;
   } catch {
     cachedAvailable = false;
-    return false;
+    cachedStatus = "unavailable";
+    return "unavailable";
   }
 }
+
+export async function isLocalConnectorAvailable(): Promise<boolean> {
+  return (await getLocalConnectorStatus()) === "connected";
+}
+
+export const LOCAL_CONNECTOR_URL = CONNECTOR_URL;
 
 export function createLocalConnectorRuntime(): {
   run: (req: NativeRunRequest) => Promise<NativeCommandResult>;

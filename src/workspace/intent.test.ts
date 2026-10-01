@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyWorkspaceIntent } from "@/workspace/intent";
+import { isFilesystemActionRequest, planFilesystemActions } from "@/workspace/agent/actionPlanner";
 
 describe("classifyWorkspaceIntent", () => {
   it("classifies status questions", () => {
@@ -41,5 +42,34 @@ describe("classifyWorkspaceIntent", () => {
     expect(classifyWorkspaceIntent("Why does login.ts reject valid users?")).toBe("none");
     expect(classifyWorkspaceIntent("")).toBe("none");
     expect(classifyWorkspaceIntent("   ")).toBe("none");
+  });
+
+  it("keeps path questions as normal conversation", () => {
+    expect(isFilesystemActionRequest("What is the path?")).toBe(false);
+    expect(isFilesystemActionRequest("Where is this?")).toBe(false);
+    expect(isFilesystemActionRequest("Tell me the path")).toBe(false);
+  });
+
+  it("detects explicit terminal work", () => {
+    expect(isFilesystemActionRequest("create a folder")).toBe(true);
+    expect(isFilesystemActionRequest("create a file")).toBe(true);
+    expect(isFilesystemActionRequest("run npm install")).toBe(true);
+    expect(isFilesystemActionRequest("modify this code")).toBe(true);
+  });
+
+  it("keeps all steps in a folder-plus-page request", () => {
+    const actions = planFilesystemActions(
+      "Create a new folder called portal-project and create a basic login page inside it.",
+      "intent-test"
+    );
+    expect(actions.map((action) => action.kind)).toEqual([
+      "createFolder",
+      "createFile"
+    ]);
+    expect(actions[1]).toMatchObject({
+      kind: "createFile",
+      name: "login.html",
+      folderRef: "it"
+    });
   });
 });

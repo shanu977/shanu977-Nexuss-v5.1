@@ -14,8 +14,22 @@ function streamChunks(chunks: string[]): string {
 describe("filterReasoning", () => {
   it("1. leaves a normal response without reasoning unchanged", () => {
     expect(filterReasoning("Hello")).toBe("Hello");
+    expect(filterReasoning("What is AI?")).toBe("What is AI?");
+    expect(filterReasoning("What is this?")).toBe("What is this?");
+    expect(filterReasoning("Can you tell me what is what?")).toBe(
+      "Can you tell me what is what?"
+    );
     expect(filterReasoning("The sky is blue.\nThat is the answer.")).toBe(
       "The sky is blue.\nThat is the answer."
+    );
+  });
+
+  it("does not discard ordinary lines that resemble a plan prefix", () => {
+    expect(filterReasoning("Step by step, the answer is simple.")).toBe(
+      "Step by step, the answer is simple."
+    );
+    expect(filterReasoning("Summary of the answer: this is normal prose.")).toBe(
+      "Summary of the answer: this is normal prose."
     );
   });
 

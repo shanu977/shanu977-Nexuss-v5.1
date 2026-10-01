@@ -234,8 +234,11 @@ export async function runAuthorizedGoal(
   let hasRuntime = !!(toolCtxForGate?.runtime && toolCtxForGate.runtime.capabilities()?.run);
   if (!hasRuntime) {
     try {
-      const lazy = createLocalConnectorRuntime();
-      if (lazy) {
+      // Creating the adapter is not a health check. Only install it after the
+      // real loopback endpoint has responded successfully.
+      const available = await isLocalConnectorAvailable();
+      if (available) {
+        const lazy = createLocalConnectorRuntime();
         const { useWorkspaceStore } = await import("@/workspace/store");
         const cur = useWorkspaceStore.getState();
         if (!cur.runtime) {
