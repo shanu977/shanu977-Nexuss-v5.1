@@ -16,8 +16,23 @@ import path from "node:path";
 import { createNativeRuntime } from "../native/runtime";
 import { createRuntimeHandlers } from "./runtime-ipc";
 import { createWorkspaceService } from "./workspace-service";
-import { RUNTIME_CHANNELS, WORKSPACE_CHANNELS, OLLAMA_CHANNELS } from "./types";
-import { handleOllamaTest, handleOllamaChat } from "./ollama-service";
+import {
+  RUNTIME_CHANNELS,
+  WORKSPACE_CHANNELS,
+  OLLAMA_CHANNELS
+} from "./types";
+import {
+  handleOllamaTest,
+  handleOllamaChat
+} from "./ollama-service";
+import {
+  getOllamaState,
+  ensureOllamaRunning,
+  discoverOllamaModels,
+  recommendOllamaModel,
+  pullOllamaModel,
+  stopOllama
+} from "./ollama-manager";
 
 const isProd = app.isPackaged || process.env.NEXUSS_MODE === "prod";
 const appRoot = app.getAppPath();
@@ -47,24 +62,35 @@ async function startNextServer(): Promise<{ url: string }> {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   });
-  nextProcess.stdout?.on("data", (d) => console.log(`[next] ${String(d).trimEnd()}`));
-  nextProcess.stderr?.on("data", (d) => console.error(`[next] ${String(d).trimEnd()}`));
+
+  nextProcess.stdout?.on("data", (d) =>
+    console.log(`[next] ${String(d).trimEnd()}`)
+  );
+
+  nextProcess.stderr?.on("data", (d) =>
+    console.error(`[next] ${String(d).trimEnd()}`)
+  );
 
   const deadline = Date.now() + 300_000;
+
   while (Date.now() < deadline) {
     if (nextProcess.exitCode !== null) {
       throw new Error(
         `Next.js exited before becoming ready (code ${nextProcess.exitCode}).`
       );
     }
+
     try {
       const res = await fetch(url);
+
       if (res.ok) return { url };
     } catch {
       // not ready yet
     }
+
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+
   throw new Error("Next.js did not become ready in time.");
 }
 
@@ -72,6 +98,7 @@ function stopNextServer(): void {
   if (nextProcess && nextProcess.exitCode === null) {
     nextProcess.kill();
   }
+
   nextProcess = null;
 }
 
@@ -87,49 +114,195 @@ function registerIpc(): void {
     picker: {
       pick: async () => {
         if (!mainWindow) return { picked: false };
+
         const result = await dialog.showOpenDialog(mainWindow, {
           title: "Connect workspace",
           properties: ["openDirectory"]
         });
+
         if (result.canceled || result.filePaths.length === 0) {
           return { picked: false };
         }
-        return { picked: true, root: result.filePaths[0] };
+
+        return {
+          picked: true,
+          root: result.filePaths[0]
+        };
       }
     },
+
     onWorkspaceChange: (root) => runtime.setWorkspace(root)
   });
 
-  ipcMain.handle(RUNTIME_CHANNELS.run, (_e, req) => runtimeHandlers.run(req));
-  ipcMain.handle(RUNTIME_CHANNELS.test, (_e, req) => runtimeHandlers.test(req));
-  ipcMain.handle(RUNTIME_CHANNELS.capabilities, () => runtimeHandlers.capabilities());
-  ipcMain.handle(RUNTIME_CHANNELS.cancel, () => runtimeHandlers.cancel());
-  ipcMain.handle(RUNTIME_CHANNELS.processStart, (_e, req) => runtimeHandlers.processStart(req));
-  ipcMain.handle(RUNTIME_CHANNELS.processStatus, (_e, id) => runtimeHandlers.processStatus(id));
-  ipcMain.handle(RUNTIME_CHANNELS.processOutput, (_e, id) => runtimeHandlers.processOutput(id));
-  ipcMain.handle(RUNTIME_CHANNELS.processStop, (_e, payload) => runtimeHandlers.processStop(payload.id, payload.force));
-  ipcMain.handle(RUNTIME_CHANNELS.processList, () => runtimeHandlers.processList());
+  // -------------------------------------------------------------------------
+  // Runtime IPC
+  // -------------------------------------------------------------------------
 
-  ipcMain.handle(WORKSPACE_CHANNELS.list, () => workspace.list());
-  ipcMain.handle(WORKSPACE_CHANNELS.read, (_e, p) => workspace.read(p));
-  ipcMain.handle(WORKSPACE_CHANNELS.create, (_e, payload) =>
-    workspace.create(payload.path, payload.content)
+  ipcMain.handle(
+    RUNTIME_CHANNELS.run,
+    (_e, req) => runtimeHandlers.run(req)
   );
-  ipcMain.handle(WORKSPACE_CHANNELS.write, (_e, payload) =>
-    workspace.write(payload.path, payload.content)
-  );
-  ipcMain.handle(WORKSPACE_CHANNELS.delete, (_e, p) => workspace.delete(p));
-  ipcMain.handle(WORKSPACE_CHANNELS.rename, (_e, payload) =>
-    workspace.rename(payload.from, payload.to)
-  );
-  ipcMain.handle(WORKSPACE_CHANNELS.mkdir, (_e, p) => workspace.mkdir(p));
-  ipcMain.handle(WORKSPACE_CHANNELS.close, () => workspace.close());
 
-  // Ollama local gateway: main-process fetch for http://localhost:11434 (no CORS/mixed-content)
-  ipcMain.handle(OLLAMA_CHANNELS.test, (_e, req) => handleOllamaTest(req as { endpoint: string; apiKey?: string }));
-  ipcMain.handle(OLLAMA_CHANNELS.chat, (_e, req) => handleOllamaChat(req as { endpoint: string; modelId: string; messages: { role: string; content: string }[]; apiKey?: string }));
+  ipcMain.handle(
+    RUNTIME_CHANNELS.test,
+    (_e, req) => runtimeHandlers.test(req)
+  );
+
+  ipcMain.handle(
+    RUNTIME_CHANNELS.capabilities,
+    () => runtimeHandlers.capabilities()
+  );
+
+  ipcMain.handle(
+    RUNTIME_CHANNELS.cancel,
+    () => runtimeHandlers.cancel()
+  );
+
+  ipcMain.handle(
+    RUNTIME_CHANNELS.processStart,
+    (_e, req) => runtimeHandlers.processStart(req)
+  );
+
+  ipcMain.handle(
+    RUNTIME_CHANNELS.processStatus,
+    (_e, id) => runtimeHandlers.processStatus(id)
+  );
+
+  ipcMain.handle(
+    RUNTIME_CHANNELS.processOutput,
+    (_e, id) => runtimeHandlers.processOutput(id)
+  );
+
+  ipcMain.handle(
+    RUNTIME_CHANNELS.processStop,
+    (_e, payload) =>
+      runtimeHandlers.processStop(payload.id, payload.force)
+  );
+
+  ipcMain.handle(
+    RUNTIME_CHANNELS.processList,
+    () => runtimeHandlers.processList()
+  );
+
+  // -------------------------------------------------------------------------
+  // Workspace IPC
+  // -------------------------------------------------------------------------
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.list,
+    () => workspace.list()
+  );
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.read,
+    (_e, p) => workspace.read(p)
+  );
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.create,
+    (_e, payload) =>
+      workspace.create(payload.path, payload.content)
+  );
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.write,
+    (_e, payload) =>
+      workspace.write(payload.path, payload.content)
+  );
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.delete,
+    (_e, p) => workspace.delete(p)
+  );
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.rename,
+    (_e, payload) =>
+      workspace.rename(payload.from, payload.to)
+  );
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.mkdir,
+    (_e, p) => workspace.mkdir(p)
+  );
+
+  ipcMain.handle(
+    WORKSPACE_CHANNELS.close,
+    () => workspace.close()
+  );
+
+  // -------------------------------------------------------------------------
+  // Ollama local gateway
+  // -------------------------------------------------------------------------
+  // Main-process fetch for http://localhost:11434
+  // This avoids CORS/mixed-content issues in the renderer.
+
+  ipcMain.handle(
+    OLLAMA_CHANNELS.test,
+    (_e, req) =>
+      handleOllamaTest(
+        req as {
+          endpoint: string;
+          apiKey?: string;
+        }
+      )
+  );
+
+  ipcMain.handle(
+    OLLAMA_CHANNELS.chat,
+    (_e, req) =>
+      handleOllamaChat(
+        req as {
+          endpoint: string;
+          modelId: string;
+          messages: {
+            role: string;
+            content: string;
+          }[];
+          apiKey?: string;
+        }
+      )
+  );
+
+  // Check whether Ollama is installed and running.
+  ipcMain.handle(
+    OLLAMA_CHANNELS.state,
+    () => getOllamaState()
+  );
+
+  // Start Ollama automatically when it is installed but not running.
+  ipcMain.handle(
+    OLLAMA_CHANNELS.ensureRunning,
+    () => ensureOllamaRunning()
+  );
+
+  // Recommend a local model based on detected system resources.
+  ipcMain.handle(
+    OLLAMA_CHANNELS.recommendModel,
+    () => recommendOllamaModel()
+  );
+  
+    // Download an Ollama model and send progress events to the renderer.
+  ipcMain.handle(
+    OLLAMA_CHANNELS.pullModel,
+    async (event, model: string) => {
+      return pullOllamaModel(model, (progress) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(
+            OLLAMA_CHANNELS.pullProgress,
+            progress
+          );
+        }
+      });
+    }
+  );
+
+  // Discover all locally installed Ollama models.
+  ipcMain.handle(
+    OLLAMA_CHANNELS.discoverModels,
+    () => discoverOllamaModels()
+  );
 }
-
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
@@ -143,6 +316,7 @@ function createWindow(url: string): void {
     backgroundColor: "#0f1115",
     autoHideMenuBar: true,
     title: "Nexuss",
+
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
@@ -153,7 +327,10 @@ function createWindow(url: string): void {
   });
 
   // Never open new windows (no window.open escapes to a Node context).
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.setWindowOpenHandler(() => ({
+    action: "deny"
+  }));
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -171,19 +348,27 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   stopNextServer();
+  stopOllama();
 });
 
 app.whenReady().then(async () => {
   registerIpc();
+
   try {
     const { url } = await startNextServer();
     createWindow(url);
   } catch (e) {
     stopNextServer();
+    stopOllama();
+
     dialog.showErrorBox(
       "Nexuss failed to start",
       e instanceof Error ? e.message : String(e)
     );
+
     app.quit();
   }
 });
+
+
+

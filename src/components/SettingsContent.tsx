@@ -11,7 +11,7 @@ import { useChatStore } from "@/store";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { apiKeyService, ApiKeyStatus } from "@/services/apiKeys";
 import { testLocalEndpoint } from "@/services/localModels";
-import { LOCAL_PROVIDER_LABELS, LocalProviderType, LOCAL_PROVIDER_DEFAULT_ENDPOINTS, validateEndpoint, normalizeEndpoint } from "@/types/localModels";
+import { LOCAL_PROVIDER_LABELS, LocalProviderType, LOCAL_PROVIDER_DEFAULT_ENDPOINTS, validateEndpoint, normalizeEndpoint, isDesktop } from "@/types/localModels";
 import { getErrorMessage } from "@/utils";
 import UsageDashboard from "@/components/UsageDashboard";
 
@@ -73,7 +73,10 @@ export default function SettingsContent() {
   const ollamaStatus = useLocalModelStore((s) => s.ollamaStatus);
   const ollamaError = useLocalModelStore((s) => s.ollamaError);
   const ollamaLastRefresh = useLocalModelStore((s) => s.ollamaLastRefresh);
+  const ollamaPullProgress = useLocalModelStore((s) => s.ollamaPullProgress);
   const refreshOllamaModels = useLocalModelStore((s) => s.refreshOllamaModels);
+  const recommendOllamaModel = useLocalModelStore((s) => s.recommendOllamaModel);
+  const pullOllamaModel = useLocalModelStore((s) => s.pullOllamaModel);
 
   const [showAddLocal, setShowAddLocal] = useState(false);
   const [localProviderType, setLocalProviderType] = useState<LocalProviderType>("ollama");
@@ -86,6 +89,8 @@ export default function SettingsContent() {
   const [manualModelId, setManualModelId] = useState("");
   const [localSaving, setLocalSaving] = useState(false);
   const [localMessage, setLocalMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [recommendedOllamaModel, setRecommendedOllamaModel] = useState<string | null>(null);
+  const [ollamaDownloading, setOllamaDownloading] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [editEndpoint, setEditEndpoint] = useState("");
   const [editName, setEditName] = useState("");
@@ -109,7 +114,20 @@ export default function SettingsContent() {
       setModel("");
     }
   }, [discoveredOllamaModels, localModels, provider, model, ollamaStatus, setModel]);
+  useEffect(() => {
+  if (activeTab !== "models") return;
+  if (ollamaStatus !== "connected") return;
+  if (discoveredOllamaModels.length > 0) return;
 
+  void recommendOllamaModel().then((modelId) => {
+    setRecommendedOllamaModel(modelId);
+  });
+}, [
+  activeTab,
+  ollamaStatus,
+  discoveredOllamaModels.length,
+  recommendOllamaModel,
+]);
   useEffect(() => {
     setLocalEndpoint(LOCAL_PROVIDER_DEFAULT_ENDPOINTS[localProviderType]);
     setLocalTestResult(null);
@@ -638,20 +656,81 @@ export default function SettingsContent() {
                 </button>
               </div>
               {ollamaStatus === "not_connected" ? (
-                <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-muted-foreground">
-                  <p className="font-medium text-amber-600">⚠ Ollama is not connected</p>
-                  <p className="mt-1">Start Ollama and try again. Ensure Ollama is running at http://localhost:11434 and allows CORS (OLLAMA_ORIGINS=*).</p>
-                  {ollamaError && <p className="mt-1 font-mono text-[10px] text-muted-foreground">{ollamaError}</p>}
-                </div>
+              <p className="text-[11px] text-amber-600">
+                Ollama is not connected. Start Ollama and try again.
+                </p>
               ) : ollamaStatus === "error" ? (
-                <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-2.5 text-[11px] text-destructive">
-                  <p>{ollamaError || "Failed to connect to Ollama."}</p>
-                  <p className="mt-1 text-muted-foreground">Check that Ollama is running and the endpoint is correct.</p>
-                </div>
+  <p className="text-[11px] text-destructive">
+    {ollamaError || "Failed to connect to Ollama."}
+  </p>
               ) : ollamaStatus === "loading" ? (
-                <p className="text-[11px] font-mono text-muted-foreground">Discovering installed models…</p>
+                ollamaPullProgress ? (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                      <span>{ollamaPullProgress.status}</span>
+                      {ollamaPullProgress.percent != null && (
+                        <span>{Math.round(ollamaPullProgress.percent)}%</span>
+                      )}
+                    </div>
+
+                    {ollamaPullProgress.percent != null && (
+                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full bg-primary transition-all"
+                          style={{
+                            width: `${Math.min(100, Math.max(0, ollamaPullProgress.percent))}%`,
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] font-mono text-muted-foreground">
+                    Discovering installed models…
+                  </p>
+                )
               ) : discoveredOllamaModels.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">No Ollama models found. Pull a model with <code className="rounded bg-muted border border-border px-1 py-0.5 font-mono text-[10px]">ollama pull qwen2.5:3b</code></p>
+                <div className="rounded-lg border border-border bg-muted/30 p-2.5">
+  <p className="text-[11px] text-muted-foreground">
+    No Ollama models found.
+  </p>
+
+  {isDesktop() && recommendedOllamaModel ? (
+    <div className="mt-2 flex items-center justify-between gap-2">
+      <div className="min-w-0">
+        <p className="text-xs font-mono font-medium truncate">
+          {recommendedOllamaModel}
+        </p>
+        <p className="text-[10px] text-muted-foreground">
+          Recommended for this computer
+        </p>
+      </div>
+
+      <button
+        type="button"
+        disabled={ollamaDownloading}
+        onClick={async () => {
+          setOllamaDownloading(true);
+
+          try {
+            await pullOllamaModel(recommendedOllamaModel);
+          } catch (e) {
+            console.error("Ollama model download failed:", e);
+          } finally {
+            setOllamaDownloading(false);
+          }
+        }}
+        className="shrink-0 rounded-lg bg-primary text-primary-foreground px-2.5 py-1 text-[11px] font-mono hover:opacity-90 disabled:opacity-50 cursor-pointer"
+      >
+        {ollamaDownloading ? "Downloading…" : "Download"}
+      </button>
+    </div>
+  ) : (
+    <p className="mt-1 text-[10px] text-muted-foreground">
+      Install an Ollama model, then click Refresh Models.
+    </p>
+  )}
+</div>
               ) : (
                 <div className="space-y-1.5">
                   <p className="text-[11px] font-mono text-muted-foreground">Models: {discoveredOllamaModels.length} {ollamaLastRefresh ? `• Refreshed ${new Date(ollamaLastRefresh).toLocaleTimeString()}` : ""}</p>
@@ -701,7 +780,6 @@ export default function SettingsContent() {
                 </div>
               )}
             </section>
-
             {!localHydrated ? (
               <p className="text-[11px] font-mono text-muted-foreground">Loading local models...</p>
             ) : localProviders.length === 0 ? (
