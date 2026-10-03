@@ -7,7 +7,6 @@ import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { PROVIDER_LABELS } from "@/utils/providerLabels";
 import {
   getModelLabel,
-  PROVIDER_LIST,
   PROVIDER_MODEL_OPTIONS,
   type ProviderType
 } from "@/types/providers";
@@ -110,7 +109,7 @@ export default function ChatComposer({
               onStartScreenShare={onStartScreenShare}
               onOpenWorkspace={onOpenWorkspace}
             />
-            <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+            <div className="flex min-w-0 items-center gap-2 overflow-visible">
               <ModelSelector
                 provider={provider}
                 model={model}
@@ -255,7 +254,6 @@ interface ModelSelectorProps {
 
 function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
-  const setProvider = useChatStore((s) => s.setProvider);
   const setModel = useChatStore((s) => s.setModel);
   const localModels = useLocalModelStore((s) => s.models.filter((m) => m.enabled));
   const discoveredOllamaModels = useLocalModelStore((s) => s.discoveredOllamaModels);
@@ -289,8 +287,8 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
     void refreshOllamaModels();
   }, [open, refreshOllamaModels]);
 
-  const handleSelect = async (p: ProviderType, m: string) => {
-    if (p === "local") {
+  const handleSelect = async (m: string) => {
+    if (provider === "local") {
       // Ensure the selected discovered model is persisted as a LocalModel for future
       const discovered = useLocalModelStore.getState().discoveredOllamaModels.find((d) => d.modelId === m);
       const existing = useLocalModelStore.getState().models.find((mod) => mod.modelId === m);
@@ -318,7 +316,6 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
         // Keep the invalid selection but show warning; do not silently switch
       }
     }
-    if (p !== provider) setProvider(p);
     setModel(m);
     setOpen(false);
   };
@@ -349,7 +346,8 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
           className="absolute bottom-full left-0 z-50 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-2xl animate-fade-in text-popover-foreground"
         >
           {/* Local models first-class — dynamic Ollama discovery */}
-          <div className="mb-1">
+          {provider === "local" && (
+            <div className="mb-1">
             <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground font-mono flex items-center gap-1.5">
               Ollama
               {ollamaStatus === "connected" && <span className="flex items-center gap-1 text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Connected</span>}
@@ -394,7 +392,7 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
                         type="button"
                         role="option"
                         aria-selected={selected}
-                        onClick={() => void handleSelect("local", modelId)}
+                        onClick={() => void handleSelect(modelId)}
                         className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors cursor-pointer ${
                           selected ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground"
                         }`}
@@ -420,22 +418,23 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
                 )}
               </div>
             )}
-          </div>
-          {PROVIDER_LIST.filter((p) => p !== "local").map((p) => (
-            <div key={p} className="mb-1">
+            </div>
+          )}
+          {provider !== "local" && (
+            <div className="mb-1">
               <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground font-mono">
-                {PROVIDER_LABELS[p]}
+                {PROVIDER_LABELS[provider]}
               </div>
               <div className="space-y-0.5">
-                {PROVIDER_MODEL_OPTIONS[p as Exclude<ProviderType, "local">].map((m) => {
-                  const selected = p === provider && m.id === model;
+                {PROVIDER_MODEL_OPTIONS[provider].map((m) => {
+                  const selected = m.id === model;
                   return (
                     <button
                       key={m.id}
                       type="button"
                       role="option"
                       aria-selected={selected}
-                      onClick={() => handleSelect(p, m.id)}
+                      onClick={() => void handleSelect(m.id)}
                       className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors cursor-pointer ${
                         selected
                           ? "bg-muted text-foreground font-medium"
@@ -458,7 +457,7 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
                 })}
               </div>
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>
