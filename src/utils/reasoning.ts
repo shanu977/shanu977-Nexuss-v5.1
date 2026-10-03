@@ -209,11 +209,11 @@ function stripFreeformDeliberation(text: string): string {
   if (!text) return text;
   let t = text.replace(/^\s*(?:NEXUSS\s*:?\s*)?:\*\*\s*/i, "").trim();
   t = t.replace(/^\s*:\*\*\s*/, "").trim();
-  if (/Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,|I should respond|I should acknowledge|should respond with|Follow Constraints|Final Output Generation|Respond only with|Never reveal internal|Be helpful and concise|Acknowledge the friendly/i.test(t)) {
+  if (/Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|I should respond|I should acknowledge|should respond with|Follow Constraints|Final Output Generation|Respond only with|Never reveal internal|Be helpful and concise|Acknowledge the friendly/i.test(t)) {
     const parts = t.split(/\n\s*\n/);
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
-      if (!p.trim() || /Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal|Acknowledge the friendly/i.test(p)) continue;
+      if (!p.trim() || /Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal|Acknowledge the friendly/i.test(p)) continue;
       const m_q = p.match(/"([^"]*How can I help[^"]*)"/i);
       if (m_q) return m_q[1].trim().replace(/^["']|["']$/g, "").trim();
       const m_q2 = p.match(/"([^"]+)"/);
@@ -253,7 +253,7 @@ function stripFreeformDeliberation(text: string): string {
     for (const mm of t.matchAll(/I(?:'m| am) an AI assistant/gi)) last = mm;
     if (last && last.index !== undefined) return t.slice(last.index).trim().replace(/^:\*\*\s*/, "").trim();
     for (let i = parts.length - 1; i >= 0; i--)
-      if (parts[i].trim() && !/Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal/i.test(parts[i])) {
+      if (parts[i].trim() && !/Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal/i.test(parts[i])) {
         const cleaned = parts[i].trim().replace(/^\s*\d+\.\s*/, "");
         if (cleaned) return cleaned;
       }
@@ -288,6 +288,10 @@ export class ReasoningFilter {
     t = t.replace(/^\[|\]$/g, "").trim();
     t = t.toLowerCase();
     if (t === "") return true;
+    // Do not classify ordinary answer prose such as "Step by step..." or
+    // "Summary..." as an internal heading unless it has heading punctuation.
+    // Complete planning headings are handled by PLANNING_HEADING_RE.
+    if (!/[:\->]/.test(line) && !/^(?:ready|proceeds|done)\.?$/i.test(t)) return false;
     let first = t.split(":")[0].trim();
     first = first.replace(/\(.*?\)/g, "").trim();
     const candidates = [

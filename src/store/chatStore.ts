@@ -389,12 +389,6 @@ async function requestAssistant(
           display += visible;
           if (firstVisible) { updateMessage(true); firstVisible = false; }
           else updateMessage();
-        } else if (evt.type === "done") {
-          const tail = reasoner.flush();
-          if (tail) {
-            display += tail;
-            updateMessage(true);
-          }
         }
       }
       // Ensure tail is flushed even if stream ended without explicit done
@@ -612,6 +606,18 @@ async function requestAssistant(
       display = finalContent;
       updateMessage(true);
       flushPending();
+    }
+
+    const terminalError = intent.kind === "action" &&
+      /(?:CONNECTOR_UNAVAILABLE|NETWORK_ERROR)/i.test(finalContent);
+    if (terminalError) {
+      // Execution failures belong to terminal state, not the conversational
+      // transcript. The workspace panel remains responsible for displaying it.
+      useWorkspaceStore.setState({ commandError: finalContent });
+      useChatStore.setState((s) => ({
+        messages: s.messages.filter((m) => m.id !== asstId)
+      }));
+      return;
     }
 
     const asstMsg: Message = {

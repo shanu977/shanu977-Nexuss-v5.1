@@ -52,21 +52,17 @@ export function isFilesystemActionRequest(t: string): boolean {
     /\binside it\b/.test(lower) ||
     /\bgo to\b/.test(lower) ||
     /\bcount\b/.test(lower) ||
-    /tell me the path/.test(lower) ||
-    /what is (the )?path/.test(lower) ||
-    /give me.*path/.test(lower) ||
-    /path of (it|that|the folder|the file)/.test(lower) ||
-    /path for that/.test(lower) ||
-    /where is/.test(lower) ||
-    /\bread\b/.test(lower) ||
+    // Location questions are conversational by default. They only become
+    // actions when tied to an explicit filesystem operation below.
     /\bwrite\b.*\b(into|to)\b/.test(lower) ||
     /\bthe full path\b/.test(lower) ||
     /\byou (just|was) .*create/.test(lower) ||
     /\bnode --check\b/.test(lower) ||
     /\bfind.*bug\b/.test(lower) ||
     /\bfix.*bug\b/.test(lower) ||
+    /\b(modify|edit|update|change)\b.*\b(code|file|project|page|component|function)\b/.test(lower) ||
     /\b(find|fix)\b.*\b(bug|error)\b/.test(lower) ||
-    /\brun\b.*\b(check|test|node|code)\b/.test(lower) ||
+    /\brun\b.*\b(check|test|node|code|npm|pnpm|yarn|bun|pytest|python|git|cargo|go)\b/.test(lower) ||
     /\bcopy\b.*\b(to|inside)\b/.test(lower) ||
     /\bmove\b.*\b(to|inside)\b/.test(lower) ||
     /\brun\b.*\.js\b/.test(lower)
@@ -588,6 +584,22 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
       else if (/\bpython\b/i.test(clause) && (lower.includes("task manager") || lower.includes("code") || lower.includes("implementation"))) content = generateFortyLineSample();
       else if (/\breadme\b/i.test(clause)) content = "# Project\n\nThis project contains app.py which implements a simple TaskManager with fibonacci. Generated for Nexuss E2E test.\n";
       actions.push({ kind: "createFile", name, folderRef, clause, content });
+      continue;
+    }
+
+    // A page/component request is still a concrete file-creation task even
+    // when the user does not provide an extension. Keep the name general and
+    // resolve it as an HTML page rather than dropping the second plan step.
+    const pageMatch = clause.match(/\b(?:create|make)\s+(?:a\s+)?(?:basic\s+)?([a-zA-Z0-9_-]+)\s+page\b/i);
+    if (pageMatch) {
+      const folderRef = /\binside\s+(?:it|that|the\s+folder)\b/i.test(clause) ? "it" : undefined;
+      actions.push({
+        kind: "createFile",
+        name: `${pageMatch[1]}.html`,
+        folderRef,
+        clause,
+        content: `<!doctype html>\n<html lang="en">\n<head><meta charset="UTF-8"><title>${pageMatch[1]}</title></head>\n<body></body>\n</html>\n`
+      });
       continue;
     }
 
