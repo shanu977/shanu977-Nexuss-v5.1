@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useChatStore } from "@/store";
 import { useLocalModelStore } from "@/store/localModelStore";
+import { selectLocalModel } from "@/services/localModelSelection";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { PROVIDER_LABELS } from "@/utils/providerLabels";
 import {
@@ -110,7 +111,7 @@ export default function ChatComposer({
               onStartScreenShare={onStartScreenShare}
               onOpenWorkspace={onOpenWorkspace}
             />
-            <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+            <div className="flex min-w-0 items-center gap-2">
               <ModelSelector
                 provider={provider}
                 model={model}
@@ -292,32 +293,11 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
 
   const handleSelect = async (p: ProviderType, m: string) => {
     if (p === "local") {
-      // Ensure the selected discovered model is persisted as a LocalModel for future
-      const discovered = useLocalModelStore.getState().discoveredOllamaModels.find((d) => d.modelId === m);
-      const existing = useLocalModelStore.getState().models.find((mod) => mod.modelId === m);
-      if (discovered && !existing) {
-        const ollamaProvider = useLocalModelStore.getState().providers.find((pr) => pr.providerType === "ollama");
-        if (ollamaProvider) {
-          try {
-            await useLocalModelStore.getState().addModel(ollamaProvider.id, m, m);
-          } catch {}
-        } else {
-          // No Ollama provider yet, create one and add model
-          try {
-            const newProv = await useLocalModelStore.getState().addProvider({
-              name: "Ollama",
-              providerType: "ollama",
-              endpoint: "http://localhost:11434/v1",
-            });
-            await useLocalModelStore.getState().addModel(newProv.id, m, m);
-          } catch {}
-        }
-      }
-      // If selected model is not in discovered list, clear invalid selection
-      const stillExists = useLocalModelStore.getState().discoveredOllamaModels.some((d) => d.modelId === m) || useLocalModelStore.getState().models.some((mod) => mod.modelId === m);
-      if (!stillExists && m) {
-        // Keep the invalid selection but show warning; do not silently switch
-      }
+      // Same selection path as Settings → Models: persists the discovered
+      // model (best-effort) and updates the existing provider/model state.
+      await selectLocalModel(m);
+      setOpen(false);
+      return;
     }
     if (p !== provider) setProvider(p);
     setModel(m);
@@ -347,7 +327,7 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
         <div
           role="listbox"
           aria-label="Choose model"
-          className="absolute bottom-full left-0 z-50 mb-2 max-h-72 w-72 overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-2xl animate-fade-in text-popover-foreground"
+          className="absolute bottom-full left-0 z-50 mb-2 max-h-[min(18rem,50vh)] w-72 overflow-y-auto rounded-xl border border-border bg-popover p-2 shadow-2xl animate-fade-in text-popover-foreground"
         >
           {/* Local models first-class — dynamic Ollama discovery */}
           <div className="mb-1">
