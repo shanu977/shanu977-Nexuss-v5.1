@@ -14,8 +14,11 @@ import { testLocalEndpoint } from "@/services/localModels";
 import { LOCAL_PROVIDER_LABELS, LocalProviderType, LOCAL_PROVIDER_DEFAULT_ENDPOINTS, validateEndpoint, normalizeEndpoint } from "@/types/localModels";
 import { getErrorMessage } from "@/utils";
 import UsageDashboard from "@/components/UsageDashboard";
+import AccountPanel from "@/components/AccountPanel";
 
 type ApiKeyProvider = "groq" | "gemini" | "openrouter";
+
+export type SettingsTab = "general" | "account" | "keys" | "models" | "usage";
 
 const KEY_FIELDS: ApiKeyProvider[] = ["groq", "gemini", "openrouter"];
 
@@ -25,7 +28,11 @@ const EMPTY_STATUS: Record<ApiKeyProvider, ApiKeyStatus> = {
   openrouter: { provider: "openrouter", has_key: false, updatedAt: 0 }
 };
 
-export default function SettingsContent() {
+interface SettingsContentProps {
+  initialTab?: SettingsTab;
+}
+
+export default function SettingsContent({ initialTab = "general" }: SettingsContentProps) {
   const theme = useChatStore((s) => s.theme);
   const provider = useChatStore((s) => s.provider);
   const model = useChatStore((s) => s.model);
@@ -34,7 +41,7 @@ export default function SettingsContent() {
   const setModel = useChatStore((s) => s.setModel);
   const providers: ProviderType[] = ["groq", "gemini", "openrouter", "local"];
 
-  const [activeTab, setActiveTab] = useState<"general" | "keys" | "models" | "usage">("general");
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
   // ---- API key management ----
   const [keyStatus, setKeyStatus] = useState<Record<ApiKeyProvider, ApiKeyStatus>>(
@@ -303,6 +310,17 @@ export default function SettingsContent() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("account")}
+          className={`flex-1 rounded-lg py-1.5 font-mono text-[11px] font-medium transition-all ${
+            activeTab === "account"
+              ? "bg-card text-foreground border border-border shadow-xs"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Account
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("keys")}
           className={`flex-1 rounded-lg py-1.5 font-mono text-[11px] font-medium transition-all ${
             activeTab === "keys"
@@ -407,6 +425,9 @@ export default function SettingsContent() {
           </section>
         </div>
       )}
+
+      {/* TAB 1.5: ACCOUNT */}
+      {activeTab === "account" && <AccountPanel />}
 
       {/* TAB 2: API KEYS */}
       {activeTab === "keys" && (

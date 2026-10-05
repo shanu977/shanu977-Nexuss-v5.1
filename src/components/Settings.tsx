@@ -1,20 +1,29 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import SettingsContent from "@/components/SettingsContent";
+import SettingsContent, { SettingsTab } from "@/components/SettingsContent";
+import { hasNestedEscapeOverlay } from "@/utils";
+
+export type { SettingsTab };
 
 interface SettingsProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Tab to show when the modal opens (defaults to Preferences). */
+  initialTab?: SettingsTab;
 }
 
-export default function Settings({ isOpen, onClose }: SettingsProps) {
+export default function Settings({ isOpen, onClose, initialTab = "general" }: SettingsProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // A nested dialog (e.g. the delete-account confirmation) owns Escape
+      // while it is open; closing both at once would be disorienting.
+      if (hasNestedEscapeOverlay()) return;
+      onClose();
     };
     const handleClick = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
@@ -36,6 +45,9 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
       <div
         ref={panelRef}
         className="w-full max-w-[440px] flex max-h-[85vh] flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl backdrop-blur-xl animate-in zoom-in-95"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 bg-muted/50">
           <div className="flex items-center gap-2">
@@ -53,7 +65,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          <SettingsContent />
+          <SettingsContent initialTab={initialTab} />
         </div>
       </div>
     </div>

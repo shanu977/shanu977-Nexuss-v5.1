@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useChatStore } from "@/store";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
@@ -257,7 +257,8 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const setProvider = useChatStore((s) => s.setProvider);
   const setModel = useChatStore((s) => s.setModel);
-  const localModels = useLocalModelStore((s) => s.models.filter((m) => m.enabled));
+  const allLocalModels = useLocalModelStore((s) => s.models);
+  const localModels = useMemo(() => allLocalModels.filter((m) => m.enabled), [allLocalModels]);
   const discoveredOllamaModels = useLocalModelStore((s) => s.discoveredOllamaModels);
   const ollamaStatus = useLocalModelStore((s) => s.ollamaStatus);
   const ollamaError = useLocalModelStore((s) => s.ollamaError);

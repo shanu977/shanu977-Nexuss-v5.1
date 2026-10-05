@@ -2,7 +2,10 @@ import { create } from "zustand";
 import db from "@/lib/db/db";
 import { useAuthStore } from "@/store/useAuthStore";
 import { LocalProvider, LocalModel, LocalProviderType, normalizeEndpoint } from "@/types/localModels";
-import { discoverOllamaModelsDetailed, DiscoveredOllamaModelDetailed } from "@/services/localModels";
+import {
+  discoverOllamaModelsDetailed,
+  DiscoveredOllamaModelDetailed,
+} from "@/services/localModels";
 
 function currentUid(): string | null {
   return useAuthStore.getState().user?.uid ?? null;
@@ -10,6 +13,24 @@ function currentUid(): string | null {
 function newId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Single-flight guard for model discovery. Settings and the model selector both
+// auto-refresh (React StrictMode runs effects twice in dev), and two concurrent
+// refreshes would race the provider/model sync and create duplicates.
+let refreshInFlight: Promise<void> | null = null;
+
+function singleFlightRefresh(
+  run: (endpoint?: string) => Promise<void>
+): (endpoint?: string) => Promise<void> {
+  return (endpoint) => {
+    if (!refreshInFlight) {
+      refreshInFlight = run(endpoint).finally(() => {
+        refreshInFlight = null;
+      });
+    }
+    return refreshInFlight;
+  };
 }
 
 interface LocalModelState {
@@ -21,6 +42,7 @@ interface LocalModelState {
   ollamaStatus: "connected" | "not_connected" | "error" | "loading" | "idle";
   ollamaError: string | null;
   ollamaLastRefresh: number | null;
+
   hydrate: () => Promise<void>;
   addProvider: (input: { name: string; providerType: LocalProviderType; endpoint: string; apiKey?: string }) => Promise<LocalProvider>;
   updateProvider: (id: string, patch: Partial<Pick<LocalProvider, "name" | "endpoint" | "apiKey" | "enabled" | "providerType">>) => Promise<void>;
@@ -44,7 +66,6 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
   ollamaStatus: "idle",
   ollamaError: null,
   ollamaLastRefresh: null,
-
   hydrate: async () => {
     const uid = currentUid();
     if (!uid) {
@@ -166,13 +187,14 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
     return get().providers.find((p) => p.id === model.providerId);
   },
 
-  refreshOllamaModels: async (endpoint) => {
+  refreshOllamaModels: singleFlightRefresh(async (endpoint) => {
     const uid = currentUid();
     if (!uid) {
       set({ discoveredOllamaModels: [], ollamaStatus: "error", ollamaError: "Not authenticated" });
       return;
     }
     set({ ollamaStatus: "loading", ollamaError: null });
+
     // Determine endpoint: provided, or existing Ollama provider, or default
     let targetEndpoint = endpoint;
     if (!targetEndpoint) {
@@ -275,8 +297,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
         ollamaLastRefresh: Date.now(),
       });
     }
-  },
-
+  }),
   clearDiscoveredOllamaModels: () => set({ discoveredOllamaModels: [], ollamaStatus: "idle", ollamaError: null }),
 
   reset: () => set({ providers: [], models: [], hydrated: false, discoveredOllamaModels: [], ollamaStatus: "idle", ollamaError: null, ollamaLastRefresh: null }),
