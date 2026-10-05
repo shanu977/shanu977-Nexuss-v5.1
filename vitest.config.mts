@@ -43,7 +43,20 @@ export default defineConfig({
           fileParallelism: false,
           testTimeout: 30_000
         }
+      },
+      {
+        extends: true,
+        test: {
+          name: "desktop",
+          environment: "node",
+          include: ["desktop/**/*.test.ts"],
+          fileParallelism: false,
+          testTimeout: 30_000
+        }
       }
     ]
   }
 });
+
+
+

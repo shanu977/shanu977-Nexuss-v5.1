@@ -370,6 +370,98 @@ export async function discoverOllamaModelsDetailed(
       `Bearer ${apiKey.trim()}`;
   }
 
+  // Try dedicated desktop IPC model discovery first.
+  // Electron talks directly to Ollama, avoiding browser CORS/PNA restrictions.
+  const desktopOllama = (
+    typeof window !== "undefined"
+      ? (
+          window as unknown as {
+            nexussDesktop?: {
+              ollama?: {
+                discoverModels?: () => Promise<
+                  {
+                    name: string;
+                    size?: number;
+                    modifiedAt?: string;
+                    family?: string;
+                    parameterSize?: string;
+                    quantization?: string;
+                  }[]
+                >;
+              };
+            };
+          }
+        ).nexussDesktop?.ollama
+      : undefined
+  ) as
+    | {
+        discoverModels?: () => Promise<
+          {
+            name: string;
+            size?: number;
+            modifiedAt?: string;
+            family?: string;
+            parameterSize?: string;
+            quantization?: string;
+          }[]
+        >;
+
+        pullModel?: (model: string) => Promise<{
+          name: string;
+          size?: number;
+          modifiedAt?: string;
+          family?: string;
+          parameterSize?: string;
+          quantization?: string;
+        }>;
+
+        onPullProgress?: (
+          callback: (progress: {
+            model: string;
+            status: string;
+            completed?: number;
+            total?: number;
+            percent?: number;
+          }) => void
+        ) => () => void;
+      }
+    | undefined;
+
+  if (
+    isDesktop() &&
+    desktopOllama?.discoverModels
+  ) {
+    try {
+      const res =
+        await desktopOllama.discoverModels();
+
+      if (res.length > 0) {
+        return {
+          models: res.map((model) => ({
+            id: model.name,
+            modelId: model.name,
+            size: model.size,
+            modified: model.modifiedAt,
+            family: model.family,
+            parameterSize:
+              model.parameterSize,
+            quantization:
+              model.quantization,
+          })),
+          endpointReachable: true,
+        };
+      }
+
+      // Ollama is reachable but no models are installed.
+      return {
+        models: [],
+        endpointReachable: true,
+      };
+    } catch {
+      // Fall through to browser/connector discovery.
+    }
+  }
+
   // Browser-direct: try /v1/models for IDs,
   // then /api/tags for metadata.
   const modelIds: string[] = [];
@@ -536,6 +628,85 @@ export async function discoverOllamaModelsDetailed(
     models: [],
     endpointReachable,
   };
+}
+
+export interface OllamaPullProgress {
+  model: string;
+  status: string;
+  completed?: number;
+  total?: number;
+  percent?: number;
+}
+
+export async function pullOllamaModel(
+  model: string,
+  onProgress?: (
+    progress: OllamaPullProgress
+  ) => void
+): Promise<DiscoveredOllamaModelDetailed> {
+  const desktopOllama = (
+    typeof window !== "undefined"
+      ? (
+          window as unknown as {
+            nexussDesktop?: {
+              ollama?: {
+                pullModel?: (
+                  model: string
+                ) => Promise<{
+                  name: string;
+                  size?: number;
+                  modifiedAt?: string;
+                  family?: string;
+                  parameterSize?: string;
+                  quantization?: string;
+                }>;
+
+                onPullProgress?: (
+                  callback: (
+                    progress: OllamaPullProgress
+                  ) => void
+                ) => () => void;
+              };
+            };
+          }
+        ).nexussDesktop?.ollama
+      : undefined
+  );
+
+  if (
+    !isDesktop() ||
+    !desktopOllama?.pullModel
+  ) {
+    throw new Error(
+      "Local model download is only available in the Nexuss desktop app."
+    );
+  }
+
+  const removeListener =
+    desktopOllama.onPullProgress?.(
+      (progress) => {
+        onProgress?.(progress);
+      }
+    );
+
+  try {
+    const result =
+      await desktopOllama.pullModel(model);
+
+    return {
+      id: result.name,
+      modelId: result.name,
+      size: result.size,
+      modified: result.modifiedAt,
+      family: result.family,
+      parameterSize:
+        result.parameterSize,
+      quantization:
+        result.quantization,
+    };
+  } finally {
+    removeListener?.();
+  }
 }
 
 /**

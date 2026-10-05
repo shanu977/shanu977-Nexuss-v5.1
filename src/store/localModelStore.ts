@@ -1,12 +1,14 @@
 import { create } from "zustand";
 import db from "@/lib/db/db";
 import { useAuthStore } from "@/store/useAuthStore";
-import { LocalProvider, LocalModel, LocalProviderType, normalizeEndpoint } from "@/types/localModels";
+import { LocalProvider, LocalModel, LocalProviderType, normalizeEndpoint, isDesktop } from "@/types/localModels";
 import {
   discoverOllamaModelsDetailed,
   DiscoveredOllamaModelDetailed,
+  pullOllamaModel as pullOllamaModelService,
 } from "@/services/localModels";
 
+import type { OllamaPullProgress } from "@/services/localModels";
 function currentUid(): string | null {
   return useAuthStore.getState().user?.uid ?? null;
 }
@@ -42,6 +44,7 @@ interface LocalModelState {
   ollamaStatus: "connected" | "not_connected" | "error" | "loading" | "idle";
   ollamaError: string | null;
   ollamaLastRefresh: number | null;
+  ollamaPullProgress: OllamaPullProgress | null;
 
   hydrate: () => Promise<void>;
   addProvider: (input: { name: string; providerType: LocalProviderType; endpoint: string; apiKey?: string }) => Promise<LocalProvider>;
@@ -53,6 +56,8 @@ interface LocalModelState {
   getModelsForProvider: (providerId: string) => LocalModel[];
   getEnabledModels: () => LocalModel[];
   getProviderForModel: (modelId: string) => LocalProvider | undefined;
+  recommendOllamaModel: () => Promise<string | null>;
+  pullOllamaModel: (model: string) => Promise<void>;
   refreshOllamaModels: (endpoint?: string) => Promise<void>;
   clearDiscoveredOllamaModels: () => void;
   reset: () => void;
@@ -66,6 +71,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
   ollamaStatus: "idle",
   ollamaError: null,
   ollamaLastRefresh: null,
+  ollamaPullProgress: null,
   hydrate: async () => {
     const uid = currentUid();
     if (!uid) {
@@ -195,6 +201,37 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
     }
     set({ ollamaStatus: "loading", ollamaError: null });
 
+    if (isDesktop()) {
+      const desktopOllama = (
+        window as unknown as {
+          nexussDesktop?: {
+            ollama?: {
+              ensureRunning?: () => Promise<{
+                status: "checking" | "not_installed" | "starting" | "running" | "error";
+                message: string;
+                installed: boolean;
+                running: boolean;
+                endpoint: string;
+                models?: unknown[];
+              }>;
+            };
+          };
+        }
+      ).nexussDesktop?.ollama;
+      if (desktopOllama?.ensureRunning) {
+        const state = await desktopOllama.ensureRunning();
+
+        if (state.status === "not_installed" || state.status === "error") {
+          set({
+            discoveredOllamaModels: [],
+            ollamaStatus: "error",
+            ollamaError: state.message,
+            ollamaLastRefresh: Date.now(),
+          });
+          return;
+        }
+      }
+    }
     // Determine endpoint: provided, or existing Ollama provider, or default
     let targetEndpoint = endpoint;
     if (!targetEndpoint) {
@@ -298,6 +335,62 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
       });
     }
   }),
+  recommendOllamaModel: async () => {
+    if (!isDesktop()) return null;
+
+    const desktopOllama = (
+      window as unknown as {
+        nexussDesktop?: {
+          ollama?: {
+            recommendModel?: () => Promise<{
+              model?: string;
+            }>;
+          };
+        };
+      }
+    ).nexussDesktop?.ollama;
+
+    if (!desktopOllama?.recommendModel) return null;
+
+    const result = await desktopOllama.recommendModel();
+    return result?.model ?? null;
+  },
+  pullOllamaModel: async (model) => {
+    if (!isDesktop()) {
+      throw new Error("Ollama model download is only available in the Nexuss desktop app.");
+    }
+
+    set({
+      ollamaStatus: "loading",
+      ollamaError: null,
+      ollamaPullProgress: null,
+    });
+
+    try {
+      await pullOllamaModelService(model, (progress) => {
+        set({
+          ollamaPullProgress: progress,
+        });
+      });
+
+      await get().refreshOllamaModels();
+
+      set({
+        ollamaPullProgress: null,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+
+      set({
+        ollamaStatus: "error",
+        ollamaError: message,
+        ollamaPullProgress: null,
+        ollamaLastRefresh: Date.now(),
+      });
+
+      throw e;
+    }
+  },
   clearDiscoveredOllamaModels: () => set({ discoveredOllamaModels: [], ollamaStatus: "idle", ollamaError: null }),
 
   reset: () => set({ providers: [], models: [], hydrated: false, discoveredOllamaModels: [], ollamaStatus: "idle", ollamaError: null, ollamaLastRefresh: null }),

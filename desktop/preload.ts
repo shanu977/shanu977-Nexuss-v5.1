@@ -9,8 +9,23 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { createDesktopApi } from "./ipc-bridge";
 
-const api = createDesktopApi((channel, payload) =>
-  ipcRenderer.invoke(channel, payload)
-);
+const api = createDesktopApi(
+  (channel, payload) =>
+    ipcRenderer.invoke(channel, payload),
 
+  (channel, callback) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown
+    ) => {
+      callback(payload);
+    };
+
+    ipcRenderer.on(channel, listener);
+
+    return () => {
+      ipcRenderer.removeListener(channel, listener);
+    };
+  }
+);
 contextBridge.exposeInMainWorld("nexussDesktop", api);
