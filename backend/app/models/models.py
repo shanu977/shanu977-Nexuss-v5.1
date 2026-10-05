@@ -252,6 +252,41 @@ class AppSetting(Base):
     )
 
 
+class AccountDeletion(Base):
+    """Temporary operational state for an in-flight permanent account deletion.
+
+    Deliberately **not** a deletion history: this row exists only while the
+    job is queued, running, waiting for a retry, or permanently failed, and is
+    removed as soon as the deletion completes. Nothing else references it, it
+    has no foreign key to ``users`` (that row is deleted mid-job), and no
+    completion record is ever written elsewhere — a successful deletion leaves
+    no persistent trace that identifies the person.
+
+    ``firebase_uid`` is the identity anchor: it is derived server-side from
+    the verified Firebase ID token and is never supplied by the client.
+    """
+
+    __tablename__ = "account_deletions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    firebase_uid = Column(String, nullable=False, unique=True, index=True)
+    # Needed while the job runs to purge OTP rows keyed by address; dropped
+    # together with the row on completion.
+    email = Column(String, nullable=True, index=True)
+    # queued | running | retry_wait | failed   (completed => row deleted)
+    state = Column(String, nullable=False, default="queued", server_default="queued")
+    # queued | deleting_data | removing_auth | verifying
+    stage = Column(String, nullable=False, default="queued", server_default="queued")
+    attempt = Column(Integer, nullable=False, default=0, server_default="0")
+    max_attempts = Column(Integer, nullable=False, default=7, server_default="7")
+    # Epoch ms: when the next attempt may run (backoff schedule).
+    next_attempt_at = Column(BigInteger, nullable=False, default=utc_now_ms)
+    # Sanitized, non-sensitive failure summary for retry decisions/UI.
+    last_error = Column(String, nullable=True)
+    created_at = Column(BigInteger, nullable=False, default=utc_now_ms)
+    updated_at = Column(BigInteger, nullable=False, default=utc_now_ms)
+
+
 class AuditLog(Base):
     """Audit trail of important Admin actions.
 

@@ -17,6 +17,24 @@ function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// Single-flight guard for model discovery. Settings and the model selector both
+// auto-refresh (React StrictMode runs effects twice in dev), and two concurrent
+// refreshes would race the provider/model sync and create duplicates.
+let refreshInFlight: Promise<void> | null = null;
+
+function singleFlightRefresh(
+  run: (endpoint?: string) => Promise<void>
+): (endpoint?: string) => Promise<void> {
+  return (endpoint) => {
+    if (!refreshInFlight) {
+      refreshInFlight = run(endpoint).finally(() => {
+        refreshInFlight = null;
+      });
+    }
+    return refreshInFlight;
+  };
+}
+
 interface LocalModelState {
   providers: LocalProvider[];
   models: LocalModel[];
@@ -175,7 +193,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
     return get().providers.find((p) => p.id === model.providerId);
   },
 
-  refreshOllamaModels: async (endpoint) => {
+  refreshOllamaModels: singleFlightRefresh(async (endpoint) => {
     const uid = currentUid();
     if (!uid) {
       set({ discoveredOllamaModels: [], ollamaStatus: "error", ollamaError: "Not authenticated" });
@@ -316,7 +334,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
         ollamaLastRefresh: Date.now(),
       });
     }
-  },
+  }),
   recommendOllamaModel: async () => {
     if (!isDesktop()) return null;
 

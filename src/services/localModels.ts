@@ -80,6 +80,35 @@ async function isConnectorAvailable(): Promise<boolean> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Desktop (Electron) bridge surface.
+//
+// The preload bridge exposes `window.nexussDesktop.ollama` whose methods all
+// take a single object payload (see desktop/ipc-bridge.ts). Declaring the exact
+// shapes here keeps renderer and preload contracts in sync instead of silently
+// sending positional arguments into an object-parameter handler.
+// ---------------------------------------------------------------------------
+
+interface DesktopOllamaApi {
+  test?: (req: { endpoint: string; apiKey?: string }) => Promise<LocalTestResult>;
+}
+
+function getDesktopOllama(): DesktopOllamaApi | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { nexussDesktop?: { ollama?: DesktopOllamaApi } })
+    .nexussDesktop?.ollama;
+}
+
+/** The desktop bridge only ever talks to loopback; everything else uses fetch. */
+function isLoopbackEndpoint(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
 export async function testLocalEndpoint(
   rawEndpoint: string,
   providerType: string = "generic",
@@ -101,6 +130,20 @@ export async function testLocalEndpoint(
     providerType as never
   );
 
+  // Try the desktop IPC bridge first — the Electron main process fetches
+  // loopback endpoints without CORS/PNA restrictions, so this works even when
+  // the browser cannot reach Ollama directly. Non-loopback endpoints are not
+  // handled by the bridge and fall through to the normal fetch path.
+  const desktopOllama = getDesktopOllama();
+
+  if (isDesktop() && desktopOllama?.test && isLoopbackEndpoint(endpoint)) {
+    try {
+      return await desktopOllama.test({ endpoint, apiKey });
+    } catch {
+      // Fall through to the connector / direct fetch path
+    }
+  }
+
   // For Ollama on localhost:11434, try the Nexuss Local Connector first.
   if (
     providerType === "ollama" &&
@@ -116,44 +159,6 @@ export async function testLocalEndpoint(
         endpoint = CONNECTOR_ENDPOINT;
       }
     } catch {}
-  }
-
-  // Try desktop IPC first if available.
-  const desktopOllama = (
-    typeof window !== "undefined"
-      ? (
-          window as unknown as {
-            nexussDesktop?: {
-              ollama?: {
-                test?: (
-                  url: string,
-                  key?: string
-                ) => Promise<LocalTestResult>;
-              };
-            };
-          }
-        ).nexussDesktop?.ollama
-      : undefined
-  ) as
-    | {
-        test?: (
-          url: string,
-          key?: string
-        ) => Promise<LocalTestResult>;
-      }
-    | undefined;
-
-  if (isDesktop() && desktopOllama?.test) {
-    try {
-      const res = await desktopOllama.test(
-        endpoint,
-        apiKey
-      );
-
-      return res;
-    } catch {
-      // Fall through to direct fetch
-    }
   }
 
   // 1. Try /models discovery
@@ -891,9 +896,15 @@ export async function* streamLocalChat(
         .toLowerCase()
         .includes("networkerror");
 
-    // Fast fallback through connector.
+    if (!isNetwork) {
+      throw new Error(
+        `Cannot connect to local model: ${msg}`
+      );
+    }
+
+    // Network/CORS failure on a direct Ollama endpoint: retry through the
+    // local connector, which proxies to Ollama without browser CORS limits.
     if (
-      isNetwork &&
       isDirect &&
       (
         endpoint ===
@@ -942,14 +953,8 @@ export async function* streamLocalChat(
         );
       }
     } else {
-      if (isNetwork) {
-        throw new Error(
-          "Cannot connect to local model. Check that the server is running and CORS is configured (e.g., OLLAMA_ORIGINS=*)."
-        );
-      }
-
       throw new Error(
-        `Cannot connect to local model: ${msg}`
+        "Cannot connect to local model. Check that the server is running and CORS is configured (e.g., OLLAMA_ORIGINS=*)."
       );
     }
   }

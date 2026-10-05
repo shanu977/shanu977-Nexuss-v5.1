@@ -37,6 +37,8 @@ REQUIRED_TABLES: List[str] = [
     "audit_log",
     # OTP table (migration d5e6f7a8b9c0)
     "email_otps",
+    # In-flight account-deletion jobs (migration a7c1e9d2f3b4)
+    "account_deletions",
 ]
 
 # Columns that MUST exist in each table.
@@ -128,6 +130,18 @@ REQUIRED_COLUMNS: Dict[str, Dict[str, str]] = {
         "otp_hash": "String",
         "expires_at": "BigInteger",
         "created_at": "BigInteger",
+    },
+    "account_deletions": {
+        "id": "String (PK)",
+        "firebase_uid": "String (unique, indexed)",
+        "email": "String (indexed, nullable)",
+        "state": "String (queued|running|retry_wait|failed)",
+        "stage": "String",
+        "attempt": "Integer",
+        "max_attempts": "Integer",
+        "next_attempt_at": "BigInteger",
+        "created_at": "BigInteger",
+        "updated_at": "BigInteger",
     },
 }
 

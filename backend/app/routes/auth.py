@@ -16,7 +16,8 @@ from ..config import settings
 from ..database import get_db
 from ..models import EmailOTP
 from ..models.models import utc_now_ms
-from ..services import email_service, firebase_service
+from ..routes.deps import DELETION_IN_PROGRESS_MESSAGE
+from ..services import account_deletion, email_service, firebase_service
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -66,10 +67,29 @@ def _compute_otp_hash(otp: str, email: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _reject_if_deleting(db: Session, email: str) -> None:
+    """Block unauthenticated password flows while a deletion is in flight.
+
+    These routes take no bearer token, so the identity is the email address.
+    A deletion locks the account (423) until it finishes: re-arming a
+    password or issuing OTPs mid-deletion would race with the job that is
+    about to remove the account.
+    """
+    if account_deletion.get_active_job_by_email(db, email) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail=DELETION_IN_PROGRESS_MESSAGE,
+        )
+
+
 @router.post("/user-status", response_model=UserStatusResponse)
-def get_user_status(payload: UserStatusRequest):
+def get_user_status(
+    payload: UserStatusRequest,
+    db: Session = Depends(get_db),
+):
     """Check provider status for an email address in Firebase Auth."""
     email = payload.email.lower().strip()
+    _reject_if_deleting(db, email)
     fb_user = firebase_service.get_user_by_email(email)
     if not fb_user:
         return UserStatusResponse(exists=False, providers=[], has_password=False)
@@ -90,6 +110,7 @@ def send_otp(
 ):
     """Generate and send a single-use 6-digit OTP for email verification."""
     email = payload.email.lower().strip()
+    _reject_if_deleting(db, email)
     now_ms = utc_now_ms()
 
     # The Forgot Password flow must never mail an OTP for an address that has
@@ -190,6 +211,7 @@ def verify_otp(
 ):
     """Verify single-use OTP and return a signed verification token."""
     email = payload.email.lower().strip()
+    _reject_if_deleting(db, email)
     otp_input = payload.otp.strip()
     now_ms = utc_now_ms()
 
@@ -278,6 +300,7 @@ def _verify_verification_token(email: str, token: str) -> None:
 @router.post("/set-password")
 def set_password(
     payload: SetPasswordRequest,
+    db: Session = Depends(get_db),
 ):
     """Set password for an existing account after OTP email verification.
 
@@ -285,6 +308,7 @@ def set_password(
     """
     email = payload.email.lower().strip()
     password = payload.password
+    _reject_if_deleting(db, email)
 
     if len(password) < 6:
         raise HTTPException(
@@ -323,6 +347,7 @@ def set_password(
 @router.post("/reset-password")
 def reset_password(
     payload: SetPasswordRequest,
+    db: Session = Depends(get_db),
 ):
     """Reset the password of an EXISTING account after OTP email verification.
 
@@ -335,6 +360,7 @@ def reset_password(
     """
     email = payload.email.lower().strip()
     password = payload.password
+    _reject_if_deleting(db, email)
 
     if len(password) < 6:
         raise HTTPException(

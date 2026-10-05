@@ -298,6 +298,8 @@ def test_migration_upgrade_and_downgrade(tmp_path):
             inspector = inspect(engine)
             tables = set(inspector.get_table_names())
             assert {"usage_records", "feedback", "app_settings", "audit_log"} <= tables
+            # Head revision: the temporary deletion-job state table.
+            assert "account_deletions" in tables
 
             user_cols = {c["name"] for c in inspector.get_columns("users")}
             assert "status" in user_cols
@@ -306,6 +308,13 @@ def test_migration_upgrade_and_downgrade(tmp_path):
             usage_indexes = {ix["name"] for ix in inspector.get_indexes("usage_records")}
             assert "ix_usage_records_user_id" in usage_indexes
             assert "ix_usage_records_provider" in usage_indexes
+
+            command.downgrade(cfg, "-1")
+
+            inspector = inspect(engine)
+            tables_after = set(inspector.get_table_names())
+            assert "account_deletions" not in tables_after
+            assert "usage_records" in tables_after
 
             command.downgrade(cfg, "-1")
 
