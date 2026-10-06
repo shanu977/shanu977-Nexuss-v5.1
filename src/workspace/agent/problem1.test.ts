@@ -1,8 +1,8 @@
 // Reproduction test for Problem #1
 import { describe, it, expect, beforeEach } from "vitest";
 import { runAuthorizedGoal } from "./authorizedExecutor";
-import { getAgentState, clearAgentState } from "./agentState";
-import { getRecentExecutionContext, clearExecutionContext } from "./executionContext";
+import { clearAgentState } from "./agentState";
+import { clearExecutionContext } from "./executionContext";
 import { useWorkspaceStore } from "@/workspace/store";
 import { InMemoryBridge } from "@/workspace/bridge";
 import { toolRun } from "./tools";

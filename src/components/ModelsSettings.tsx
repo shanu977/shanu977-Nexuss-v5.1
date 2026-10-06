@@ -270,10 +270,10 @@ export default function ModelsSettings() {
     const persisted = localModels
       .filter((m) => m.providerId === activeLocal.id && m.enabled)
       .map((m) => ({ id: m.modelId, label: m.displayName || m.modelId, meta: formatMeta(m) }));
-    const options = [...persisted];
+    const options: ModelOption[] = [...persisted];
     const checked = activeLocal.id ? endpointChecks[activeLocal.id] : undefined;
     for (const id of checked?.models ?? []) {
-      if (!options.some((o) => o.id === id)) options.push({ id, label: id });
+      if (!options.some((o) => o.id === id)) options.push({ id, label: id, meta: undefined });
     }
     return options;
   }, [
@@ -488,7 +488,7 @@ export default function ModelsSettings() {
               : "The endpoint is not reachable. Start the local server, then reconnect."}
           </p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={handleRefresh} disabled={activeLocal.status === "checking"} className={SECONDARY_BUTTON_CLASSES}>
+            <button type="button" onClick={handleRefresh} className={SECONDARY_BUTTON_CLASSES}>
               Reconnect
             </button>
             <button type="button" onClick={() => openManage(activeLocal)} className={SECONDARY_BUTTON_CLASSES}>
