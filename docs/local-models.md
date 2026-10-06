@@ -26,7 +26,7 @@ Architecture is extensible: add any OpenAI-compatible server by entering its URL
    # OLLAMA_ORIGINS=* ollama serve
    ```
    For `https://www.nexuss.in` → `http://localhost:11434` the browser requires Private Network Access. Ollama 0.33+ handles `Access-Control-Allow-Private-Network: true` when `OLLAMA_ORIGINS` allows the origin. If direct `https` → `http://localhost` is still blocked, use the lightweight **Nexuss Local Connector** (see below).
-4. In Nexuss: Settings → Models → + Add Local Model → Provider Ollama → Endpoint `http://localhost:11434/v1` → Test Connection → Select model → Add Model
+4. In Nexuss: Settings → Models → + Add Local Provider → Provider Ollama → Endpoint `http://localhost:11434/v1` → Test Connection → Select model → Add Model
 5. Select `Local • llama3.2:3b` in the composer model selector and chat. No Groq/Gemini/OpenRouter key needed.
 
 #### Nexuss Local Connector (for https://www.nexuss.in)
@@ -61,8 +61,10 @@ Enter any OpenAI-compatible base URL ending in `/v1`. If `/models` is unavailabl
 
 ## Settings UI
 
-`Settings → Models → Local Models`
+`Settings → Models`
 
+- The **Provider** and **Model** dropdowns pick the active model exactly like the Preferences tab; a reachable Ollama appears as `Ollama • Connected` with its discovered models, and local models are marked with a `LOCAL` badge.
+- **Refresh Models** re-runs discovery; disconnected and empty states offer **Reconnect** / **Configure**.
 - Each endpoint shows: name (Ollama/LM Studio/vLLM), URL, enabled status, and its models.
 - Actions per endpoint: **Test** (real connectivity + `/models` discovery), **Edit**, **Remove**.
 - Adding: choose provider type, endpoint, optional API key, **Test Connection**, pick discovered models or enter manual ID, **Add Model**.

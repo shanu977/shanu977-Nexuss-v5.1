@@ -58,21 +58,32 @@ test('web local AI: discover Ollama, select model, chat, no CORS errors', async 
   await page.getByRole('button', { name: 'Settings' }).first().click();
   await page.getByRole('button', { name: 'Models' }).click();
 
-  // --- 3+4. discovery / Ollama detected ---
-  await expect(page.getByText('Connected')).toBeVisible({ timeout: 60000 });
+  // --- 3+4. discovery / Ollama detected as a provider ---
+  const providerSelect = page.getByLabel('Provider', { exact: true });
+  await expect(providerSelect).toBeVisible({ timeout: 60000 });
+  await expect(providerSelect.locator('option', { hasText: 'Ollama • Connected' })).toHaveCount(1, {
+    timeout: 60000,
+  });
 
-  // --- 5. all 10 installed models discovered and displayed ---
-  await expect(page.getByText('Models: 10')).toBeVisible({ timeout: 30000 });
-  const body = await page.locator('body').innerText();
+  // --- 5. all 10 installed models discovered and listed in the Model dropdown ---
+  const modelSelect = page.getByLabel('Model', { exact: true });
+  await expect(modelSelect).toBeVisible({ timeout: 30000 });
+  await expect
+    .poll(async () => (await modelSelect.locator('option').count()), {
+      timeout: 30000,
+      message: 'expected discovered Ollama models in the Model dropdown',
+    })
+    .toBeGreaterThanOrEqual(EXPECTED_MODELS.length);
+  const modelOptions = await modelSelect.locator('option').allTextContents();
   for (const name of EXPECTED_MODELS) {
-    expect(body, `missing model ${name}`).toContain(name);
+    expect(modelOptions, `missing model ${name}`).toContain(name);
   }
-  const selectButtons = page.getByRole('button', { name: 'Select', exact: true });
-  await expect(selectButtons).toHaveCount(10);
+  // The old per-model [Select] list is gone: selection happens in the dropdown.
+  await expect(page.getByRole('button', { name: 'Select', exact: true })).toHaveCount(0);
 
   // --- 6. select a local model ---
-  await selectButtons.first().click();
-  await expect(page.getByText('Selected', { exact: true }).first()).toBeVisible();
+  await modelSelect.selectOption('qwen2.5-coder:7b');
+  await expect(modelSelect).toHaveValue('qwen2.5-coder:7b');
 
   // --- 7. return to chat ---
   await page.getByRole('button', { name: 'Close settings' }).click();
