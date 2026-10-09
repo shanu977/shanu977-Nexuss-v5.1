@@ -20,6 +20,7 @@ vi.mock("@/workspace/localTerminalRuntime", () => ({
 
 vi.mock("@/services/localModels", () => ({
   discoverOllamaModelsDetailed: mocks.discover,
+  probeLocalConnectorFresh: () => mocks.connectorAvailable({ force: true }),
   streamLocalChat: mocks.streamLocalChat,
   timeoutFetch: mocks.timeoutFetch,
 }));
@@ -49,6 +50,7 @@ describe("detectOllamaSetup — honest classification", () => {
     expect(d.state).toBe("models");
     expect(d.via).toBe("connector");
     expect(d.models?.[0].modelId).toBe("qwen3:4b");
+    expect(mocks.connectorAvailable).toHaveBeenCalledWith({ force: true });
     expect(mocks.discover).toHaveBeenCalledWith("http://localhost:11434/v1", "ollama", undefined);
   });
 

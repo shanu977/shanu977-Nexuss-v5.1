@@ -121,6 +121,7 @@ describe("pullOllamaModel — web download with real progress", () => {
     await pullOllamaModel("llama3.2:3b");
 
     expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:11435/api/pull");
+    expect(mocks.connectorAvailable).toHaveBeenCalledWith({ force: true });
   });
 
   it("never reports fake percentages when the registry sends no totals", async () => {

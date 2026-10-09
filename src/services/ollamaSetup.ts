@@ -11,9 +11,9 @@
 "use client";
 
 import { LOCAL_PROVIDER_DEFAULT_ENDPOINTS, isDesktop } from "@/types/localModels";
-import { isLocalConnectorAvailable } from "@/workspace/localTerminalRuntime";
 import {
   discoverOllamaModelsDetailed,
+  probeLocalConnectorFresh,
   streamLocalChat,
   timeoutFetch,
   type DiscoveredOllamaModelDetailed,
@@ -131,7 +131,7 @@ export async function detectOllamaSetup(
     }
   }
 
-  const connectorUp = await isLocalConnectorAvailable({ force: true });
+  const connectorUp = await probeLocalConnectorFresh();
 
   if (connectorUp) {
     const status = await fetchConnectorOllamaStatus(opts.signal);

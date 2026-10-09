@@ -80,6 +80,22 @@ async function isConnectorAvailable(): Promise<boolean> {
   }
 }
 
+// The shared connector probe gained an optional `{ force }` option (bypasses
+// the short health cache). Older runtimes still export the original 0-arg
+// signature, which harmlessly ignores the option. A locally typed alias keeps
+// both implementations compatible without casts at the call sites.
+type ConnectorProbe = (opts?: { force?: boolean }) => Promise<boolean>;
+const sharedConnectorProbe: ConnectorProbe = sharedIsConnectorAvailable;
+
+/**
+ * Fresh connector availability probe for flows that must not trust a cached
+ * answer (setup detection, model download). Passes `{ force: true }`; runtimes
+ * that predate the option fall back to their normal 5s TTL behaviour.
+ */
+export function probeLocalConnectorFresh(): Promise<boolean> {
+  return sharedConnectorProbe({ force: true });
+}
+
 // ---------------------------------------------------------------------------
 // Desktop (Electron) bridge surface.
 //
@@ -790,7 +806,7 @@ async function pullViaHttp(
   onProgress?: (progress: OllamaPullProgress) => void,
   signal?: AbortSignal
 ): Promise<DiscoveredOllamaModelDetailed> {
-  const connectorUp = await sharedIsConnectorAvailable({ force: true });
+  const connectorUp = await probeLocalConnectorFresh();
   const urls = connectorUp
     ? ["http://127.0.0.1:11435/api/pull", "http://localhost:11434/api/pull"]
     : ["http://localhost:11434/api/pull"];
