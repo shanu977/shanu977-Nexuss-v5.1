@@ -1,6 +1,0 @@
-2026/09/26-19:18:51.924 5048 Creating DB C:\Users\pilli\Downloads\shanu977-Nexuss-v5.1\.chrome-lna-profile\Default\IndexedDB\https_www.nexuss.in_0.indexeddb.leveldb since it was missing.
-2026/09/26-19:18:51.953 5048 Reusing MANIFEST C:\Users\pilli\Downloads\shanu977-Nexuss-v5.1\.chrome-lna-profile\Default\IndexedDB\https_www.nexuss.in_0.indexeddb.leveldb/MANIFEST-000001
-2026/09/26-19:18:51.996 773c Level-0 table #5: started
-2026/09/26-19:18:52.004 773c Level-0 table #5: 1361 bytes OK
-2026/09/26-19:18:52.010 773c Delete type=0 #3
-2026/09/26-19:18:52.015 5048 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)
