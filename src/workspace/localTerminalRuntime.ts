@@ -11,9 +11,15 @@ let cachedAvailable: boolean | null = null;
 let lastCheck = 0;
 const CACHE_TTL_MS = 5000;
 
-export async function isLocalConnectorAvailable(): Promise<boolean> {
+/**
+ * Probe the local connector's health endpoint.
+ * Results are cached for a few seconds; pass `{ force: true }` to skip the
+ * cache (used by the terminal connection flow, which must only report a
+ * verified connection).
+ */
+export async function isLocalConnectorAvailable(opts?: { force?: boolean }): Promise<boolean> {
   const now = Date.now();
-  if (cachedAvailable !== null && now - lastCheck < CACHE_TTL_MS) return cachedAvailable;
+  if (!opts?.force && cachedAvailable !== null && now - lastCheck < CACHE_TTL_MS) return cachedAvailable;
   lastCheck = now;
   // Best-effort: trigger Local Network Access permission prompt on Chrome 130+ (public -> private)
   // This is a no-op on browsers that don't support the permission; we ignore failures.
