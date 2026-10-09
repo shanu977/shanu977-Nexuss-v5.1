@@ -6,9 +6,22 @@ import {
   discoverOllamaModelsDetailed,
   DiscoveredOllamaModelDetailed,
   pullOllamaModel as pullOllamaModelService,
+  cancelOllamaPull,
+  isPullCancelled,
 } from "@/services/localModels";
 
 import type { OllamaPullProgress } from "@/services/localModels";
+
+/**
+ * Cross-view state for an Ollama model download. Kept in the store (not the
+ * setup panel) so closing the panel never kills a download and reopening it
+ * restores the live progress.
+ */
+export interface OllamaPullTask {
+  model: string;
+  status: "pulling" | "completed" | "failed" | "cancelled";
+  error?: string;
+}
 function currentUid(): string | null {
   return useAuthStore.getState().user?.uid ?? null;
 }
@@ -22,14 +35,26 @@ function newId(): string {
 // refreshes would race the provider/model sync and create duplicates.
 let refreshInFlight: Promise<void> | null = null;
 
+// Single-flight guard for model downloads (mirrors the service-level guard so
+// duplicate UI clicks resolve against the running download instead of throwing).
+let pullInFlight: Promise<void> | null = null;
+
+// Bumped on reset() (logout / account switch) so in-flight refresh or pull
+// chains from the previous session discard their results instead of writing
+// stale state — or holding the single-flight guards — into the new one.
+let storeGeneration = 0;
+
 function singleFlightRefresh(
   run: (endpoint?: string) => Promise<void>
 ): (endpoint?: string) => Promise<void> {
   return (endpoint) => {
     if (!refreshInFlight) {
-      refreshInFlight = run(endpoint).finally(() => {
-        refreshInFlight = null;
+      const wrapped: Promise<void> = run(endpoint).finally(() => {
+        // Only clear our own slot — a stale chain finishing after reset()
+        // must not drop a newer refresh's guard.
+        if (refreshInFlight === wrapped) refreshInFlight = null;
       });
+      refreshInFlight = wrapped;
     }
     return refreshInFlight;
   };
@@ -45,6 +70,7 @@ interface LocalModelState {
   ollamaError: string | null;
   ollamaLastRefresh: number | null;
   ollamaPullProgress: OllamaPullProgress | null;
+  ollamaPullTask: OllamaPullTask | null;
 
   hydrate: () => Promise<void>;
   addProvider: (input: { name: string; providerType: LocalProviderType; endpoint: string; apiKey?: string }) => Promise<LocalProvider>;
@@ -58,6 +84,8 @@ interface LocalModelState {
   getProviderForModel: (modelId: string) => LocalProvider | undefined;
   recommendOllamaModel: () => Promise<string | null>;
   pullOllamaModel: (model: string) => Promise<void>;
+  cancelPullOllamaModel: () => void;
+  clearPullTask: () => void;
   refreshOllamaModels: (endpoint?: string) => Promise<void>;
   clearDiscoveredOllamaModels: () => void;
   reset: () => void;
@@ -72,6 +100,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
   ollamaError: null,
   ollamaLastRefresh: null,
   ollamaPullProgress: null,
+  ollamaPullTask: null,
   hydrate: async () => {
     const uid = currentUid();
     if (!uid) {
@@ -194,6 +223,8 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
   },
 
   refreshOllamaModels: singleFlightRefresh(async (endpoint) => {
+    const gen = storeGeneration;
+    const isCurrent = () => gen === storeGeneration;
     const uid = currentUid();
     if (!uid) {
       set({ discoveredOllamaModels: [], ollamaStatus: "error", ollamaError: "Not authenticated" });
@@ -220,6 +251,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
       ).nexussDesktop?.ollama;
       if (desktopOllama?.ensureRunning) {
         const state = await desktopOllama.ensureRunning();
+        if (!isCurrent()) return;
 
         if (state.status === "not_installed" || state.status === "error") {
           set({
@@ -240,6 +272,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
     }
     try {
       const { models, endpointReachable } = await discoverOllamaModelsDetailed(targetEndpoint, "ollama");
+      if (!isCurrent()) return;
       if (!endpointReachable) {
         set({
           discoveredOllamaModels: [],
@@ -260,6 +293,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
       }
       // Ensure an Ollama provider exists for these models
       let ollamaProvider = get().providers.find((p) => p.providerType === "ollama");
+      if (!isCurrent()) return;
       if (!ollamaProvider) {
         // Create a default Ollama provider for the discovered models
         const normalized = normalizeEndpoint(targetEndpoint, "ollama");
@@ -275,6 +309,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
           updatedAt: now,
         };
         await db.localProviders.add(ollamaProvider);
+        if (!isCurrent()) return;
         set((s) => ({ providers: [...s.providers, ollamaProvider!] }));
       }
       // Sync discovered models into persisted LocalModel table (create missing)
@@ -313,12 +348,15 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
       }
       if (toCreate.length > 0) {
         await db.localModels.bulkAdd(toCreate);
+        if (!isCurrent()) return;
         set((s) => ({ models: [...s.models, ...toCreate] }));
       } else {
         // Refresh from DB to get updated metadata
         const refreshed = await db.localModels.where("userId").equals(uid).toArray();
+        if (!isCurrent()) return;
         set({ models: refreshed });
       }
+      if (!isCurrent()) return;
       set({
         discoveredOllamaModels: models,
         ollamaStatus: "connected",
@@ -326,6 +364,7 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
         ollamaLastRefresh: Date.now(),
       });
     } catch (e) {
+      if (!isCurrent()) return;
       const msg = e instanceof Error ? e.message : String(e);
       set({
         discoveredOllamaModels: [],
@@ -356,42 +395,73 @@ export const useLocalModelStore = create<LocalModelState>()((set, get) => ({
     return result?.model ?? null;
   },
   pullOllamaModel: async (model) => {
-    if (!isDesktop()) {
-      throw new Error("Ollama model download is only available in the Nexuss desktop app.");
+    const current = get().ollamaPullTask;
+    if (current?.status === "pulling") {
+      if (current.model !== model) {
+        throw new Error("Another model download is already in progress.");
+      }
+      if (pullInFlight) return pullInFlight;
+      return;
     }
 
     set({
-      ollamaStatus: "loading",
       ollamaError: null,
       ollamaPullProgress: null,
+      ollamaPullTask: { model, status: "pulling" },
     });
 
-    try {
-      await pullOllamaModelService(model, (progress) => {
-        set({
-          ollamaPullProgress: progress,
+    let self: Promise<void> | null = null;
+    const run = (async () => {
+      const gen = storeGeneration;
+      try {
+        await pullOllamaModelService(model, (progress) => {
+          if (gen === storeGeneration) set({ ollamaPullProgress: progress });
         });
-      });
+        if (gen !== storeGeneration) return;
+        await get().refreshOllamaModels();
+        if (gen !== storeGeneration) return;
+        set({
+          ollamaPullProgress: null,
+          ollamaPullTask: { model, status: "completed" },
+        });
+      } catch (e) {
+        const cancelled = isPullCancelled(e);
+        const message = e instanceof Error ? e.message : String(e);
+        if (gen === storeGeneration) {
+          set({
+            ollamaPullProgress: null,
+            ollamaPullTask: {
+              model,
+              status: cancelled ? "cancelled" : "failed",
+              error: cancelled ? undefined : message,
+            },
+            ...(cancelled ? {} : { ollamaError: message, ollamaLastRefresh: Date.now() }),
+          });
+        }
+        if (!cancelled) throw e;
+      } finally {
+        if (pullInFlight === self) pullInFlight = null;
+      }
+    })();
 
-      await get().refreshOllamaModels();
-
-      set({
-        ollamaPullProgress: null,
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-
-      set({
-        ollamaStatus: "error",
-        ollamaError: message,
-        ollamaPullProgress: null,
-        ollamaLastRefresh: Date.now(),
-      });
-
-      throw e;
-    }
+    self = run;
+    pullInFlight = run;
+    return run;
+  },
+  cancelPullOllamaModel: () => {
+    cancelOllamaPull();
+  },
+  clearPullTask: () => {
+    set({ ollamaPullTask: null, ollamaPullProgress: null });
   },
   clearDiscoveredOllamaModels: () => set({ discoveredOllamaModels: [], ollamaStatus: "idle", ollamaError: null }),
 
-  reset: () => set({ providers: [], models: [], hydrated: false, discoveredOllamaModels: [], ollamaStatus: "idle", ollamaError: null, ollamaLastRefresh: null }),
+  reset: () => {
+    // Invalidate in-flight refresh/pull chains and drop the single-flight
+    // guards so the next session (or test) starts clean.
+    storeGeneration += 1;
+    refreshInFlight = null;
+    pullInFlight = null;
+    set({ providers: [], models: [], hydrated: false, discoveredOllamaModels: [], ollamaStatus: "idle", ollamaError: null, ollamaLastRefresh: null, ollamaPullProgress: null, ollamaPullTask: null });
+  },
 }));
