@@ -8,6 +8,7 @@ import { create } from "zustand";
 import { FileSystemAccessBridge, InMemoryBridge, detectNativeBridge, detectNativeRuntime } from "./bridge";
 import type { FileSource, NativeRuntimeBridge, WorkspaceBridge } from "./bridge";
 import { createLocalConnectorRuntime } from "./localTerminalRuntime";
+import { markUnavailable, toUserFacingTerminalError } from "./terminalConnection";
 import {
   DEFAULT_CONTEXT_BUDGET,
   buildAmbiguityContext,
@@ -612,7 +613,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   // reflects the change.
   applyOperation: async (op) => {
     const { bridge, index, pathEnabled } = get();
-    if (!pathEnabled) return { ok: false, error: "Terminal is not connected — connect workspace to perform file operations." };
+    if (!pathEnabled) return { ok: false, error: "Terminal is not connected — connect the terminal to perform file operations." };
     if (!bridge) return { ok: false, error: "No workspace connected." };
     try {
       switch (op.type) {
@@ -663,7 +664,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const { connected, pathEnabled } = get();
     if (!connected) return;
     if (!pathEnabled) {
-      set((s) => ({ changeError: { code: "PATH_DISABLED", message: "Terminal is not connected — connect workspace to allow file edits." }, agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked file edit: terminal not connected", at: Date.now() }) }));
+      set((s) => ({ changeError: { code: "PATH_DISABLED", message: "Terminal is not connected — connect the terminal to allow file edits." }, agentLog: withLog(s.agentLog, { kind: "error", message: "Blocked file edit: terminal not connected", at: Date.now() }) }));
       return;
     }
     const proposals: ProposedChange[] = [];
@@ -923,13 +924,20 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       });
     } catch (e) {
       const { message } = unwrapError(e);
+      // Technical connector failures (ports, URLs, CORS…) never surface raw;
+      // they also mean the previous verified connection is no longer true.
+      if (toUserFacingTerminalError(message) !== message) {
+        console.debug("[Terminal] command failed (developer detail):", message);
+        markUnavailable(message);
+      }
+      const friendly = toUserFacingTerminalError(message);
       set({
-        commandError: message,
+        commandError: friendly,
         runningCommand: false,
         pendingCommand: null,
         agentLog: withLog(get().agentLog, {
           kind: "error",
-          message,
+          message: friendly,
           at: Date.now()
         })
       });

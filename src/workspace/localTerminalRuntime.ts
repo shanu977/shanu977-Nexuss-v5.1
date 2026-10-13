@@ -6,43 +6,131 @@ import type { NativeCommandResult, NativeTestResult, NativeRunRequest, NativeCap
 
 const CONNECTOR_URL = "http://127.0.0.1:11435";
 const HEALTH_TIMEOUT_MS = 1500;
+const DEFAULT_RUN_TIMEOUT_MS = 120000;
+// Connector kills the child at timeoutMs; wait a little longer before aborting the HTTP request.
+const ABORT_GRACE_MS = 15000;
+const BODY_TIMEOUT_MS = 15000;
 
-let cachedAvailable: boolean | null = null;
+/** Why a health probe failed — used to render truthful, actionable UI states. */
+export type ConnectorProbeFailureReason =
+  | "timeout"
+  | "permission"
+  | "unreachable"
+  | "http-error"
+  | "invalid-response";
+
+export type ConnectorProbeResult =
+  | { ok: true }
+  | { ok: false; reason: ConnectorProbeFailureReason; httpStatus?: number };
+
+let cachedProbe: ConnectorProbeResult | null = null;
 let lastCheck = 0;
 const CACHE_TTL_MS = 5000;
 
 /**
- * Probe the local connector's health endpoint.
- * Results are cached for a few seconds; pass `{ force: true }` to skip the
- * cache (used by the terminal connection flow, which must only report a
- * verified connection).
+ * Best-effort read of the Chrome Local Network Access permission.
+ * Returns null when the browser does not expose the permission (no classification
+ * possible) or the query itself failed.
  */
-export async function isLocalConnectorAvailable(opts?: { force?: boolean }): Promise<boolean> {
-  const now = Date.now();
-  if (!opts?.force && cachedAvailable !== null && now - lastCheck < CACHE_TTL_MS) return cachedAvailable;
-  lastCheck = now;
-  // Best-effort: trigger Local Network Access permission prompt on Chrome 130+ (public -> private)
-  // This is a no-op on browsers that don't support the permission; we ignore failures.
+async function queryLocalNetworkPermission(): Promise<"granted" | "denied" | "prompt" | null> {
   try {
-    if (typeof navigator !== "undefined" && (navigator as unknown as { permissions?: { query: (opts: unknown) => Promise<unknown> } }).permissions?.query) {
-      await (navigator as unknown as { permissions: { query: (opts: unknown) => Promise<unknown> } }).permissions.query({ name: "local-network-access" } as unknown as never).catch(() => {});
-    }
-  } catch {}
+    if (typeof navigator === "undefined") return null;
+    const permissions = (navigator as unknown as { permissions?: { query: (opts: unknown) => Promise<unknown> } }).permissions;
+    if (!permissions?.query) return null;
+    const status = (await permissions.query({ name: "local-network-access" } as unknown as never)) as
+      | { state?: string }
+      | undefined;
+    const state = status?.state;
+    return state === "granted" || state === "denied" || state === "prompt" ? state : null;
+  } catch {
+    // Unsupported permission name (non-Chrome / older Chrome) — not classifiable.
+    return null;
+  }
+}
+
+function isAbortError(e: unknown): boolean {
+  return (
+    (e instanceof DOMException && e.name === "AbortError") ||
+    (typeof e === "object" && e !== null && (e as { name?: string }).name === "AbortError")
+  );
+}
+
+/**
+ * Probe the local connector's real /health endpoint and classify failures so the
+ * UI can distinguish "permission blocked" / "timeout" / "connector not running"
+ * from an inconclusive result. Never treats anything but a valid health contract
+ * as success.
+ */
+export async function probeLocalConnector(opts?: {
+  force?: boolean;
+  timeoutMs?: number;
+}): Promise<ConnectorProbeResult> {
+  const now = Date.now();
+  if (!opts?.force && cachedProbe !== null && now - lastCheck < CACHE_TTL_MS) return cachedProbe;
+  lastCheck = now;
+
+  // If the browser reports Local Network Access as denied, the request would be
+  // blocked before it ever reaches the connector — classify as permission.
+  const permission = await queryLocalNetworkPermission();
+  if (permission === "denied") {
+    cachedProbe = { ok: false, reason: "permission" };
+    return cachedProbe;
+  }
+
+  // Best-effort: on Chrome 130+ this can surface the Local Network Access prompt
+  // (public -> private) during the user-gesture connect flow. No-op elsewhere.
+  if (permission === "prompt" || permission === null) {
+    await queryLocalNetworkPermission().catch(() => {});
+  }
+
   try {
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
-    // Use simple GET without custom Content-Type to avoid extra preflight; PNA preflight for
-    // https://www.nexuss.in (public) -> http://127.0.0.1:11435 (private) is still required and handled by server.
-    const res = await fetch(`${CONNECTOR_URL}/health`, { signal: controller.signal, method: "GET", mode: "cors" });
-    clearTimeout(t);
-    if (!res.ok) { cachedAvailable = false; return false; }
-    const data = await res.json().catch(() => ({}));
-    cachedAvailable = data.terminal === "enabled" || data.connector === "nexuss-local";
-    return cachedAvailable;
-  } catch {
-    cachedAvailable = false;
-    return false;
+    const t = setTimeout(() => controller.abort(), opts?.timeoutMs ?? HEALTH_TIMEOUT_MS);
+    // Simple GET without custom headers to avoid extra preflights; the PNA
+    // preflight for https://www.nexuss.in -> http://127.0.0.1:11435 is handled
+    // by the connector's Access-Control-Allow-Private-Network response.
+    let res: Response;
+    try {
+      res = await fetch(`${CONNECTOR_URL}/health`, { signal: controller.signal, method: "GET", mode: "cors" });
+    } finally {
+      clearTimeout(t);
+    }
+    if (!res.ok) {
+      cachedProbe = { ok: false, reason: "http-error", httpStatus: res.status };
+      return cachedProbe;
+    }
+    const data = (await res.json().catch(() => null)) as {
+      terminal?: string;
+      connector?: string;
+    } | null;
+    if (!data || (data.terminal !== "enabled" && data.connector !== "nexuss-local")) {
+      cachedProbe = { ok: false, reason: "invalid-response" };
+      return cachedProbe;
+    }
+    cachedProbe = { ok: true };
+    return cachedProbe;
+  } catch (e) {
+    if (isAbortError(e)) {
+      cachedProbe = { ok: false, reason: "timeout" };
+      return cachedProbe;
+    }
+    // TypeError "Failed to fetch" covers connection refusal, DNS, CORS and a
+    // browser-blocked private-network request. Re-check the permission so a
+    // denied Local Network Access grant is distinguished where possible.
+    const after = await queryLocalNetworkPermission();
+    cachedProbe = after === "denied" ? { ok: false, reason: "permission" } : { ok: false, reason: "unreachable" };
+    return cachedProbe;
   }
+}
+
+/**
+ * Boolean view of {@link probeLocalConnector} for callers that only need
+ * reachable/not-reachable. Results are cached for a few seconds; pass
+ * `{ force: true }` to skip the cache (used by the terminal connection flow,
+ * which must only report a verified connection).
+ */
+export async function isLocalConnectorAvailable(opts?: { force?: boolean }): Promise<boolean> {
+  return (await probeLocalConnector(opts)).ok;
 }
 
 export function createLocalConnectorRuntime(): {
@@ -51,19 +139,39 @@ export function createLocalConnectorRuntime(): {
   capabilities: () => NativeCapabilities;
   isAvailable: () => Promise<boolean>;
 } {
+  // Always bound the request so a stalled connector/socket can never hang the chat forever.
+  const postRun = async (body: Record<string, unknown>): Promise<Response> => {
+    const requested = Number(body.timeoutMs) || DEFAULT_RUN_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requested + ABORT_GRACE_MS);
+    try {
+      return await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const fetchWithTimeout = async (res: Response): Promise<unknown> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), BODY_TIMEOUT_MS);
+    try { return await res.json(); } finally { clearTimeout(timer); }
+  };
   return {
     async run(req) {
       let res: Response;
       try {
-        res = await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
-          method: "POST",
-          mode: "cors",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ command: req.command, cwd: req.cwd, timeoutMs: req.timeoutMs })
-        });
+        res = await postRun({ command: req.command, cwd: req.cwd, timeoutMs: req.timeoutMs });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         // Network/CORS/mixed-content/PNA failure — distinguish from terminal command failure
+        if (msg.includes("aborted") || msg.includes("abort")) {
+          throw new Error(`TIMEOUT: Local terminal connector did not respond within ${Math.round(((Number(req.timeoutMs) || DEFAULT_RUN_TIMEOUT_MS) + ABORT_GRACE_MS) / 1000)}s. The connector may be stuck; restart it with: node local-connector/server.js`);
+        }
         if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("ECONNREFUSED") || msg.includes("fetch") || msg.includes("Permission")) {
           throw new Error(`NETWORK_ERROR: Cannot reach local terminal connector at ${CONNECTOR_URL}. Ensure it is running (node local-connector/server.js) and when Chrome prompts "Allow www.nexuss.in to access your local network" click Allow. Also check chrome://flags#block-insecure-private-network-requests if needed. Details: ${msg}`);
         }
@@ -75,7 +183,7 @@ export function createLocalConnectorRuntime(): {
         try { const j = JSON.parse(text); err = j.error || text; } catch {}
         throw new Error(err || `Terminal request failed (${res.status})`);
       }
-      const data = await res.json();
+      const data = await fetchWithTimeout(res) as Record<string, unknown>;
       // Normalize to NativeCommandResult shape
       return {
         command: data.command || req.command,
@@ -98,14 +206,12 @@ export function createLocalConnectorRuntime(): {
       // We try to run "npm test" as default
       let res: Response;
       try {
-        res = await fetch(`${CONNECTOR_URL}/v1/terminal/run`, {
-          method: "POST",
-          mode: "cors",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ command: "npm test", cwd: req.cwd, timeoutMs: req.timeoutMs })
-        });
+        res = await postRun({ command: "npm test", cwd: req.cwd, timeoutMs: req.timeoutMs });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("aborted") || msg.includes("abort")) {
+          throw new Error(`TIMEOUT: Local terminal connector did not respond within ${Math.round(((Number(req.timeoutMs) || DEFAULT_RUN_TIMEOUT_MS) + ABORT_GRACE_MS) / 1000)}s. The connector may be stuck; restart it with: node local-connector/server.js`);
+        }
         if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("ECONNREFUSED") || msg.includes("fetch") || msg.includes("Permission")) {
           throw new Error(`NETWORK_ERROR: Cannot reach local terminal connector at ${CONNECTOR_URL}. Details: ${msg}`);
         }
@@ -115,7 +221,7 @@ export function createLocalConnectorRuntime(): {
         const text = await res.text().catch(() => "");
         throw new Error(text || `Test failed (${res.status})`);
       }
-      const data = await res.json();
+      const data = await fetchWithTimeout(res) as Record<string, unknown>;
       return {
         command: data.command || "npm test",
         cwd: data.cwd || req.cwd || "",

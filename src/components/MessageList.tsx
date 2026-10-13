@@ -8,6 +8,8 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Message } from "@/types";
 import { useChatStore } from "@/store";
 import { NexussLogo } from "@/components/admin/NexussLogo";
+import TerminalConnectCard from "@/components/TerminalConnectCard";
+import { TERMINAL_CONNECT_REQUIRED_MESSAGE } from "@/workspace/terminalConnection";
 
 interface MessageListProps {
   messages: Message[];
@@ -447,6 +449,12 @@ interface MessageContentProps {
 }
 
 function MessageContent({ content, isAssistant }: MessageContentProps) {
+  // Terminal access gate: the chat flow answers an action that needs the
+  // terminal while it is disconnected with this marker, rendered as an action
+  // card the user can click to open the Terminal connection screen.
+  if (content.trim() === TERMINAL_CONNECT_REQUIRED_MESSAGE) {
+    return <TerminalConnectCard />;
+  }
   if (isAssistant) {
     return (
       <div className="prose dark:prose-invert prose-xs max-w-none prose-p:leading-relaxed prose-pre:m-0 font-sans">

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore } from "@/workspace/store";
 import { InMemoryBridge } from "@/workspace/bridge";
 import { runAuthorizedGoal, isModelCommandAuthorized } from "./authorizedExecutor";
+import { useTerminalConnectionStore, resetTerminalConnection } from "@/workspace/terminalConnection";
 import { getAgentState, clearAgentState } from "./agentState";
 import { getRecentExecutionContext, clearExecutionContext } from "./executionContext";
 import { toolRun } from "./tools";
@@ -59,6 +60,7 @@ vi.mock("./loop", async () => {
 
 function setupWorkspace(panelOpen = true) {
   useWorkspaceStore.setState({ panelOpen, workspacePath: "C:\\mock", bridge: new InMemoryBridge("test", {}), index: null, connected: true, runtime: { run: async (req:any)=> (toolRun as any)({}, req.command), capabilities: ()=> ({ run:true, test:true }) } as any });
+  useTerminalConnectionStore.setState({ status: "connected", lastVerifiedAt: Date.now(), justConnected: false, lastError: null });
 }
 
 describe("authorizedExecutor", () => {
@@ -68,6 +70,7 @@ describe("authorizedExecutor", () => {
     clearAgentState("chatB");
     clearExecutionContext("chatA");
     clearExecutionContext("chatB");
+    resetTerminalConnection();
     vi.clearAllMocks();
   });
 
@@ -107,6 +110,18 @@ describe("authorizedExecutor", () => {
     expect(res.finalResponse.toLowerCase()).toContain("terminal is not available");
     expect(getAgentState("chatA")?.failureReason).toBe("terminal_closed");
     expect(getRecentExecutionContext("chatA").length).toBe(0);
+  });
+
+  it("refuses execution when the terminal connection is not established", async () => {
+    setupWorkspace(true);
+    useTerminalConnectionStore.setState({ status: "disconnected", lastVerifiedAt: null, justConnected: false, lastError: null });
+    const res = await runAuthorizedGoal("chatA", "create a folder called shanu10", { panelOpen: true, workspacePath: "C:\\mock" });
+    expect(res.executed).toBe(0);
+    expect(res.succeeded).toBe(0);
+    expect(res.finalResponse).toContain("Terminal access is not connected");
+    expect(getAgentState("chatA")?.failureReason).toBe("terminal_disconnected");
+    expect(getRecentExecutionContext("chatA").length).toBe(0);
+    expect(toolRun).not.toHaveBeenCalled();
   });
 
   it("executes via fallback/runtime even when panel closed but runtime available (task requirement #7)", async () => {

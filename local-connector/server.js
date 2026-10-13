@@ -295,7 +295,10 @@ const server = http.createServer((req, res) => {
             for(let i=0;i<cmd.length;i++){ const ch=cmd[i]; if(q){ if(ch===q) q=null; else cur+=ch; } else if(ch==="'"||ch==='"'){ q=ch; } else if(ch===" "||ch==="\t"){ if(cur){ tokens.push(cur); cur=""; } } else cur+=ch; }
             if(q) return null; if(cur) tokens.push(cur); return tokens;
           };
-          const tokens = tokenize(command.replace(/\\/g, "/").replace(/\s+/g, " ").trim());
+          // NOTE: tokenization is used ONLY for allow-list validation.
+          // Execution must preserve the original quoting, otherwise PowerShell
+          // receives unquoted paths and fails on names containing spaces.
+          const tokens = tokenize(command.trim());
           if (!tokens || tokens.length===0) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Command could not be parsed.' }));
@@ -329,9 +332,32 @@ const server = http.createServer((req, res) => {
           const env = { ...process.env };
           // For simple Windows builtins, wrap via cmd.exe
           let spawnCmd, spawnArgs;
-          if (simpleBins.has(tokens[0]) || simpleBins.has(bin)) {
+          const isPsBin = /^(powershell|pwsh)(\.exe)?$/i.test(tokens[0]) || /^(get-childitem|get-psdrive)$/i.test(tokens[0]);
+          if (isPsBin) {
+            // PowerShell: hand the -Command payload to powershell.exe VERBATIM so quoting
+            // inside the script (quoted paths, $env: expansion) is interpreted by
+            // PowerShell exactly as authored. Re-tokenizing stripped those quotes and
+            // broke every path containing a space.
+            const lowerCmd = command.toLowerCase();
+            const cmdIdx = lowerCmd.indexOf('-command');
+            const headRaw = (cmdIdx >= 0 ? command.slice(0, cmdIdx) : tokens[0]).trim();
+            const headWords = tokenize(headRaw) || [tokens[0]];
+            const flags = headWords.slice(1).filter((w) => w.startsWith('-'));
+            const isShell = /^(powershell|pwsh)(\.exe)?$/i.test(tokens[0]);
+            let script = null;
+            if (cmdIdx >= 0) script = command.slice(cmdIdx + '-command'.length).trim();
+            else if (!isShell) script = command;
+            if (!script) {
+              spawnCmd = tokens[0];
+              spawnArgs = tokens.slice(1);
+            } else {
+              if (script.length >= 2 && script.startsWith('"') && script.endsWith('"')) script = script.slice(1, -1);
+              spawnCmd = isShell ? tokens[0] : 'powershell';
+              spawnArgs = [...(flags.length ? flags : ['-NoProfile']), '-Command', script];
+            }
+          } else if (simpleBins.has(tokens[0]) || simpleBins.has(bin)) {
             const cmd = tokens[0].toLowerCase();
-            if (cmd === 'dir' || cmd === 'ls' || cmd === 'Get-ChildItem') {
+            if (cmd === 'dir' || cmd === 'ls' || cmd === 'get-childitem') {
               spawnCmd = process.env.ComSpec || 'cmd.exe';
               spawnArgs = ['/d', '/s', '/c', command];
             } else if (cmd === 'echo' || cmd === 'pwd' || cmd === 'cat') {
@@ -364,6 +390,18 @@ const server = http.createServer((req, res) => {
           const timeoutMs = Math.min(120000, Math.max(1000, data.timeoutMs || 120000));
           let timedOut=false, killed=false;
           const timer = setTimeout(()=>{ timedOut=true; try{ if(process.platform==='win32'){ spawn('taskkill',['/pid',String(child.pid),'/t','/f'],{stdio:'ignore'}).unref(); } else { process.kill(-child.pid,'SIGTERM'); setTimeout(()=>{ try{ process.kill(-child.pid,'SIGKILL'); }catch{} },1500).unref(); } }catch{} }, timeoutMs);
+          // Guard against double responses: 'error' and 'close' can BOTH fire
+          // (e.g. spawn ENOENT from a missing cwd). Writing headers twice used
+          // to throw ERR_HTTP_HEADERS_SENT and kill the whole connector.
+          let responded = false;
+          const respond = (payload) => {
+            if (responded || res.writableEnded || res.destroyed) return;
+            responded = true;
+            try {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(payload));
+            } catch {}
+          };
           child.on('close', (code, signal) => {
             clearTimeout(timer);
             // Basic redaction of secrets (same as native/redact)
@@ -371,15 +409,13 @@ const server = http.createServer((req, res) => {
             const out = redact(stdout);
             const err = redact(stderr);
             const success = !timedOut && !killed && code===0 && signal===null;
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            respond({
               success, stdout: out, stderr: err, exitCode: code, signal, durationMs: Date.now()-start, timedOut, killed, outputTruncated: truncated, redacted: out!==stdout||err!==stderr, command, cwd
-            }));
+            });
           });
           child.on('error', (err) => {
             clearTimeout(timer);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success:false, stdout:"", stderr: err.message, exitCode: null, signal: null, durationMs: Date.now()-start, timedOut:false, killed:false, outputTruncated:false, redacted:false, command, cwd }));
+            respond({ success:false, stdout:"", stderr: err.message, exitCode: null, signal: null, durationMs: Date.now()-start, timedOut:false, killed:false, outputTruncated:false, redacted:false, command, cwd });
           });
         } catch (e) {
           if (!res.headersSent) {
