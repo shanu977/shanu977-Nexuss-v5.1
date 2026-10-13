@@ -10,6 +10,7 @@ import { getAgentState, setAgentState, createGoalState, updateGoalWithActions, c
 import { pushVerifiedObservation, getRecentExecutionContext, ExecutionContextEntry } from "./executionContext";
 import { resolveIntent } from "./intent";
 import { createLocalConnectorRuntime, isLocalConnectorAvailable } from "@/workspace/localTerminalRuntime";
+import { useTerminalConnectionStore } from "@/workspace/terminalConnection";
 import { normalizeRelativePath, assertInsideRoot } from "@/workspace/path";
 import { createAgentPlan } from "./llmPlanner";
 import { validateAgentPlan } from "./planValidator";
@@ -224,6 +225,26 @@ export async function runAuthorizedGoal(
       };
     }
     return { executed: 0, succeeded: 0, failed: 0, observations: [], finalResponse: "" };
+  }
+
+  // Verified terminal connection is the single source of truth. Never execute
+  // (and never fake execution) unless the local connector connection has been
+  // established. The chat flow answers with the inline "Terminal access
+  // required" action before reaching here; this gate protects any other entry
+  // point into the executor.
+  if (useTerminalConnectionStore.getState().status !== "connected") {
+    const sDisconnected = createGoalState(chatId, userText, opts.workspacePath);
+    sDisconnected.status = "failed";
+    sDisconnected.failureReason = "terminal_disconnected";
+    setAgentState(sDisconnected);
+    return {
+      executed: 0,
+      succeeded: 0,
+      failed: 0,
+      observations: [],
+      finalResponse:
+        "Terminal access is not connected. Open the Terminal panel, connect the terminal, then try again — I won't pretend the action was completed without real execution.",
+    };
   }
 
   // ACTION path — allow execution when runtime is available even if panel is not open.
@@ -475,6 +496,9 @@ export async function runAuthorizedGoal(
       const healthMs = performance.now() - tHealthStart;
       console.debug(`[PERF] connector_health: ${healthMs.toFixed(1)}ms available=${available} (cached 5s, only for ACTION)`);
       if (!available) {
+        // The real connection check failed: record it so the UI stops
+        // showing a connected state that is no longer true.
+        useTerminalConnectionStore.getState().markUnavailable("health check failed before execution");
         const s = createGoalState(chatId, userText, opts.workspacePath);
         s.status = "failed";
         s.failureReason = "connector_unavailable";
@@ -1029,6 +1053,17 @@ async function executePending(
   userText: string,
   opts: { workspacePath: string | null }
 ): Promise<ExecutionReport> {
+  // Pending actions may only run through a verified terminal connection.
+  if (useTerminalConnectionStore.getState().status !== "connected") {
+    return {
+      executed: 0,
+      succeeded: 0,
+      failed: 0,
+      observations: [],
+      finalResponse:
+        "Terminal access is not connected. Open the Terminal panel, connect the terminal, then try again — I won't pretend the action was completed without real execution.",
+    };
+  }
   const ctx = getToolContext();
   // Re-evaluate explicit target for this turn (must win over previous context)
   const hasExplicit = hasExplicitTarget(userText);
@@ -1097,6 +1132,9 @@ async function executePending(
           }
         }
         const cleanMsg = rawMsg.replace(/^NETWORK_ERROR:\s*/i, "").trim();
+        // The connector could not be reached during a real operation — the
+        // previous "connected" state is no longer true.
+        useTerminalConnectionStore.getState().markUnavailable(rawMsg);
         // Production: CONNECTOR_UNAVAILABLE — do not execute remotely, do not fabricate success
         const msg = isTestEnv && fallbackResult
           ? `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult.stderr} Please ensure node local-connector/server.js is running.`

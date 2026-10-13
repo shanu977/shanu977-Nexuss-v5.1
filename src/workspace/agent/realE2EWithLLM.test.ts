@@ -3,6 +3,7 @@ import { runAuthorizedGoal } from "./authorizedExecutor";
 import { clearAgentState } from "./agentState";
 import { clearExecutionContext } from "./executionContext";
 import { useWorkspaceStore } from "@/workspace/store";
+import { useTerminalConnectionStore } from "@/workspace/terminalConnection";
 import fs from "fs/promises";
 import path from "path";
 
@@ -23,6 +24,7 @@ describe("REAL E2E with LLM - kumar19 same name Downloads", () => {
     clearAgentState(chatId);
     clearExecutionContext(chatId);
     useWorkspaceStore.setState({ panelOpen: true, workspacePath: testRoot, bridge: null, index: null, connected: true, runtime: null } as any);
+    useTerminalConnectionStore.setState({ status: "connected", lastVerifiedAt: Date.now(), justConnected: false, lastError: null });
   });
   afterAll(async () => {
     await fs.rm(testRoot, { recursive: true, force: true }).catch(()=>{});

@@ -194,8 +194,8 @@ function AttachMenu({ onStartScreenShare, onOpenWorkspace }: AttachMenuProps) {
 
   const handleOpenWorkspace = () => {
     setOpen(false);
-    // Terminal panel: clicking always opens/toggles the terminal workspace.
-    // No folder picker, no connection gate — terminal is ready immediately.
+    // Terminal panel: clicking opens the terminal connection screen, which
+    // verifies the local connector automatically — no manual configuration.
     onOpenWorkspace?.();
   };
   // Terminal active when the panel is open (visibility is source of truth)
@@ -259,10 +259,26 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
   const setProvider = useChatStore((s) => s.setProvider);
   const setModel = useChatStore((s) => s.setModel);
   const allLocalModels = useLocalModelStore((s) => s.models);
-  const localModels = useMemo(() => allLocalModels.filter((m) => m.enabled), [allLocalModels]);
-  const discoveredOllamaModels = useLocalModelStore((s) => s.discoveredOllamaModels);
+  const allLocalProviders = useLocalModelStore((s) => s.providers);
+  // Models belonging to a disconnected provider are never offered as targets.
+  const localModels = useMemo(() => {
+    const byId = new Map(allLocalProviders.map((p) => [p.id, p] as const));
+    return allLocalModels.filter((m) => {
+      if (!m.enabled) return false;
+      const owner = byId.get(m.providerId);
+      return owner ? owner.enabled : true;
+    });
+  }, [allLocalModels, allLocalProviders]);
+  const rawDiscoveredOllamaModels = useLocalModelStore((s) => s.discoveredOllamaModels);
+  const ollamaProviderEnabled = useMemo(() => {
+    const ollama = allLocalProviders.find((p) => p.providerType === "ollama");
+    return !ollama || ollama.enabled;
+  }, [allLocalProviders]);
+  const discoveredOllamaModels = useMemo(
+    () => (ollamaProviderEnabled ? rawDiscoveredOllamaModels : []),
+    [ollamaProviderEnabled, rawDiscoveredOllamaModels]
+  );
   const ollamaStatus = useLocalModelStore((s) => s.ollamaStatus);
-  const ollamaError = useLocalModelStore((s) => s.ollamaError);
   const refreshOllamaModels = useLocalModelStore((s) => s.refreshOllamaModels);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -339,7 +355,7 @@ function ModelSelector({ provider, model, disabled }: ModelSelectorProps) {
             {ollamaStatus === "not_connected" || ollamaStatus === "error" ? (
               <div className="px-2.5 py-2 space-y-1.5">
                 <p className="text-[11px] text-amber-600 dark:text-amber-400">⚠ Ollama is not connected</p>
-                <p className="text-[11px] text-muted-foreground">Start Ollama and try again. {ollamaError ? `(${ollamaError})` : ""}</p>
+                <p className="text-[11px] text-muted-foreground">Start Ollama and try again.</p>
                 <button
                   type="button"
                   onClick={() => void refreshOllamaModels()}

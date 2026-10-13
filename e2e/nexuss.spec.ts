@@ -25,6 +25,13 @@ async function setupPage(page:any, mockContent='ok'){
       else await page.keyboard.press('Escape');
     } else await page.keyboard.press('Escape');
   }
+  // Verify the terminal connection (one-click connect if not verified yet).
+  const section=page.locator('section[aria-label="Terminal workspace"]');
+  if(await section.isVisible().catch(()=>false)){
+    const connectBtn=section.getByRole('button',{name:'Connect Terminal'});
+    if(await connectBtn.isVisible().catch(()=>false)) await connectBtn.click();
+    await expect(section.getByText('Terminal Connected')).toBeVisible({timeout:10000});
+  }
   await expect(page.getByLabel('Message input')).toBeVisible({timeout:10000});
 }
 async function send(page:any, text:string){
@@ -111,25 +118,21 @@ test('6 ambiguous request', async ({page})=>{
   expect(body).not.toContain('created shanusecure');
 });
 
-test('7 terminal closed', async ({page})=>{
+test('7 terminal disconnected', async ({page})=>{
   await setupPage(page);
-  // close terminal
-  const plus=page.getByRole('button',{name:'Add attachment'});
-  await plus.click();
-  const termBtn=page.getByRole('menuitem',{name:'Terminal'});
-  const pressed=await termBtn.getAttribute('aria-pressed');
-  if(pressed==='true') await termBtn.click();
-  await page.waitForTimeout(500);
+  const section=page.locator('section[aria-label="Terminal workspace"]');
+  // Disconnect the terminal for this session (connector stays installed).
+  await section.getByRole('button',{name:'Disconnect'}).click();
+  await expect(section.getByRole('button',{name:'Connect Terminal'})).toBeVisible({timeout:10000});
   const t=`${ROOT}\\nexuss_terminal_closed`;
   await cleanup([t]);
   await send(page,'create a folder called nexuss_terminal_closed');
   expect(await exists(t)).toBe(false);
   const body1=(await page.locator('body').innerText()).toLowerCase();
   expect(body1).toContain('terminal');
-  // reopen
-  await plus.click();
-  await page.getByRole('menuitem',{name:'Terminal'}).click();
-  await page.waitForTimeout(500);
+  // Reconnect with one click
+  await section.getByRole('button',{name:'Connect Terminal'}).click();
+  await expect(section.getByText('Terminal Connected')).toBeVisible({timeout:10000});
   await send(page,'create a folder called nexuss_terminal_closed');
   expect(await exists(t)).toBe(true);
   await cleanup([t]);
