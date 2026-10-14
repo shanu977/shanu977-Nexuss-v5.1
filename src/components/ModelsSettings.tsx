@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProviderType } from "@/types";
 import {
   DEFAULT_PROVIDER_MODELS,
@@ -11,6 +11,8 @@ import { useChatStore } from "@/store";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { selectLocalModel } from "@/services/localModelSelection";
 import { testLocalEndpoint } from "@/services/localModels";
+import { detectOllamaSetup, fetchConnectorDiskInfo, type ConnectorDiskInfo } from "@/services/ollamaSetup";
+import { formatBytes } from "@/services/modelCatalogue";
 import {
   LOCAL_PROVIDER_LABELS,
   LOCAL_PROVIDER_DEFAULT_ENDPOINTS,
@@ -246,7 +248,13 @@ export default function ModelsSettings() {
   const [advancedOpen, setAdvancedOpen] = useState<Record<string, boolean>>({});
   const [pendingTypes, setPendingTypes] = useState<LocalProviderType[]>([]);
   const [chooserOpen, setChooserOpen] = useState(false);
-  const [setupOpen, setSetupOpen] = useState(false);
+  // "+ Add Local Provider" inspects first: a connected provider focuses its
+  // existing card (Case A); only a real setup need opens the guided wizard.
+  const [addFlow, setAddFlow] = useState<"idle" | "inspecting" | "intro" | "check">("idle");
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const [addNote, setAddNote] = useState<string | null>(null);
+  const [diskInfo, setDiskInfo] = useState<ConnectorDiskInfo | null>(null);
+  const addStartedRef = useRef(false);
   const [endpointChecks, setEndpointChecks] = useState<Record<string, EndpointCheck>>({});
   const [checkingIds, setCheckingIds] = useState<string[]>([]);
   const [activeLocalKey, setActiveLocalKey] = useState<string | null>(null);
@@ -382,16 +390,88 @@ export default function ModelsSettings() {
   }, [localEntries, connectError]);
 
   /**
-   * First run: nothing persisted yet — open the guided local AI setup
+   * First run: nothing persisted yet — start the guided local AI flow
    * automatically. The manual provider chooser stays available through
    * "Advanced configuration".
    */
   const firstRun =
     localHydrated && localProviders.length === 0 && pendingTypes.length === 0;
 
+  /** Focus a provider card and surface a short note: it is the primary UI. */
+  const focusProviderCard = useCallback((key: string, note: string | null) => {
+    setActiveLocalKey(key);
+    setFocusedKey(key);
+    setAddNote(note);
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`local-provider-card-${key}`)
+        ?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    });
+  }, []);
+
+  /**
+   * Add Local Provider entry point. Inspects the real provider state first:
+   * - Case A: a provider is already connected → focus its existing card and
+   *   never open the setup wizard (no redundant install/connect/model list).
+   * - Case B/C: a provider is installed-but-unreachable, reachable-but-not-
+   *   registered, or missing → open the wizard at the right entry point.
+   */
+  const handleAddLocalProvider = useCallback(async () => {
+    if (addFlow !== "idle") return;
+
+    const existing = localEntries.find(
+      (e) => e.status === "connected" || (e.id !== null && e.enabled && e.status === "checking")
+    );
+    if (existing) {
+      focusProviderCard(
+        existing.key,
+        `${existing.name} is already connected — choose a model on its card below.`
+      );
+      return;
+    }
+
+    setAddFlow("inspecting");
+    const persisted = useLocalModelStore
+      .getState()
+      .providers.some((p) => p.enabled);
+    let entry: "intro" | "check" = persisted ? "check" : "intro";
+    try {
+      const detection = await detectOllamaSetup({
+        endpoint: LOCAL_PROVIDER_DEFAULT_ENDPOINTS.ollama
+      });
+      entry =
+        detection.state === "models" ||
+        detection.state === "no_models" ||
+        detection.state === "stopped" ||
+        persisted
+          ? "check"
+          : "intro";
+    } catch {
+      entry = persisted ? "check" : "intro";
+    }
+    setAddFlow(entry);
+  }, [addFlow, localEntries, focusProviderCard]);
+
   useEffect(() => {
-    if (firstRun) setSetupOpen(true);
-  }, [firstRun]);
+    if (!firstRun || addStartedRef.current) return;
+    addStartedRef.current = true;
+    void handleAddLocalProvider();
+  }, [firstRun, handleAddLocalProvider]);
+
+  // Real free-disk reading (connector-only) for connected provider cards.
+  const hasUpProvider = localEntries.some(
+    (e) => e.id !== null && e.enabled && e.status !== "disconnected"
+  );
+  useEffect(() => {
+    if (!hasUpProvider || diskInfo) return;
+    let alive = true;
+    void fetchConnectorDiskInfo().then((d) => {
+      if (alive && d) setDiskInfo(d);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [hasUpProvider, diskInfo]);
 
   const cardEntries = useMemo<LocalProviderEntry[]>(() => {
     const list: LocalProviderEntry[] = [];
@@ -425,7 +505,18 @@ export default function ModelsSettings() {
 
   // The manual chooser is the advanced path — the guided setup panel owns
   // first-run and the "+ Add Local Provider" entry.
-  const chooserVisible = chooserOpen && !setupOpen;
+  const wizardOpen = addFlow === "intro" || addFlow === "check";
+  const chooserVisible = chooserOpen && addFlow === "idle";
+
+  // While the wizard is open it owns Ollama end-to-end — don't show a second,
+  // competing card for the same provider.
+  const visibleCards = useMemo(
+    () =>
+      cardEntries.filter(
+        (e) => !(wizardOpen && e.providerType === "ollama")
+      ),
+    [cardEntries, wizardOpen]
+  );
 
   const activeLocal = useMemo<LocalProviderEntry | null>(() => {
     if (activeLocalKey) {
@@ -739,10 +830,12 @@ export default function ModelsSettings() {
     const state = cardState(entry);
     const options = optionsFor(entry);
     // Exactly one "Model" picker exists at a time: the active local provider's
-    // card owns it while a local provider is selected, the Models section owns
-    // it for cloud providers.
+    // card owns it while a local provider is selected — or a card the Add flow
+    // just focused (Case A) — and the Models section owns it for cloud providers.
     const showPicker =
-      isLocalProvider && activeLocal?.key === entry.key && options.length > 0;
+      options.length > 0 &&
+      ((isLocalProvider && activeLocal?.key === entry.key) ||
+        (focusedKey !== null && focusedKey === entry.key));
     const value = options.some((o) => o.id === model) ? model : "";
     const selectedMeta = options.find((o) => o.id === value)?.meta;
     // A persisted, enabled provider that is still being probed (first check
@@ -758,8 +851,13 @@ export default function ModelsSettings() {
     return (
       <li
         key={entry.key}
+        id={`local-provider-card-${entry.key}`}
         data-testid={`local-provider-card-${entry.providerType}`}
-        className="space-y-3 rounded-xl border border-border bg-muted/20 p-3"
+        className={`space-y-3 rounded-xl border p-3 ${
+          focusedKey === entry.key
+            ? "border-primary/50 bg-muted/20 ring-1 ring-primary/30"
+            : "border-border bg-muted/20"
+        }`}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-0.5">
@@ -774,6 +872,17 @@ export default function ModelsSettings() {
                 {state === "checking"
                   ? "Checking models…"
                   : `${options.length} ${options.length === 1 ? "model" : "models"} available`}
+              </p>
+            )}
+            {isUp && entry.endpoint && (
+              <p
+                className="truncate font-mono text-[10px] text-muted-foreground/80"
+                data-testid="local-provider-endpoint"
+              >
+                {entry.endpoint}
+                {diskInfo
+                  ? ` · ${formatBytes(diskInfo.freeBytes)} free`
+                  : ""}
               </p>
             )}
             {state === "disconnected" && (
@@ -961,13 +1070,14 @@ export default function ModelsSettings() {
           <h4 className="text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground">
             Local Providers
           </h4>
-          {!setupOpen && !chooserVisible && missingTypes.length > 0 && (
+          {!chooserVisible && !wizardOpen && missingTypes.length > 0 && (
             <button
               type="button"
-              onClick={() => setSetupOpen(true)}
-              className="rounded-xl bg-primary text-primary-foreground px-3 py-1 text-xs font-semibold hover:opacity-90 cursor-pointer"
+              onClick={() => void handleAddLocalProvider()}
+              disabled={addFlow === "inspecting"}
+              className="rounded-xl bg-primary text-primary-foreground px-3 py-1 text-xs font-semibold hover:opacity-90 cursor-pointer disabled:opacity-60 disabled:cursor-wait"
             >
-              + Add Local Provider
+              {addFlow === "inspecting" ? "Checking…" : "+ Add Local Provider"}
             </button>
           )}
         </div>
@@ -976,14 +1086,40 @@ export default function ModelsSettings() {
           <p className="text-[11px] font-mono text-muted-foreground">Loading local providers…</p>
         ) : (
           <div className="space-y-2">
-            {setupOpen && localHydrated && (
+            {wizardOpen && (
               <LocalSetupPanel
-                onClose={() => setSetupOpen(false)}
+                entry={addFlow}
+                onClose={() => {
+                  setAddFlow("idle");
+                  setAddNote(null);
+                }}
                 onAdvanced={() => {
-                  setSetupOpen(false);
+                  setAddFlow("idle");
+                  setAddNote(null);
                   setChooserOpen(true);
                 }}
+                onProviderReady={() => {
+                  setAddFlow("idle");
+                  const row = useLocalModelStore
+                    .getState()
+                    .providers.find(
+                      (p) => p.providerType === "ollama" && p.enabled
+                    );
+                  focusProviderCard(
+                    row?.id ?? "ollama",
+                    "Ollama is connected — choose a model on its card below."
+                  );
+                }}
               />
+            )}
+
+            {addNote && addFlow === "idle" && (
+              <p
+                className="text-[11px] leading-relaxed text-muted-foreground"
+                data-testid="add-provider-note"
+              >
+                {addNote}
+              </p>
             )}
 
             {chooserVisible && (
@@ -994,9 +1130,9 @@ export default function ModelsSettings() {
               />
             )}
 
-            {cardEntries.map((entry) => renderCard(entry))}
+            {visibleCards.map((entry) => renderCard(entry))}
 
-            {!chooserVisible && !setupOpen && cardEntries.length === 0 && (
+            {!chooserVisible && !wizardOpen && visibleCards.length === 0 && (
               <p className="text-[11px] text-muted-foreground">No local providers yet.</p>
             )}
           </div>

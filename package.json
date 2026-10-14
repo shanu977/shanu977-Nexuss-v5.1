@@ -12,7 +12,8 @@
     "test": "vitest run",
     "desktop:test": "vitest run --testTimeout 30000",
     "connector": "node local-connector/server.js",
-    "connector:dev": "node local-connector/server.js"
+    "connector:dev": "node local-connector/server.js",
+    "connector:sync": "node scripts/sync-connector-asset.mjs"
   },
   "dependencies": {
     "dexie": "^4.0.0",

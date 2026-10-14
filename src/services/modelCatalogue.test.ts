@@ -6,6 +6,7 @@ import {
   compatibleCatalogueModels,
   recommendCatalogueModel,
   recommendInstalledModel,
+  recommendModelOptions,
   formatBytes,
   type DeviceProfile,
 } from "@/services/modelCatalogue";
@@ -108,5 +109,65 @@ describe("modelCatalogue — installed model recommendations", () => {
 
   it("returns null when nothing is installed", () => {
     expect(recommendInstalledModel([], device({ ramGB: 16 }))).toBeNull();
+  });
+});
+
+describe("modelCatalogue — compact setup chooser", () => {
+  it("returns at most three recommendations with exactly one marked recommended", () => {
+    const options = recommendModelOptions(device({ ramGB: 16, freeDiskBytes: 100 * GB }));
+
+    expect(options.length).toBeGreaterThan(0);
+    expect(options.length).toBeLessThanOrEqual(3);
+    expect(options.filter((o) => o.recommended)).toHaveLength(1);
+    const tiers = new Set(options.map((o) => o.tier));
+    expect(tiers.size).toBe(options.length);
+  });
+
+  it("offers one option per tier when the device can handle the whole catalogue", () => {
+    const options = recommendModelOptions(device({ ramGB: 16, freeDiskBytes: 100 * GB }));
+    expect(options.map((o) => o.tier).sort()).toEqual(["balanced", "capable", "lightweight"]);
+  });
+
+  it("prefers models that are already installed so nothing is downloaded twice", () => {
+    const installed = [{ modelId: "llama3.1:8b", parameterSize: "8.0B", size: 4.9 * GB }];
+    const options = recommendModelOptions(device({ ramGB: 16, freeDiskBytes: 100 * GB }), installed);
+
+    const llama = options.find((o) => o.id === "llama3.1:8b");
+    expect(llama?.installed).toBe(true);
+    expect(llama?.downloadBytes).toBe(0);
+    // Installed picks are never asked to download themselves.
+    for (const o of options) {
+      if (o.installed) expect(o.downloadBytes).toBe(0);
+    }
+  });
+
+  it("reuses installed models outside the catalogue in the free slots", () => {
+    const installed = [{ modelId: "phi3:latest", parameterSize: "3.8B", size: 2.3 * GB }];
+    const options = recommendModelOptions(device({ ramGB: 8, freeDiskBytes: 100 * GB }), installed);
+
+    const phi = options.find((o) => o.id === "phi3:latest");
+    expect(phi?.installed).toBe(true);
+    expect(phi?.label).toBe("phi3:latest");
+    expect(options.length).toBeLessThanOrEqual(3);
+  });
+
+  it("flags every number as an estimate when hardware is unknown", () => {
+    const options = recommendModelOptions(device());
+    expect(options.length).toBeGreaterThan(0);
+    for (const o of options) expect(o.estimated).toBe(true);
+  });
+
+  it("offers the lightest options flagged incompatible on a device that fits nothing", () => {
+    const options = recommendModelOptions(device({ ramGB: 1 }));
+
+    expect(options.length).toBeGreaterThan(0);
+    expect(options.length).toBeLessThanOrEqual(3);
+    expect(options.every((o) => !o.compatible)).toBe(true);
+    expect([...options].sort((a, b) => a.downloadBytes - b.downloadBytes)).toEqual(options);
+  });
+
+  it("respects the measured disk budget for downloads it does not have to make", () => {
+    const options = recommendModelOptions(device({ ramGB: 16, freeDiskBytes: 2 * GB }));
+    expect(options.every((o) => o.installed || o.downloadBytes <= 2 * GB * 0.9)).toBe(true);
   });
 });
