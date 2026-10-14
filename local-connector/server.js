@@ -208,6 +208,43 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Free/total disk bytes for the volume holding the user's home directory.
+  // Read-only (fs.statfs), GET only, loopback + origin checked. Lets the setup
+  // wizard show a real "available storage" number instead of a browser guess.
+  // Returns { disk: null } when the Node build has no statfs — the UI then
+  // reports storage as unavailable rather than zero.
+  if (pathname === '/v1/system/disk') {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
+      return;
+    }
+    const diskOrigin = req.headers.origin;
+    if (diskOrigin && !isAllowedOrigin(diskOrigin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Origin ${diskOrigin} not allowed.` }));
+      return;
+    }
+    let disk = null;
+    try {
+      if (typeof fs.statfsSync === 'function') {
+        const target = os.homedir() || process.cwd();
+        const s = fs.statfsSync(target);
+        const blockSize = Number(s.bsize || s.blocksize || 4096);
+        const freeBytes = Number(s.bavail) * blockSize;
+        const totalBytes = Number(s.blocks) * blockSize;
+        if (Number.isFinite(freeBytes) && freeBytes >= 0) {
+          disk = { freeBytes, totalBytes: Number.isFinite(totalBytes) ? totalBytes : null };
+        }
+      }
+    } catch {
+      disk = null;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', connector: 'nexuss-local', disk }));
+    return;
+  }
+
   // Model download: validate the model id server-side, then stream Ollama's
   // NDJSON pull progress straight back to the client.
   if (pathname === '/api/pull') {

@@ -93,6 +93,53 @@ export async function fetchConnectorOllamaStatus(
   }
 }
 
+export interface ConnectorDiskInfo {
+  /** Free bytes on the volume that holds the user's home directory. */
+  freeBytes: number;
+  /** Total size of that volume when the connector could read it. */
+  totalBytes: number | null;
+}
+
+/**
+ * Real free-disk reading from the Nexuss local connector (`GET
+ * /v1/system/disk`, read-only, loopback + origin checked). Returns null when
+ * the connector is absent or too old to expose the endpoint — callers must
+ * show "unavailable" instead of pretending the value is zero.
+ */
+export async function fetchConnectorDiskInfo(
+  signal?: AbortSignal
+): Promise<ConnectorDiskInfo | null> {
+  try {
+    const res = await timeoutFetch(
+      `${CONNECTOR_BASE}/v1/system/disk`,
+      { method: "GET", signal },
+      CONNECTOR_STATUS_TIMEOUT_MS
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      disk?: { freeBytes?: unknown; totalBytes?: unknown };
+    };
+    const disk = body?.disk;
+    if (
+      !disk ||
+      typeof disk.freeBytes !== "number" ||
+      !Number.isFinite(disk.freeBytes) ||
+      disk.freeBytes < 0
+    ) {
+      return null;
+    }
+    return {
+      freeBytes: Math.round(disk.freeBytes),
+      totalBytes:
+        typeof disk.totalBytes === "number" && Number.isFinite(disk.totalBytes)
+          ? Math.round(disk.totalBytes)
+          : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function classifyThrown(e: unknown, via: SetupDetectionVia): SetupDetection {
   const err = e as { name?: string; message?: string } | null;
   const aborted =

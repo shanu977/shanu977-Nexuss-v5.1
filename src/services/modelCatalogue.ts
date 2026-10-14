@@ -242,6 +242,170 @@ export interface InstalledModelMeta {
 }
 
 /**
+ * Rough on-disk footprint of a provider install (installer + runtime). This is
+ * a published-size approximation, never a measurement of the user's device —
+ * the UI must always label it as an estimate.
+ */
+export const PROVIDER_INSTALL_ESTIMATE_BYTES = Math.round(1.5 * GB);
+
+/** One row of the setup wizard's compact model chooser (at most three). */
+export interface ModelOptionRecommendation {
+  id: string;
+  label: string;
+  tier: ModelTier;
+  /** Parameter count as displayed, when known. */
+  params?: string;
+  /** Approximate download size in bytes; 0 when the model is already installed. */
+  downloadBytes: number;
+  /** Conservative memory estimate in bytes, when known. */
+  ramBytes: number | null;
+  /** Intended workload / provenance line. */
+  use: string;
+  installed: boolean;
+  compatible: boolean;
+  /** Hardware information was incomplete — every number here is an estimate. */
+  estimated: boolean;
+  recommended: boolean;
+}
+
+/** Coarse tier for a model that is only known through its installed metadata. */
+function tierForRam(ramBytes: number | null): ModelTier {
+  if (ramBytes == null) return "balanced";
+  if (ramBytes < 4 * GB) return "lightweight";
+  if (ramBytes < 9 * GB) return "balanced";
+  return "capable";
+}
+
+/**
+ * Build the setup wizard's compact chooser: at most three recommendations —
+ * one Lightweight / Balanced / Higher-capability pick from the maintained
+ * catalogue, plus (when slots remain) models that are already installed on
+ * this device so they are reused instead of downloaded again.
+ *
+ * Nothing is fabricated: options that clearly do not fit the measured device
+ * are dropped, and when the device is too small for the whole catalogue only
+ * the lightest options are returned, flagged `compatible: false`.
+ */
+export function recommendModelOptions(
+  device: DeviceProfile,
+  installed: InstalledModelMeta[] = []
+): ModelOptionRecommendation[] {
+  const installedIds = new Set(installed.map((m) => m.modelId));
+  const budget = ramBudgetBytes(device);
+  const diskBudget =
+    device.freeDiskBytes != null ? device.freeDiskBytes * DISK_BUDGET_FACTOR : null;
+  const estimated = device.ramGB == null;
+
+  const fits = (m: { ramBytes: number; downloadBytes: number }, installedOk: boolean) => {
+    if (budget != null && m.ramBytes > budget) return false;
+    if (!installedOk && diskBudget != null && m.downloadBytes > diskBudget) return false;
+    return true;
+  };
+
+  const chosen: CatalogueModel[] = [];
+  const used = new Set<string>();
+  for (const tier of ["lightweight", "balanced", "capable"] as ModelTier[]) {
+    if (chosen.length >= 3) break;
+    const candidates = OLLAMA_MODEL_CATALOGUE.filter(
+      (m) => m.tier === tier && !used.has(m.id)
+    );
+    if (candidates.length === 0) continue;
+    const alreadyInstalled = candidates.filter((m) => installedIds.has(m.id));
+    const pool =
+      alreadyInstalled.length > 0 ? alreadyInstalled : candidates.filter((m) => fits(m, false));
+    const pick = [...pool].sort((a, b) => a.ramBytes - b.ramBytes)[0];
+    if (!pick) continue;
+    used.add(pick.id);
+    chosen.push(pick);
+  }
+
+  // Free slots go to models that already live on this device: reusing one
+  // costs no download and is always the cheapest option for the user.
+  const extras: InstalledModelMeta[] = [];
+  for (const m of installed) {
+    if (chosen.length + extras.length >= 3) break;
+    if (used.has(m.modelId)) continue;
+    const need = estimateRamBytes({
+      paramCount: parseParamCount(m.parameterSize),
+      sizeBytes: m.size ?? null,
+    });
+    if (need != null && budget != null && need > budget) continue;
+    extras.push(m);
+  }
+  extras.sort((a, b) => {
+    const na = estimateRamBytes({ paramCount: parseParamCount(a.parameterSize), sizeBytes: a.size ?? null });
+    const nb = estimateRamBytes({ paramCount: parseParamCount(b.parameterSize), sizeBytes: b.size ?? null });
+    return (na ?? 0) - (nb ?? 0);
+  });
+
+  const rec = recommendCatalogueModel(device);
+  const recommendedId =
+    chosen.find((m) => m.id === rec.model.id)?.id ??
+    chosen.find((m) => m.tier === "balanced")?.id ??
+    chosen[0]?.id ??
+    extras[0]?.modelId ??
+    null;
+
+  const options: ModelOptionRecommendation[] = chosen.map((m) => {
+    const isInstalled = installedIds.has(m.id);
+    return {
+      id: m.id,
+      label: m.label,
+      tier: m.tier,
+      params: m.params,
+      downloadBytes: isInstalled ? 0 : m.downloadBytes,
+      ramBytes: m.ramBytes,
+      use: m.use,
+      installed: isInstalled,
+      compatible: fits(m, isInstalled),
+      estimated,
+      recommended: m.id === recommendedId,
+    };
+  });
+
+  for (const m of extras) {
+    const need = estimateRamBytes({
+      paramCount: parseParamCount(m.parameterSize),
+      sizeBytes: m.size ?? null,
+    });
+    options.push({
+      id: m.modelId,
+      label: m.modelId,
+      tier: tierForRam(need),
+      params: m.parameterSize,
+      downloadBytes: 0,
+      ramBytes: need,
+      use: "Already on this device — nothing to download",
+      installed: true,
+      compatible: need == null || budget == null || need <= budget,
+      estimated: estimated || need == null,
+      recommended: m.modelId === recommendedId,
+    });
+  }
+
+  if (options.length > 0) return options;
+
+  // Nothing fits comfortably (very small device): offer the lightest options
+  // rather than an empty screen, clearly flagged as a poor match.
+  return [...OLLAMA_MODEL_CATALOGUE]
+    .sort((a, b) => a.ramBytes - b.ramBytes)
+    .slice(0, 2)
+    .map((m, i) => ({
+      id: m.id,
+      label: m.label,
+      tier: m.tier,
+      params: m.params,
+      downloadBytes: m.downloadBytes,
+      ramBytes: m.ramBytes,
+      use: m.use,
+      installed: false,
+      compatible: false,
+      estimated: true,
+      recommended: i === 0,
+    }));
+}
+
+/**
  * Recommend one of the *already installed* models using its real metadata
  * (parameter count or size) against the device profile. Never downloads
  * anything — if a suitable model exists, the user should just use it.

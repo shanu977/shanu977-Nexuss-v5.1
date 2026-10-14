@@ -42,6 +42,17 @@ npm run connector
 
 Nexuss Web will automatically detect the connector at `http://127.0.0.1:11435` for Ollama (`http://localhost:11434/v1` → `http://127.0.0.1:11435/v1`) and use it for both `GET /v1/models` and `POST /v1/chat/completions`. Keep it running while using local models from `https://www.nexuss.in`. No cloud proxy, no SSRF, binds only to `127.0.0.1`, validates `localhost` only, and rejects `169.254.169.254`.
 
+Connector endpoints (loopback-only, `GET`, Nexuss origins required):
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health` | Connector liveness |
+| `GET /v1/ollama/status` | Ollama `{installed, running}` as the OS sees it |
+| `GET /v1/system/disk` | Read-only free/total bytes for the home volume (`fs.statfsSync`), used by the setup wizard's storage check. Absent/older connectors return `disk: null` — the UI then shows "unavailable", never a fake `0`. |
+| `GET/POST /v1/ollama/pull`, `/api/pull` | Model download proxy |
+| `GET /v1/terminal/run` | Desktop-only command bridge |
+| `/v1/*` | Ollama proxy (`/api/tags`, `/api/pull`, `/v1/*`) |
+
 ### LM Studio
 
 1. Download LM Studio, load a model (e.g., Qwen 2.5 7B)
@@ -65,12 +76,28 @@ Enter any OpenAI-compatible base URL ending in `/v1`. If `/models` is unavailabl
 
 - The **Provider** and **Model** dropdowns pick the active model exactly like the Preferences tab; a reachable Ollama appears as `Ollama • Connected` with its discovered models, and local models are marked with a `LOCAL` badge.
 - **Refresh Models** re-runs discovery; disconnected and empty states offer **Reconnect** / **Configure**.
-- Each endpoint shows: name (Ollama/LM Studio/vLLM), URL, enabled status, and its models.
-- Actions per endpoint: **Test** (real connectivity + `/models` discovery), **Edit**, **Remove**.
-- Adding: choose provider type, endpoint, optional API key, **Test Connection**, pick discovered models or enter manual ID, **Add Model**.
+- Each local provider shows one card: name, status pill, model count, and the endpoint it is answering on (plus real free disk from the connector when it is up). The focused card owns the single **Model** picker.
 - Models can be enabled/disabled or removed without deleting chat history.
 
 Endpoint normalization: `http://localhost:11434` → `http://localhost:11434/v1` for Ollama; trailing slashes and `/v1/models` or `/v1/chat/completions` are stripped to base `/v1`.
+
+### + Add Local Provider (guided setup)
+
+Clicking **+ Add Local Provider** first inspects the real provider state, then picks one of three entry points — it never opens a redundant wizard over a working setup:
+
+1. **Case A — already connected.** A registered, answering provider means the existing card becomes the primary interface: the button focuses that card (endpoint + model picker, no wizard, no reinstall, no second model list).
+2. **Case B — installed but not registered.** Ollama answers on the default endpoint but has no Nexuss provider row yet: the wizard opens on the device checks and offers **Connect to Nexuss** — nothing is downloaded again.
+3. **Case C — nothing found (or first run).** The wizard opens on the intro card and runs the checks: device compatibility, real free storage (connector `/v1/system/disk`), provider detection, existing models, and installability.
+
+From there the wizard is step-by-step: **check → choose one model → confirm → install/connect → ready**.
+
+- The chooser shows **at most three** recommendations (lightweight / balanced / higher-capability, plus already-installed picks), each labelled with its own compatibility and whether it is already on the device. The full catalogue stays internal for refresh/counts/health.
+- **Continue** is disabled only when the measured disk is definitively too small; unreadable storage is reported as "unavailable", never as zero.
+- Nothing is pulled until **Install and Connect**; the confirm screen states provider status, model status, and estimate-tagged sizes.
+- The download progress comes from the real pull stream and keeps running if the panel is closed (the store owns it); it can be cancelled, and a failed verification never shows **Ready** or changes the chat selection.
+- The provider is only registered and the chat selection switched after a real verification reply.
+
+The manual provider chooser (**Advanced configuration**) remains available from every step.
 
 ## Model Discovery
 
@@ -180,4 +207,6 @@ Local models run on your CPU/GPU/RAM. Performance depends on your machine. Large
 
 See `src/store/localModelStore.test.ts`, `src/services/localModels.test.ts`, `src/store/localChat.test.ts` for 20+ cases: add/validate/test/discovery success/failure/manual entry, enable/disable, edit/remove, user isolation, selector, local streaming, cloud still works, error paths.
 
-Run: `npm run test -- src/store/localModelStore.test.ts src/services/localModels.test.ts src/store/localChat.test.ts`
+The guided setup is covered by `src/components/LocalSetupPanel.test.tsx` (device checks, at-most-three chooser, download/cancel/resume, connect, honesty guards), `src/components/ModelsSettings.test.tsx` (Case A/B entry points, first run, advanced chooser) and `src/services/modelCatalogue.test.ts` (compact chooser rules).
+
+Run: `npm run test -- src/store/localModelStore.test.ts src/services/localModels.test.ts src/store/localChat.test.ts src/components/LocalSetupPanel.test.tsx src/components/ModelsSettings.test.tsx src/services/modelCatalogue.test.ts`

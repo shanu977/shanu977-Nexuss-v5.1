@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => {
     discover: vi.fn(),
     testLocalEndpoint: vi.fn(),
     detectOllamaSetup: vi.fn(),
+    fetchConnectorDiskInfo: vi.fn(
+      (): Promise<{ freeBytes: number; totalBytes: number | null } | null> => Promise.resolve(null)
+    ),
+    fetchConnectorOllamaStatus: vi.fn(
+      (): Promise<{ installed: boolean | null; running: boolean } | null> => Promise.resolve(null)
+    ),
     verifyLocalChat: vi.fn(),
     useAuthStore,
     setUid: (uid: string | null) => {
@@ -42,6 +48,8 @@ vi.mock("@/services/localModels", () => ({
 }));
 vi.mock("@/services/ollamaSetup", () => ({
   detectOllamaSetup: mocks.detectOllamaSetup,
+  fetchConnectorDiskInfo: mocks.fetchConnectorDiskInfo,
+  fetchConnectorOllamaStatus: mocks.fetchConnectorOllamaStatus,
   verifyLocalChat: mocks.verifyLocalChat,
   friendlySetupError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
   unknownReasonCopy: () => "We couldn't check your device.",
@@ -80,6 +88,10 @@ vi.mock("@/workspace/store", () => ({
 }));
 
 const OLLAMA_PROVIDER_ID = "prov-ollama-1";
+// Connect-flow tests await detect + refresh + verify end-to-end; under full
+// suite parallel load that can exceed vitest's 5s default test timeout.
+const OPT = { timeout: 20000 };
+vi.setConfig({ testTimeout: 20000 });
 
 interface SeedModel {
   modelId: string;
@@ -357,9 +369,6 @@ describe("Settings → Models tab", () => {
 });
 
 describe("Local Providers — one-click connect flow", () => {
-  /** Generous waits: the full suite runs under heavy parallel load. */
-  const OPT = { timeout: 20000 };
-
   /** Empty local store: nothing persisted, nothing reachable yet. */
   function seedEmpty() {
     useLocalModelStore.setState({
@@ -381,12 +390,16 @@ describe("Local Providers — one-click connect flow", () => {
       reason: "connector_unreachable",
       via: "direct"
     });
+    mocks.fetchConnectorDiskInfo.mockResolvedValue({
+      freeBytes: 60_000_000_000,
+      totalBytes: 512_000_000_000
+    });
 
     render(<ModelsSettings />);
 
-    // The guided setup owns first run and auto-opens.
+    // The guided setup owns first run and auto-opens at the intro step.
     expect(await screen.findByTestId("local-setup-panel", undefined, OPT)).toBeInTheDocument();
-    expect(screen.getByTestId("setup-unknown")).toBeInTheDocument();
+    expect(screen.getByTestId("setup-intro")).toBeInTheDocument();
     expect(screen.queryByText("Connect a local AI")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ Add Local Provider" })).not.toBeInTheDocument();
 
@@ -396,13 +409,99 @@ describe("Local Providers — one-click connect flow", () => {
     expect(screen.queryByText(/Quick setup/)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/model id/i)).not.toBeInTheDocument();
 
+    // Running the checks keeps an unknown probe honest — it never claims a
+    // provider is installed (or missing) when it couldn't check.
+    fireEvent.click(screen.getByTestId("setup-start"));
+    const notice = await screen.findByTestId("setup-provider-notice", undefined, OPT);
+    expect(within(notice).getByText("We couldn't check your device.")).toBeInTheDocument();
+
     // The manual provider chooser stays reachable through Advanced configuration.
-    fireEvent.click(screen.getByRole("button", { name: "Advanced configuration" }));
+    fireEvent.click(screen.getByTestId("setup-advanced"));
     expect(await screen.findByText("Connect a local AI", undefined, OPT)).toBeInTheDocument();
     expect(screen.getByText("Choose your local provider:")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Ollama/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^LM Studio/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^vLLM/ })).toBeInTheDocument();
+  });
+
+  it("Case A — with a connected provider, Add Local Provider focuses its card, not a wizard", async () => {
+    const installed: SeedModel[] = [
+      { modelId: "qwen2.5-coder:7b", family: "qwen3", parameterSize: "7.6B", size: 5_000_000_000 },
+      { modelId: "llama3.3:latest", family: "llama", parameterSize: "8.0B", size: 4_000_000_000 }
+    ];
+    seedOllama({ status: "connected", discovered: installed, persisted: [installed[0]] });
+    mocks.discover.mockResolvedValue({ models: installed.map(discovered), endpointReachable: true });
+    useChatStore.setState({ provider: "local", model: "qwen2.5-coder:7b" });
+
+    render(<ModelsSettings />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "+ Add Local Provider" }, OPT)
+    );
+
+    // No wizard: the already-connected card becomes the primary interface.
+    await waitFor(
+      () => expect(screen.getByTestId("add-provider-note")).toBeInTheDocument(),
+      OPT
+    );
+    expect(screen.queryByTestId("local-setup-panel")).not.toBeInTheDocument();
+    expect(screen.getByTestId("add-provider-note")).toHaveTextContent(
+      "already connected — choose a model on its card below"
+    );
+
+    // Exactly one card for the provider, and it shows the working endpoint.
+    const cards = screen.getAllByTestId("local-provider-card-ollama");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent("2 models available");
+    expect(cards[0]).toHaveTextContent("http://localhost:11434/v1");
+    expect(within(cards[0]).getByTestId("local-status-connected")).toBeInTheDocument();
+
+    // The focused card owns the model picker.
+    const cardPicker = within(cards[0]).getByLabelText("Model") as HTMLSelectElement;
+    expect(cardPicker.id).toMatch(/^local-model-/);
+    expect(cardPicker.value).toBe("qwen2.5-coder:7b");
+
+    // Never fell back to a redundant install/connect flow.
+    expect(screen.queryByTestId("setup-install")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Install Ollama/)).not.toBeInTheDocument();
+  });
+
+  it("Case B — installed and running but unregistered opens the wizard at the check step", async () => {
+    const installed: SeedModel[] = [
+      { modelId: "qwen3:4b", family: "qwen3", parameterSize: "4B", size: 2_500_000_000 }
+    ];
+    seedEmpty();
+    mocks.detectOllamaSetup.mockResolvedValue({
+      state: "models",
+      models: installed.map(discovered),
+      via: "connector"
+    });
+    mocks.fetchConnectorDiskInfo.mockResolvedValue({
+      freeBytes: 60_000_000_000,
+      totalBytes: 512_000_000_000
+    });
+    useChatStore.setState({ provider: "groq", model: DEFAULT_PROVIDER_MODELS.groq });
+
+    render(<ModelsSettings />);
+
+    // First run inspects the device: a running provider skips the intro and
+    // opens straight on the checks.
+    expect(await screen.findByTestId("setup-check", undefined, OPT)).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-intro")).not.toBeInTheDocument();
+
+    // One-click connect reuses what is already installed: no download step.
+    const notice = await screen.findByTestId("setup-connect-existing", undefined, OPT);
+    expect(notice).toHaveTextContent(/nothing is installed or downloaded again/);
+    expect(screen.getByTestId("setup-connect")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-install-steps")).not.toBeInTheDocument();
+
+    // Closing the wizard and using Add Local Provider lands on the same checks.
+    fireEvent.click(screen.getByLabelText("Close setup"));
+    expect(screen.queryByTestId("local-setup-panel")).not.toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "+ Add Local Provider" }, OPT)
+    );
+    expect(await screen.findByTestId("setup-connect-existing", undefined, OPT)).toBeInTheDocument();
   });
 
   it("connects Ollama, discovers its models and selects the first one", async () => {
