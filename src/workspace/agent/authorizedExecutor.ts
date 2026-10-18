@@ -10,7 +10,7 @@ import { getAgentState, setAgentState, createGoalState, updateGoalWithActions, c
 import { pushVerifiedObservation, getRecentExecutionContext, ExecutionContextEntry } from "./executionContext";
 import { resolveIntent } from "./intent";
 import { createLocalConnectorRuntime, isLocalConnectorAvailable } from "@/workspace/localTerminalRuntime";
-import { useTerminalConnectionStore } from "@/workspace/terminalConnection";
+import { toUserFacingTerminalError, useTerminalConnectionStore } from "@/workspace/terminalConnection";
 import { normalizeRelativePath, assertInsideRoot } from "@/workspace/path";
 import { createAgentPlan } from "./llmPlanner";
 import { validateAgentPlan } from "./planValidator";
@@ -507,8 +507,9 @@ export async function runAuthorizedGoal(
           executed: 0,
           succeeded: 0,
           failed: 1,
-          observations: [{ success: false, executed: false, verified: false, executor: "none", action: "connector_check", exitCode: null, stdout: "", stderr: "CONNECTOR_UNAVAILABLE", cwd: opts.workspacePath || "", command: "", error: "CONNECTOR_UNAVAILABLE" } as any],
-          finalResponse: `CONNECTOR_UNAVAILABLE: Local connector at http://127.0.0.1:11435 is not reachable. Your command was NOT executed. Please start the local connector with "node local-connector/server.js" and when Chrome prompts "Allow www.nexuss.in to access your local network" click Allow (or enable chrome://flags#block-insecure-private-network-requests). Then try again.`,
+          observations: [{ success: false, executed: false, verified: false, executor: "none", action: "connector_check", exitCode: null, stdout: "", stderr: "connector unavailable", cwd: opts.workspacePath || "", command: "", error: "connector unavailable" } as any],
+          finalResponse:
+            "I couldn't run that because your terminal connection was lost, so nothing was executed. Open the Terminal panel, reconnect your terminal, then try again.",
         };
       }
     } catch {}
@@ -1135,10 +1136,13 @@ async function executePending(
         // The connector could not be reached during a real operation — the
         // previous "connected" state is no longer true.
         useTerminalConnectionStore.getState().markUnavailable(rawMsg);
-        // Production: CONNECTOR_UNAVAILABLE — do not execute remotely, do not fabricate success
+        // Never fabricate success. Technical connector details (URLs, ports,
+        // start commands) stay in developer logs; the user only sees an honest,
+        // actionable notice. The test-env branch keeps a short debug note (it
+        // never reaches a real user).
         const msg = isTestEnv && fallbackResult
-          ? `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult.stderr} Please ensure node local-connector/server.js is running.`
-          : `CONNECTOR_UNAVAILABLE: Cannot reach local terminal connector at http://127.0.0.1:11435. The local connector is not running or not reachable from your browser. Please start it with "node local-connector/server.js" and when Chrome prompts "Allow www.nexuss.in to access your local network" click Allow. Your command was NOT executed and no files were modified. Details: ${cleanMsg || rawMsg}`;
+          ? `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult.stderr}`
+          : "The terminal connection was lost, so nothing was changed on your machine. Your command was NOT executed. Open the Terminal panel, reconnect your terminal, then try again.";
         const res: StructuredToolResult = { success: false, executed: false, verified: false, executor: "none", action: next.type, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
         completeAction(chatId, next.id, res);
         pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });
@@ -1147,7 +1151,10 @@ async function executePending(
         executed++;
         break;
       }
-      const msg = rawMsg;
+      // Non-network failures still route through the same sanitizer so a
+      // connector-layer message (e.g. TIMEOUT naming an internal command) can
+      // never leak; genuine command/policy errors pass through untouched.
+      const msg = toUserFacingTerminalError(rawMsg);
       const res: StructuredToolResult = { success: false, executed: false, verified: false, executor: "none", action: next.type, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
       completeAction(chatId, next.id, res);
       pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });

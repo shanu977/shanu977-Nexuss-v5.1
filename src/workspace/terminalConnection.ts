@@ -53,6 +53,15 @@ const DISCONNECTED_BY_USER_KEY = "nexuss.terminal.disconnected";
 /** While connected, re-verify the connector so a stopped connector is noticed. */
 const HEARTBEAT_INTERVAL_MS = 8000;
 
+/**
+ * First connect (and explicit retry) must leave room for the browser's Local
+ * Network Access prompt: the health-check fetch hangs while that prompt is on
+ * screen, so a short abort would misreport a healthy connector as "not running".
+ * Heartbeat checks keep the short default timeout — by then permission is
+ * already granted and the request is fast.
+ */
+const CONNECT_TIMEOUT_MS = 15000;
+
 function readDisconnectedByUser(): boolean {
   if (typeof window === "undefined") return false;
   try {
@@ -74,9 +83,9 @@ function writeDisconnectedByUser(value: boolean): void {
 
 /** Deduped, forced health probe so concurrent checks share one request. */
 let healthProbeInFlight: Promise<ConnectorProbeResult> | null = null;
-function probeConnector(): Promise<ConnectorProbeResult> {
+function probeConnector(timeoutMs?: number): Promise<ConnectorProbeResult> {
   if (!healthProbeInFlight) {
-    healthProbeInFlight = probeLocalConnector({ force: true }).finally(() => {
+    healthProbeInFlight = probeLocalConnector({ force: true, timeoutMs }).finally(() => {
       healthProbeInFlight = null;
     });
   }
@@ -93,12 +102,27 @@ function statusForFailure(reason: Exclude<TerminalFailureReason, null>): Termina
   return "error";
 }
 
+/** Transient-failure retries for an explicit connect (never for passive checks). */
+const CONNECT_RETRIES = 3;
+const CONNECT_RETRY_DELAY_MS = 700;
+
 /** Deduped health + capability verification shared by passive and active connects. */
 let establishInFlight: Promise<EstablishResult> | null = null;
-function establishConnection(): Promise<EstablishResult> {
+function establishConnection(opts?: { retry?: boolean }): Promise<EstablishResult> {
   if (!establishInFlight) {
     establishInFlight = (async (): Promise<EstablishResult> => {
-      const probe = await probeConnector();
+      const retries = opts?.retry ? CONNECT_RETRIES : 1;
+      let probe: ConnectorProbeResult = { ok: false, reason: "unreachable" };
+      for (let attempt = 0; attempt < retries; attempt++) {
+        probe = await probeConnector(CONNECT_TIMEOUT_MS);
+        // Only retry fast, transient failures. A permission prompt needs a user
+        // decision and a timeout already waited out the full connect window —
+        // retrying either would just stall the user behind another long wait.
+        if (probe.ok || probe.reason !== "unreachable") break;
+        if (attempt < retries - 1) {
+          await new Promise((r) => setTimeout(r, CONNECT_RETRY_DELAY_MS));
+        }
+      }
       if (!probe.ok) return probe;
       const capable = await verifyExecutionCapability();
       if (!capable) return { ok: false, reason: "capability" };
@@ -259,7 +283,7 @@ export const useTerminalConnectionStore = create<TerminalConnectionState>()((set
     stopHeartbeat();
     writeDisconnectedByUser(false);
     set({ status: "connecting", lastError: null, failureReason: null });
-    const result = await establishConnection();
+    const result = await establishConnection({ retry: true });
     if (get().status !== "connecting") return get().status === "connected";
     if (result.ok) {
       set({

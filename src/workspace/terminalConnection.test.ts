@@ -94,6 +94,23 @@ describe("probeLocalConnector()", () => {
     expect(probe).toEqual({ ok: false, reason: "timeout" });
   });
 
+  it("classifies an abort while the LNA permission prompt is pending as permission", async () => {
+    // Production root cause: the fetch hangs behind the Chrome Local Network
+    // Access prompt, so the abort fires while permission is still awaiting a
+    // decision — that is NOT "connector not running".
+    stubPermissions("prompt");
+    stubHealthTimeout();
+    const probe = await probeLocalConnector({ force: true });
+    expect(probe).toEqual({ ok: false, reason: "permission" });
+  });
+
+  it("keeps an abort classified as timeout once permission is granted", async () => {
+    stubPermissions("granted");
+    stubHealthTimeout();
+    const probe = await probeLocalConnector({ force: true });
+    expect(probe).toEqual({ ok: false, reason: "timeout" });
+  });
+
   it("classifies a denied local-network permission as permission", async () => {
     stubPermissions("denied");
     const fetchMock = vi.fn();

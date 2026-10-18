@@ -6,6 +6,7 @@ import { useTerminalConnectionStore, resetTerminalConnection } from "@/workspace
 import { getAgentState, clearAgentState } from "./agentState";
 import { getRecentExecutionContext, clearExecutionContext } from "./executionContext";
 import { toolRun } from "./tools";
+import { connectorHttpError } from "@/workspace/localTerminalRuntime";
 
 vi.mock("@/workspace/agent/tools", async () => {
   const actual = await vi.importActual("@/workspace/agent/tools") as any;
@@ -122,6 +123,38 @@ describe("authorizedExecutor", () => {
     expect(getAgentState("chatA")?.failureReason).toBe("terminal_disconnected");
     expect(getRecentExecutionContext("chatA").length).toBe(0);
     expect(toolRun).not.toHaveBeenCalled();
+  });
+
+  it("does not leak internal connector commands when a run times out", async () => {
+    setupWorkspace(true);
+    vi.mocked(toolRun).mockRejectedValueOnce(
+      new Error(
+        "TIMEOUT: Local terminal connector did not respond within 135s. The connector may be stuck; restart it with: node local-connector/server.js (chrome://flags, 127.0.0.1:11435)"
+      )
+    );
+    const res = await runAuthorizedGoal("chatA", "create a folder called shanu10", { panelOpen: true, workspacePath: "C:\\mock" });
+    expect(res.failed).toBe(1);
+    expect(res.finalResponse).not.toContain("node local-connector");
+    expect(res.finalResponse).not.toContain("chrome://flags");
+    expect(res.finalResponse).not.toContain("127.0.0.1");
+    expect(res.finalResponse).not.toContain("TIMEOUT");
+    expect(res.finalResponse).toContain("I couldn't complete the action");
+  });
+
+  it("keeps a sanitized connector HTTP error in the final response without internals", async () => {
+    setupWorkspace(true);
+    // The connector client sanitizes the 500 body before it ever reaches here;
+    // the executor must then carry that safe copy through unchanged.
+    vi.mocked(toolRun).mockRejectedValueOnce(
+      connectorHttpError(500, JSON.stringify({ error: "ENOENT: no such file or directory, scandir 'C:\\secret\\proj'" }))
+    );
+    const res = await runAuthorizedGoal("chatA", "create a folder called shanu10", { panelOpen: true, workspacePath: "C:\\mock" });
+    expect(res.failed).toBe(1);
+    expect(res.finalResponse).not.toContain("ENOENT");
+    expect(res.finalResponse).not.toContain("secret");
+    expect(res.finalResponse).not.toContain("scandir");
+    expect(res.finalResponse).toContain("I couldn't complete the action");
+    expect(res.finalResponse).toContain("internal error");
   });
 
   it("executes via fallback/runtime even when panel closed but runtime available (task requirement #7)", async () => {
