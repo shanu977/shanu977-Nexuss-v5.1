@@ -22,6 +22,7 @@ function formatTime(ms: number): string {
 export default function UsageDashboard() {
   const summary = useUsageStore((s) => s.summary);
   const loading = useUsageStore((s) => s.loading);
+  const error = useUsageStore((s) => s.error);
   const loadSummary = useUsageStore((s) => s.loadSummary);
   const clearUsage = useUsageStore((s) => s.clearUsage);
   const estimateContextTokens = useUsageStore((s) => s.estimateContextTokens);
@@ -78,11 +79,25 @@ export default function UsageDashboard() {
         <h4 className="text-[10px] font-mono font-bold uppercase tracking-wider text-muted-foreground">
           API Usage Metrics
         </h4>
-
         {loading ? (
-          <p className="text-xs font-mono text-muted-foreground">Loading usage statistics...</p>
+          <p className="text-xs font-mono text-muted-foreground">
+            Loading usage statistics...
+          </p>
+        ) : error ? (
+          <div role="alert" className="space-y-2">
+            <p className="text-xs text-red-500">{error}</p>
+            <button
+              type="button"
+              onClick={() => void loadSummary()}
+              className="text-xs underline text-muted-foreground hover:text-foreground"
+            >
+              Try again
+            </button>
+          </div>
         ) : summary.totalRequests === 0 ? (
-          <p className="text-xs text-muted-foreground">No usage recorded yet.</p>
+          <p className="text-xs text-muted-foreground">
+            No usage recorded yet.
+          </p>
         ) : (
           <div className="space-y-3">
             {/* Stat Cards */}
@@ -164,6 +179,12 @@ export default function UsageDashboard() {
         >
           {confirmClear ? "Click again to confirm clear" : "Clear Usage Statistics"}
         </button>
+        {confirmClear && (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            This permanently deletes your saved usage statistics for this account.
+            Your conversations will not be deleted.
+          </p>
+        )}
         {confirmClear && (
           <button
             type="button"

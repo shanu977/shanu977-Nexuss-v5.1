@@ -1,3 +1,4 @@
+
 import { create } from "zustand";
 import { UsageRecord, UsageSummary, ProviderSummary } from "@/types/usage";
 import { ProviderType } from "@/types";
@@ -21,12 +22,17 @@ function currentUid(): string | null {
 interface UsageStore {
   summary: UsageSummary;
   loading: boolean;
-  recordUsage: (entry: Omit<UsageRecord, "id" | "timestamp" | "userId">) => Promise<void>;
+  error: string | null;
+  recordUsage: (
+    entry: Omit<UsageRecord, "id" | "timestamp" | "userId">
+  ) => Promise<void>;
   loadSummary: () => Promise<void>;
   getRecords: (provider?: ProviderType) => Promise<UsageRecord[]>;
   clearUsage: () => Promise<void>;
   resetUsage: () => void;
-  estimateContextTokens: (messages: { role: string; content: string }[]) => number;
+  estimateContextTokens: (
+    messages: { role: string; content: string }[]
+  ) => number;
 }
 
 function buildSummary(records: UsageRecord[]): UsageSummary {
@@ -34,6 +40,7 @@ function buildSummary(records: UsageRecord[]): UsageSummary {
 
   for (const r of records) {
     let ps = providerMap.get(r.provider);
+
     if (!ps) {
       ps = {
         provider: r.provider,
@@ -42,7 +49,7 @@ function buildSummary(records: UsageRecord[]): UsageSummary {
         outputTokens: 0,
         totalTokens: 0,
         avgResponseTime: 0,
-        models: {}
+        models: {},
       };
       providerMap.set(r.provider, ps);
     }
@@ -58,9 +65,10 @@ function buildSummary(records: UsageRecord[]): UsageSummary {
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
-        avgResponseTime: 0
+        avgResponseTime: 0,
       };
     }
+
     const ms = ps.models[r.model];
     ms.requests++;
     ms.inputTokens += r.inputTokens;
@@ -71,20 +79,38 @@ function buildSummary(records: UsageRecord[]): UsageSummary {
   const providers = Array.from(providerMap.values());
 
   for (const ps of providers) {
-    const providerRecords = records.filter((r) => r.provider === ps.provider);
-    const totalTime = providerRecords.reduce((sum, r) => sum + r.responseTime, 0);
-    ps.avgResponseTime = ps.requests > 0 ? totalTime / ps.requests : 0;
+    const providerRecords = records.filter(
+      (r) => r.provider === ps.provider
+    );
+    const totalTime = providerRecords.reduce(
+      (sum, r) => sum + r.responseTime,
+      0
+    );
+
+    ps.avgResponseTime =
+      ps.requests > 0 ? totalTime / ps.requests : 0;
 
     for (const modelName of Object.keys(ps.models)) {
-      const modelRecords = providerRecords.filter((r) => r.model === modelName);
-      const modelTime = modelRecords.reduce((sum, r) => sum + r.responseTime, 0);
+      const modelRecords = providerRecords.filter(
+        (r) => r.model === modelName
+      );
+      const modelTime = modelRecords.reduce(
+        (sum, r) => sum + r.responseTime,
+        0
+      );
+
       ps.models[modelName].avgResponseTime =
-        ps.models[modelName].requests > 0 ? modelTime / ps.models[modelName].requests : 0;
+        ps.models[modelName].requests > 0
+          ? modelTime / ps.models[modelName].requests
+          : 0;
     }
   }
 
   const totalRequests = records.length;
-  const totalTokens = records.reduce((sum, r) => sum + r.totalTokens, 0);
+  const totalTokens = records.reduce(
+    (sum, r) => sum + r.totalTokens,
+    0
+  );
 
   return { providers, totalRequests, totalTokens };
 }
@@ -92,34 +118,47 @@ function buildSummary(records: UsageRecord[]): UsageSummary {
 export const useUsageStore = create<UsageStore>()((set) => ({
   summary: { providers: [], totalRequests: 0, totalTokens: 0 },
   loading: false,
+  error: null,
 
   recordUsage: async (entry) => {
     const uid = currentUid();
     if (!uid) return;
+
     const record: UsageRecord = {
       ...entry,
       id: newId(),
       userId: uid,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
+
     await db.usageRecords.add(record);
   },
 
   loadSummary: async () => {
-    set({ loading: true });
+    set({ loading: true, error: null });
+
     try {
       const uid = currentUid();
+
       if (!uid) {
-        set({ summary: { providers: [], totalRequests: 0, totalTokens: 0 } });
+        set({
+          summary: {
+            providers: [],
+            totalRequests: 0,
+            totalTokens: 0,
+          },
+        });
         return;
       }
+
       const records = await db.usageRecords
         .where("[userId+timestamp]")
         .between([uid, Dexie.minKey], [uid, Dexie.maxKey])
         .toArray();
-      set({ summary: buildSummary(records) });
+
+      set({ summary: buildSummary(records), error: null });
     } catch {
-      set({ summary: { providers: [], totalRequests: 0, totalTokens: 0 } });
+      set({ error: "Failed to load usage statistics." });
     } finally {
       set({ loading: false });
     }
@@ -128,35 +167,49 @@ export const useUsageStore = create<UsageStore>()((set) => ({
   getRecords: async (provider?: ProviderType) => {
     const uid = currentUid();
     if (!uid) return [];
+
     const records = await db.usageRecords
       .where("[userId+timestamp]")
       .between([uid, Dexie.minKey], [uid, Dexie.maxKey])
       .reverse()
       .toArray();
+
     if (provider) {
       return records.filter((r) => r.provider === provider);
     }
+
     return records;
   },
 
   clearUsage: async () => {
     const uid = currentUid();
     if (!uid) return;
+
     await db.usageRecords.where("userId").equals(uid).delete();
-    set({ summary: { providers: [], totalRequests: 0, totalTokens: 0 } });
+
+    set({
+      summary: { providers: [], totalRequests: 0, totalTokens: 0 },
+      error: null,
+    });
   },
 
   // In-memory only. Does not delete IndexedDB data so the same account keeps
   // its usage history across logout/login. Used by signOut().
   resetUsage: () => {
-    set({ summary: { providers: [], totalRequests: 0, totalTokens: 0 }, loading: false });
+    set({
+      summary: { providers: [], totalRequests: 0, totalTokens: 0 },
+      loading: false,
+      error: null,
+    });
   },
 
   estimateContextTokens: (messages) => {
     let totalChars = 0;
+
     for (const m of messages) {
       totalChars += m.content.length;
     }
+
     return Math.ceil(totalChars / 4);
-  }
+  },
 }));

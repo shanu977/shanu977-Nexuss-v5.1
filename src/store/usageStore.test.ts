@@ -180,7 +180,9 @@ describe("usageStore", () => {
 
     // Simulate fresh load
     useUsageStore.setState({
-      summary: { providers: [], totalRequests: 0, totalTokens: 0 }
+      summary: { providers: [], totalRequests: 0, totalTokens: 0 },
+      loading: false,
+      error: null,
     });
 
     await useUsageStore.getState().loadSummary();
