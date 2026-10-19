@@ -21,7 +21,11 @@ export function normalizeSpecialName(name: string): SpecialFolderName | null {
 export function resolveSpecialFolderAbsolute(name: SpecialFolderName | string): string {
   const normalized = normalizeSpecialName(name);
   if (!normalized) return name;
-  const home = (typeof process !== 'undefined' ? (process.env.USERPROFILE || process.env.HOME) : '') || (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '');
+  const homeRaw = (typeof process !== 'undefined' ? (process.env.USERPROFILE || process.env.HOME) : '') || (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '');
+  // Only a real absolute Windows home may be a base. The browser polyfill's
+  // fake "/" cwd must never produce "/Downloads"-style bogus roots (the same
+  // path-collapse family that fabricated "\name" / "\\name" elsewhere).
+  const home = /^[a-zA-Z]:[\\/]/.test(homeRaw) ? homeRaw : '';
   const capital = normalized.charAt(0).toUpperCase() + normalized.slice(1);
   // Windows capitalization: Downloads, Desktop etc
   const cleanHome = home.replace(/[\\/]+$/, "");
@@ -70,6 +74,11 @@ export function getDefaultUserWorkspace(): string {
   const home = (typeof process !== 'undefined' ? (process.env.USERPROFILE || process.env.HOME) : '') || '';
   const cwd = (typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '');
   if (home && home !== cwd) return home;
+  // Browser: the webpack process polyfill reports a fake cwd of "/" — that is
+  // never a real workspace, and treating it as one makes path verification
+  // invent bogus "\name" / "\\name" paths. Return "" so callers fall back to
+  // the connector-side $env:USERPROFILE (real home) or skip verification.
+  if (!cwd || cwd === "/" || cwd === "\\") return home || "";
   // Fallback to cwd if homedir equals repo or unavailable – still better than repo for tests
   // For tests, cwd is repo but workspacePath is mocked, so this branch rarely used
   return home || cwd || "";

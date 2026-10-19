@@ -167,10 +167,13 @@ export function pushExecutionContext(a: any, b?: any): ExecutionContextEntry {
 
 export function pushVerifiedObservation(
   chatId: string,
-  base: Omit<ExecutionContextEntry, "id" | "timestamp" | "verified" | "chatId"> & { verifiedPath?: string }
+  base: Omit<ExecutionContextEntry, "id" | "timestamp" | "verified" | "chatId"> & { verifiedPath?: string; verified?: boolean }
 ): ExecutionContextEntry {
   const verifiedPath = (base as any).verifiedPath as string | undefined;
-  const entry: any = { ...base, verified: true };
+  // Callers that performed a real verification pass their result; skipped or
+  // failed verification must never be recorded as verified evidence.
+  const explicitVerified = (base as any).verified;
+  const entry: any = { ...base, verified: typeof explicitVerified === "boolean" ? explicitVerified : true };
   if (verifiedPath) entry.path = verifiedPath;
   return pushExecutionContext(chatId, entry);
 }

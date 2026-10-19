@@ -6,7 +6,6 @@ import { getRecentExecutionContext } from "./executionContext";
 import {
   extractBasePath as extractSpecialBasePath,
   resolveSpecialFolderForPowerShell,
-  resolveSpecialFolderAbsolute,
   getDefaultUserWorkspace,
   isSpecialFolderName
 } from "./specialFolders";
@@ -84,10 +83,22 @@ export function isFilesystemActionRequest(t: string): boolean {
   );
 }
 
+// A folder NAME must stop before the location clause: "create a folder
+// nexuss-connection-test on my permitted local workspace" means folder
+// "nexuss-connection-test", not the whole sentence tail. Intentional
+// multi-word names ("shanu 1999") contain no location phrase and survive.
+const TRAILING_LOCATION =
+  /\s+(?:on|in|at|inside|within|under|near|from)\s+(?:(?:my|our|the|this|that|an?|your|their)\s+)?(?:(?:permitted|allowed|local|current|primary|default|user(?:'s)?)\s+)*(?:workspace|folder|directory|project|root|home|drive|path|machine|computer|system|base|desktop|downloads|documents|pictures|videos|music)\b/i;
+
+function cutTrailingLocation(name: string): string {
+  const cut = name.split(TRAILING_LOCATION)[0].trim().replace(/\s+/g, " ").trim();
+  return cut || name;
+}
+
 function extractFolderName(clause: string): string | null {
   // Handle "name it as X" first - most specific for raju case: "name it as raju"
   const mAs = clause.match(/name\s+it\s+as\s+["'`]?([a-zA-Z0-9_\- ]+)["'`]?/i);
-  if (mAs) return mAs[1].trim().replace(/\s+/g, " ").trim().replace(/["'`]/g, "");
+  if (mAs) return cutTrailingLocation(mAs[1].trim().replace(/\s+/g, " ").trim().replace(/["'`]/g, ""));
   // Also handle "named X" and "name as X" — supports backticks like `kumar19`
   const mNamed = clause.match(/\bnamed\s+["'`]?([a-zA-Z0-9_\- ]+)["'`]?/i);
   if (mNamed) {
@@ -95,7 +106,7 @@ function extractFolderName(clause: string): string | null {
     const raw = mNamed[1].trim().replace(/["'`]/g, "");
     // If raw contains "in this path", trim it
     const cut = raw.split(/\s+in\s+this\s+path/i)[0].trim();
-    if (cut) return cut.replace(/\s+/g, " ").trim();
+    if (cut) return cutTrailingLocation(cut.replace(/\s+/g, " ").trim());
   }
   // Prefer explicit "called X" / "named X" (handles backticks and avoids mis-capturing "project for testing")
   const m2 = clause.match(/called\s+["'`]?([a-zA-Z0-9_\- ]+)["'`]?/i);
@@ -110,7 +121,7 @@ function extractFolderName(clause: string): string | null {
     // If raw still contains multiple words where second word is action verb, take first word/phrase before verb
     const verbCut = raw.match(/^([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)?)\s+(write|create|make|delete|list|run|and|using|via)\b/i);
     if (verbCut) raw = verbCut[1].trim();
-    if (raw) return raw;
+    if (raw) return cutTrailingLocation(raw);
   }
   // Quoted name placed BEFORE the noun: 'the "nexuss-real-test" folder', `folder "kumar19"`
   const mQuotedBefore = clause.match(/["'`]([a-zA-Z0-9_\- ]{1,60})["'`]\s+(?:folder|directory|project)\b/i);
@@ -123,9 +134,10 @@ function extractFolderName(clause: string): string | null {
   const m = clause.match(/(?:folder|directory|project)\s+(?:called\s+|named\s+|name\s+called\s+|name\s+)?["'`]?([a-zA-Z0-9_\- ]+?)["'`]?(?:\s+and|\s*$|\s+inside|\s+here|\.|,|;)/i);
   if (m) {
     const raw = m[1].trim().replace(/["'`]/g, "");
-    // Keep full name but normalize multiple spaces, preserve single spaces
+    // Keep full name but normalize multiple spaces, preserve single spaces,
+    // and never swallow the trailing location clause ("on my workspace").
     if (raw) {
-      const cleaned = raw.replace(/\s+/g, " ").trim();
+      const cleaned = cutTrailingLocation(raw.replace(/\s+/g, " ").trim());
       // "folder and everything inside it" captured a conjunction, not a name — reject it
       const isConjunction = /^(and|or|but|then|with|to|for|that|which|also|inside|in)\b/i.test(cleaned);
       // Filter out generic phrases like "in this path name it as raju" -> extract actual name if present
@@ -189,6 +201,36 @@ function extractWriteContent(clause: string): string | null {
     if (c && !/^(exactly\s+)?(this|that|the\s+(following|text|content|below))$/i.test(c)) return c;
   }
   return null;
+}
+
+// "create hello.txt containing exactly Nexuss terminal is working!" /
+// "create hello.txt with content Hello there" — the payload the user explicitly
+// asked to put in the file. Conservative on purpose: quoted payloads, payloads
+// after the keywords exactly/content/text, never quantity phrases ("with 100
+// lines"). Without this the file was created EMPTY while the agent reported a
+// verified success.
+function extractCreateFileContent(clause: string): string | undefined {
+  const clean = (c: string) => c.trim().replace(/^["'`]|["'`]$/g, "").replace(/\.+$/, "").trim();
+  const isInstructionWord = (c: string) =>
+    /^(exactly\s+)?(this|that|it|below|here|the\s+(following|text|content|below))\.?$/i.test(c);
+  const quoted = clause.match(/\b(?:with|containing)\s+(?:the\s+)?(?:exact(?:ly)?\s+)?(?:text\s+|content\s+)?["'`]([^"'`]+)["'`]/i);
+  if (quoted) {
+    const c = clean(quoted[1]);
+    if (c && !isInstructionWord(c)) return c;
+  }
+  const keyworded = clause.match(/\b(?:with|containing)\s+(?:the\s+)?(?:exact(?:ly)?\s+)?(?:text|content)\s+(?:of\s+)?(.+)$/i);
+  if (keyworded) {
+    const c = clean(keyworded[1]);
+    if (c && !isInstructionWord(c) && !/\b\d+\s*(?:lines?|words?|characters?|chars?|bytes?|kb|mb)\b/i.test(c)) return c;
+  }
+  // "containing exactly X" / "with exactly X" — the word "exactly" marks a
+  // literal payload even without quotes or the word "content".
+  const exact = clause.match(/\b(?:containing|with)\s+exactly\s+(.+)$/i);
+  if (exact) {
+    const c = clean(exact[1]);
+    if (c && !isInstructionWord(c) && !/\b\d+\s*(?:lines?|words?|characters?|chars?|bytes?|kb|mb)\b/i.test(c)) return c;
+  }
+  return undefined;
 }
 
 // "Write exactly this into the file:\n\nHello from Nexuss Terminal.\n\nThen read..."
@@ -845,6 +887,10 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
       else if (/\breadme\b/i.test(clause)) content = "# Project\n\nThis project contains app.py which implements a simple TaskManager with fibonacci. Generated for Nexuss E2E test.\n";
       // "Write a simple calculator program ..." -> the file this goal creates carries the program
       else if (name.endsWith(".py") && /\bcalculator\b/i.test(userText + " " + clause)) content = generateCalculatorProgram();
+      // "create hello.txt containing exactly Nexuss terminal is working!" —
+      // the requested payload must be written, or verification of "created
+      // file" alone would claim success for an empty file.
+      if (!content) content = extractCreateFileContent(clause);
       // "Create a copy named X" of the file this goal just wrote keeps the same contents,
       // so the copy is a real copy instead of an empty placeholder.
       if (!content && /\ba\s+copy\b|\bcopy\s+(?:it\s+)?(?:as|named|called)\b|\bmake\s+a\s+copy\b/i.test(clause)) {
@@ -1055,6 +1101,15 @@ export function planFilesystemActions(userText: string, chatId: string): Planned
   return actions;
 }
 
+// PowerShell expands $env: variables only inside double quotes. Execution
+// commands must quote template paths the same way verification does
+// (psQuotePath in authorizedExecutor), or exec and verify resolve different
+// locations on disk (single-quoted templates are looked up literally).
+function quotePsPath(p: string): string {
+  if (p.includes("$env:")) return `"${p.replace(/"/g, "")}"`;
+  return `'${p}'`;
+}
+
 export function synthesizeCommand(action: PlannedAction, chatId: string, hasExplicitTargetFlag = false): string {
   const isValidPath = (p: string | undefined) => !!p && (p.includes(":\\") || p.includes(":/") || p.includes("$env") || /^[a-zA-Z]:[\\/]/.test(p));
   const resolveIt = (target?: string) => {
@@ -1101,7 +1156,11 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
         }
         const full = `${resolvedBase}\\${safe}`;
         const safeFull = full.replace(/"/g, "");
-        return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path '${safeFull}' -Force | Select-Object -ExpandProperty FullName"`;
+        // $env: paths must be double-quoted so PowerShell expands them to the
+        // real user's folder — single quotes would be taken literally and the
+        // folder would never be created where verification later looks for it.
+        const folderPathArg = safeFull.includes("$env:") ? `"${safeFull}"` : `'${safeFull}'`;
+        return `powershell -NoProfile -Command "New-Item -ItemType Directory -Path ${folderPathArg} -Force | Select-Object -ExpandProperty FullName"`;
       }
       // No basePath – use user's home (not repo) for safety; $env:USERPROFILE resolves dynamically
       // (must use " so the variable expands inside the -Command payload)
@@ -1263,13 +1322,13 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
       const target = base || ".";
       const safe = target.replace(/"/g, "");
       // Use LiteralPath, handle both forward and back slashes
-      return `powershell -NoProfile -Command "Get-ChildItem -LiteralPath '${safe}' | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200"`;
+      return `powershell -NoProfile -Command "Get-ChildItem -LiteralPath ${quotePsPath(safe)} | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize | Out-String -Width 200"`;
     }
     case "count": {
       const base = resolveIt(action.target);
       const target = base || ".";
       const safe = target.replace(/"/g, "");
-      return `powershell -NoProfile -Command "(Get-ChildItem -LiteralPath '${safe}').Count"`;
+      return `powershell -NoProfile -Command "(Get-ChildItem -LiteralPath ${quotePsPath(safe)}).Count"`;
     }
     case "delete": {
       let targetPath: string | undefined;
@@ -1311,7 +1370,7 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
         }
       }
       const safe = (targetPath || action.target).replace(/"/g, "");
-      return `powershell -NoProfile -Command "Remove-Item -LiteralPath '${safe}' -Recurse -Force | Out-Null"`;
+      return `powershell -NoProfile -Command "Remove-Item -LiteralPath ${quotePsPath(safe)} -Recurse -Force | Out-Null"`;
     }
     case "goTo": {
       const raw = action.target;
@@ -1320,7 +1379,7 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
         const resolvedIt = resolveIt("it");
         if (resolvedIt) {
           const safeIt = resolvedIt.replace(/"/g, "");
-          return `powershell -NoProfile -Command "Get-Item -LiteralPath '${safeIt}' | Select-Object -ExpandProperty FullName"`;
+          return `powershell -NoProfile -Command "Get-Item -LiteralPath ${quotePsPath(safeIt)} | Select-Object -ExpandProperty FullName"`;
         }
       }
       const safe = raw.replace(/"/g, "");
@@ -1334,7 +1393,7 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
         const fb = resolveIt("it");
         if (fb) resolved = fb;
       }
-      return `powershell -NoProfile -Command "Get-Item -LiteralPath '${resolved}' | Select-Object -ExpandProperty FullName"`;
+      return `powershell -NoProfile -Command "Get-Item -LiteralPath ${quotePsPath(resolved)} | Select-Object -ExpandProperty FullName"`;
     }
     case "read": {
       let targetPath: string | undefined;
@@ -1366,7 +1425,7 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
         }
       }
       const safe = (targetPath || action.target).replace(/"/g, "");
-      return `powershell -NoProfile -Command "Get-Content -LiteralPath '${safe}' | Out-String"`;
+      return `powershell -NoProfile -Command "Get-Content -LiteralPath ${quotePsPath(safe)} | Out-String"`;
     }
     case "move": {
       let src = (action as any).source as string;
@@ -1382,7 +1441,7 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
       }
       const safeSrc = src.replace(/"/g, "");
       const safeDst = dst.replace(/"/g, "");
-      return `powershell -NoProfile -Command "Move-Item -LiteralPath '${safeSrc}' -Destination '${safeDst}' -Force"`;
+      return `powershell -NoProfile -Command "Move-Item -LiteralPath ${quotePsPath(safeSrc)} -Destination ${quotePsPath(safeDst)} -Force"`;
     }
     case "copy": {
       let src = (action as any).source as string;
@@ -1397,7 +1456,7 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
       }
       const safeSrc = src.replace(/"/g, "");
       const safeDst = dst.replace(/"/g, "");
-      return `powershell -NoProfile -Command "Copy-Item -LiteralPath '${safeSrc}' -Destination '${safeDst}' -Force"`;
+      return `powershell -NoProfile -Command "Copy-Item -LiteralPath ${quotePsPath(safeSrc)} -Destination ${quotePsPath(safeDst)} -Force"`;
     }
     case "run": {
       // For generic runCommand, trust the LLM's command but it will be validated by executor's allowlist and fallback
@@ -1408,12 +1467,28 @@ export function synthesizeCommand(action: PlannedAction, chatId: string, hasExpl
 
 function toFsPath(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
-  const home = getDefaultUserWorkspace();
+  // Only an absolute Windows home may expand $env:USERPROFILE or act as a
+  // base. The browser's process polyfill reports a fake "/" cwd which must
+  // never be treated as a filesystem root (it turned "$env:USERPROFILE\name"
+  // into the bogus UNC path "\\name" and failed honest verifications).
+  const homeRaw = getDefaultUserWorkspace();
+  const home = homeRaw && /^[a-zA-Z]:[\\/]/.test(homeRaw) ? homeRaw.replace(/[\\/]+$/, "") : "";
   let out = raw.replace(/^["']|["']$/g, "");
   if (!out) return undefined;
-  if (out.includes("$env:USERPROFILE")) out = out.replace(/\$env:USERPROFILE/g, home || "");
+  if (out.includes("$env:")) {
+    // No absolute client-side home: keep the PowerShell template intact. The
+    // connector expands it on the real user's machine, so the verification
+    // command resolves the exact same path the execution command created.
+    if (!home) return out.replace(/\//g, "\\");
+    out = out.replace(/\$env:USERPROFILE/g, home);
+  }
   out = out.replace(/\//g, "\\");
-  if (out.startsWith("\\\\")) return out; // UNC
+  // Never resolve to a UNC path. Slash normalization of non-UNC input (a
+  // browser "/" leftover such as "/\name") used to fabricate "\\name", which
+  // the connector rejected with the user-visible "UNC paths are not allowed"
+  // verification error. Genuine UNC targets are rejected by the connector at
+  // execution time, so they are never verifiable either.
+  if (out.startsWith("\\\\")) return undefined;
   if (/^[a-zA-Z]:\\/.test(out)) return out;
   if (out.startsWith(".\\")) out = out.slice(2);
   if (!home) return undefined; // cannot verify without a known absolute base
@@ -1459,7 +1534,7 @@ export function resolveActionTargetPath(action: PlannedAction, chatId: string, h
       const base = action.basePath;
       if (base) {
         const resolvedBase = isSpecialFolderName(base)
-          ? resolveSpecialFolderAbsolute(base)
+          ? resolveSpecialFolderForPowerShell(base)
           : base.replace(/["'`$]/g, "").replace(/[\\/]+$/, "");
         return toFsPath(`${resolvedBase}\\${safe}`);
       }
@@ -1473,7 +1548,7 @@ export function resolveActionTargetPath(action: PlannedAction, chatId: string, h
         return toFsPath(base ? `${base}/${name}` : `$env:USERPROFILE\\${name}`);
       }
       if (folderRef && isSpecialFolderName(folderRef)) {
-        return toFsPath(`${resolveSpecialFolderAbsolute(folderRef)}\\${name}`);
+        return toFsPath(`${resolveSpecialFolderForPowerShell(folderRef)}\\${name}`);
       }
       if (folderRef) {
         let base: string | undefined;
@@ -1496,7 +1571,7 @@ export function resolveActionTargetPath(action: PlannedAction, chatId: string, h
           const base = resolveIt("it");
           return toFsPath(base ? `${base}/${action.name}` : `$env:USERPROFILE\\${action.name}`);
         }
-        if (isSpecialFolderName(folderRef)) return toFsPath(`${resolveSpecialFolderAbsolute(folderRef)}\\${action.name}`);
+        if (isSpecialFolderName(folderRef)) return toFsPath(`${resolveSpecialFolderForPowerShell(folderRef)}\\${action.name}`);
         let base: string | undefined;
         try {
           const ctxs = getRecentExecutionContext(chatId);
@@ -1605,7 +1680,7 @@ export function resolveActionTargetPath(action: PlannedAction, chatId: string, h
         const r = resolveIt("it");
         if (r) return toFsPath(r);
       }
-      if (isSpecialFolderName(raw)) return toFsPath(resolveSpecialFolderAbsolute(raw));
+      if (isSpecialFolderName(raw)) return toFsPath(resolveSpecialFolderForPowerShell(raw));
       return toFsPath(raw);
     }
     default:

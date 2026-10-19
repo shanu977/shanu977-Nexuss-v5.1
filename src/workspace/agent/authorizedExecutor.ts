@@ -866,8 +866,16 @@ function psQuote(p: string): string {
   return `'${p.replace(/'/g, "''")}'`;
 }
 
+// PowerShell only expands $env: variables inside double quotes. Execution
+// commands already emit such templates, so verification must quote the same
+// way — otherwise exec and verify resolve different paths on disk.
+function psQuotePath(p: string): string {
+  if (p.includes("$env:")) return `"${p.replace(/"/g, "")}"`;
+  return psQuote(p);
+}
+
 function pathCheckCommand(path: string, mustExist: boolean, type?: "Container" | "Leaf"): string {
-  const cond = `Test-Path -LiteralPath ${psQuote(path)}${type ? ` -PathType ${type}` : ""}`;
+  const cond = `Test-Path -LiteralPath ${psQuotePath(path)}${type ? ` -PathType ${type}` : ""}`;
   const body = mustExist ? cond : `!(${cond})`;
   return `powershell -NoProfile -Command "if (${body}) { exit 0 } else { exit 1 }"`;
 }
@@ -876,7 +884,7 @@ function contentCheckCommand(path: string, expected: string): string {
   const b64 = typeof Buffer !== "undefined"
     ? Buffer.from(expected, "utf8").toString("base64")
     : btoa(unescape(encodeURIComponent(expected)));
-  return `powershell -NoProfile -Command "if ([Convert]::ToBase64String([IO.File]::ReadAllBytes(${psQuote(path)})) -ceq '${b64}') { exit 0 } else { exit 1 }"`;
+  return `powershell -NoProfile -Command "if ([Convert]::ToBase64String([IO.File]::ReadAllBytes(${psQuotePath(path)})) -ceq '${b64}') { exit 0 } else { exit 1 }"`;
 }
 
 function extractPathFromCommand(cmd: string): string | undefined {
@@ -975,6 +983,9 @@ function buildVerificationPlan(
 async function fsFallbackVerify(plan: VerificationPlan): Promise<{ ok: boolean; detail: string } | null> {
   const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
   if (!isTestEnv) return null;
+  // An unexpanded $env: template is not a path this process can stat. Verifying
+  // it locally would always fail and fabricate a false "Missing:" verdict.
+  if ((plan.kind === "path" || plan.kind === "content") && plan.path.includes("$env:")) return null;
   try {
     const fs = await import(/* webpackIgnore: true */ "fs/promises");
     if (plan.kind === "path") {
@@ -1003,7 +1014,7 @@ async function fsFallbackVerify(plan: VerificationPlan): Promise<{ ok: boolean; 
 let lastReadCommand = "";
 
 async function runVerification(plan: VerificationPlan | null, ctx: ReturnType<typeof getToolContext>, stdout: string): Promise<VerificationOutcome> {
-  if (!plan) return { ok: true, ran: false };
+  if (!plan) return { ok: true, ran: false, detail: "verification could not be completed: no resolvable target path" };
   if (plan.kind === "read") {
     const nameOf = (p?: string) => p?.split("/").pop()?.split("\\").pop();
     if (plan.intent && plan.actual && normalizePathForCompare(plan.intent) !== normalizePathForCompare(plan.actual)) {
@@ -1194,7 +1205,7 @@ async function executePending(
         } catch { verifiedPath = next.target; }
         // If we executed Get-Content, try to infer from command
         if (!verifiedPath || verifiedPath === "it") {
-          const m = cmd.match(/-LiteralPath '([^']+)'/);
+          const m = cmd.match(/-LiteralPath\s+'([^']+)'/) || cmd.match(/-LiteralPath\s+"([^"]+)"/);
           if (m) verifiedPath = m[1];
         }
       }
@@ -1205,28 +1216,50 @@ async function executePending(
       try {
         const planned = authorizedToPlanned(next) as any;
         const fileName = planned.name || next.target.split("/").pop() || next.target.split("\\").pop() || "index.js";
+        // Canonical base for a derived path: the client home when it is a real
+        // Windows path, else the connector's reported cwd (the permitted
+        // workspace root on the real machine), else the $env:USERPROFILE
+        // template the connector expands. Never "" — that produced "\name"
+        // paths which escaped the workspace when later commands used them.
+        const canonicalBase = (() => {
+          const clientHome = getDefaultUserWorkspace();
+          if (clientHome && /^[a-zA-Z]:[\\/]/.test(clientHome)) return clientHome.replace(/[\\/]+$/, "");
+          const connCwd = (toolRes.cwd || "").trim();
+          if (connCwd && /^[a-zA-Z]:[\\/]/.test(connCwd)) return connCwd.replace(/[\\/]+$/, "");
+          return "$env:USERPROFILE";
+        })();
         if (planned.folderRef === "it" || planned.folderRef) {
           const ctxs = getRecentExecutionContext(chatId);
           const folder = [...ctxs].reverse().find(c => c.object === "folder" && c.success && c.path);
           if (folder?.path) {
             verifiedPath = `${folder.path.replace(/\\/g, "/")}/${fileName}`.replace(/\//g, "\\");
           } else if (planned.folderRef && planned.folderRef !== "it" && !planned.folderRef.includes(":") && !planned.folderRef.includes("$")) {
-            verifiedPath = `${getDefaultUserWorkspace()}\\${planned.folderRef}\\${fileName}`;
+            verifiedPath = `${canonicalBase}\\${planned.folderRef}\\${fileName}`;
           } else {
-            verifiedPath = `${getDefaultUserWorkspace()}\\${fileName}`;
+            verifiedPath = `${canonicalBase}\\${fileName}`;
           }
         } else {
-          verifiedPath = `${getDefaultUserWorkspace()}\\${fileName}`;
+          verifiedPath = `${canonicalBase}\\${fileName}`;
         }
         const mCmd = cmd.match(/-LiteralPath\s+["']?([^"']+)["']?/);
         if (mCmd) {
           let p = mCmd[1].trim();
           if (p.includes("$env:USERPROFILE")) {
-            try { const home = (typeof process !== "undefined" && process.env.USERPROFILE) || ""; if (home) p = p.replace(/\$env:USERPROFILE/g, home).replace(/""/g, '"').replace(/^"|"$/g, ""); } catch { p = p.replace(/\$env:USERPROFILE/g, "").replace(/""/g, ""); }
+            // Expand with the client home when known; otherwise the connector
+            // cwd. Both are drive-absolute, so the stored path can never
+            // collapse to a bogus "\name".
+            const home = ((typeof process !== "undefined" && process.env.USERPROFILE) || "").trim()
+              || (/^[a-zA-Z]:[\\/]/.test(canonicalBase) ? canonicalBase : "");
+            try {
+              if (home) p = p.replace(/\$env:USERPROFILE/g, home).replace(/""/g, '"').replace(/^"|"$/g, "");
+            } catch { p = p.replace(/\$env:USERPROFILE/g, "").replace(/""/g, ""); }
           }
           p = p.replace(/\//g, "\\").replace(/""/g, '"').replace(/^"|"$/g, "").replace(/^'+|'+$/g, "");
-          if (p && /^[a-zA-Z]:/.test(p)) verifiedPath = p;
-          else if (p && p.includes("\\")) verifiedPath = p;
+          // Only a drive-absolute path or an unexpanded $env: template may
+          // enter the execution context. A single-backslash "\name" or a UNC
+          // path here was browser path-collapse garbage that later commands
+          // used to write outside the permitted workspace.
+          if (p && (/^[a-zA-Z]:\\/.test(p) || p.startsWith("$env:"))) verifiedPath = p;
         }
       } catch {}
     }
@@ -1259,7 +1292,9 @@ async function executePending(
     const structured: StructuredToolResult = {
       success: finalSuccess,
       executed: true,
-      verified: finalSuccess && (verification.ran ? true : toolRes.exitCode === 0),
+      // Only a check that actually ran may claim verified — exit code 0 alone
+      // does not prove the file or folder exists where it was requested.
+      verified: finalSuccess && verification.ran,
       executor: "local-connector",
       action: next.type,
       exitCode: toolRes.exitCode ?? null,
@@ -1283,6 +1318,7 @@ async function executePending(
       stderr: toolRes.stderr || "",
       exitCode: toolRes.exitCode ?? null,
       success: finalSuccess,
+      verified: structured.verified,
       // semantic hints for pronoun resolution - use verified type
       action: ((): any => {
         if (next.type === "create_folder") return "create";
@@ -1361,10 +1397,15 @@ async function executePending(
     }
     finalResponse = parts.join("\n\n") || `Completed ${executed} action(s).`;
     const verifiedCount = observations.filter(o => o.verified === true).length;
-    if (observations.length > 0) {
-      finalResponse += verifiedCount === observations.length
-        ? `\n\nTask succeeded: all ${observations.length} requested outcome(s) were verified against the real filesystem.`
-        : `\n\nTask completed: ${verifiedCount} of ${observations.length} requested outcome(s) verified against the real filesystem.`;
+    const total = observations.length;
+    if (total > 0) {
+      if (verifiedCount === total) {
+        finalResponse += `\n\nTask succeeded: all ${total} requested outcome(s) were verified against the real filesystem.`;
+      } else if (verifiedCount === 0) {
+        finalResponse += `\n\nAction(s) executed, but verification could not be completed — no outcome was confirmed against the real filesystem.`;
+      } else {
+        finalResponse += `\n\nTask completed: ${verifiedCount} of ${total} requested outcome(s) verified against the real filesystem.`;
+      }
     }
   } else {
     finalResponse = finalState.failureReason === "terminal_closed"
