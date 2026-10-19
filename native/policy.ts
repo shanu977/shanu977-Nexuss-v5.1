@@ -19,10 +19,13 @@ import { NativeError } from "./errors";
 import { readMakefileTargets, readPackageJson } from "./project";
 import { resolveInsideRoot } from "./boundary";
 
-const FORBIDDEN_META = /[&;<>`\r\n%^$]/;
-const FORBIDDEN_PIPE_CHAIN = /&&|\|\|/;
+// Exported for the connector policy-parity regression test
+// (local-connector/policyParity.test.ts), which pins the web connector's
+// inline copy (local-connector/server.js) to these desktop rules.
+export const FORBIDDEN_META = /[&;<>`\r\n%^$]/;
+export const FORBIDDEN_PIPE_CHAIN = /&&|\|\|/;
 
-const ALLOWED_BINS = new Set([
+export const ALLOWED_BINS = new Set([
   "npm",
   "pnpm",
   "yarn",
