@@ -24,7 +24,11 @@ const SAFE_POLICY_DENIALS: ReadonlySet<string> = new Set([
   "Shell chaining && and || is not allowed.",
   "Pipe | is only allowed for PowerShell terminal commands.",
   "Shell metacharacters are not allowed.",
-  "Command could not be parsed."
+  "Command could not be parsed.",
+  // Workspace-boundary denials (static, no local paths or connector internals).
+  "Working directory is outside the permitted workspace.",
+  "Path is outside the permitted workspace.",
+  "UNC paths are not allowed."
 ]);
 
 /** `"bin" is not an allowed command.` — `bin` is the caller's own bounded, quote-free token. */

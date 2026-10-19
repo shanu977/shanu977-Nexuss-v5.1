@@ -3,6 +3,12 @@
 // Binds only to 127.0.0.1, allows only Nexuss origins, proxies only to Ollama on localhost:11434
 // Usage: node local-connector/server.js  (or npx nexuss-connector)
 // Then Nexuss Web at https://www.nexuss.in will fetch http://localhost:11435/v1/models instead of http://localhost:11434
+//
+// DISTRIBUTION NOTE: this file is served as a standalone one-time-setup asset
+// (public/nexuss-connector.js, copied verbatim by scripts/sync-connector-asset.mjs).
+// It must stay fully self-contained — no local require() of sibling modules.
+// The command-policy constants below are pinned against native/policy.ts by
+// local-connector/policyParity.test.ts so the two runtimes cannot drift apart.
 
 const http = require('http');
 const https = require('https');
@@ -51,6 +57,243 @@ function setCorsHeaders(req, res) {
   res.setHeader('Access-Control-Allow-Private-Network', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
   res.setHeader('Vary', 'Origin, Access-Control-Request-Headers, Access-Control-Request-Private-Network');
+}
+
+// ============================================================================
+// Command policy (MUST stay in lockstep with native/policy.ts — the desktop
+// twin). Pinned by local-connector/policyParity.test.ts. The connector is
+// intentionally a looser superset for chat-driven terminal use: it also allows
+// git / echo / pwd / cat (connector-only bins, documented in the parity test).
+// ============================================================================
+const FORBIDDEN_META = /[&;<>`\r\n%^$]/;
+const FORBIDDEN_PIPE_CHAIN = /&&|\|\|/;
+// PowerShell scripts may use $ (variables) and | (pipelines); other bins may not.
+const FORBIDDEN_META_POWERSHELL = /[&;<>`\r\n%^]/;
+const ALLOWED_BINS = new Set([
+  'npm','pnpm','yarn','bun','node','python','python3','py','pytest','pip','pip3','uv','poetry',
+  'go','cargo','make','deno','git','dir','ls','echo','pwd','cat',
+  'Get-ChildItem','Get-PSDrive','powershell','pwsh'
+]);
+const ALLOWED_BINS_LOWER = new Set([...ALLOWED_BINS].map((s) => s.toLowerCase()));
+
+/** Quote-aware tokenizer used ONLY for allow-list validation. */
+function tokenizeCommand(cmd) {
+  const tokens = []; let cur = ''; let q = null;
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (q) { if (ch === q) q = null; else cur += ch; }
+    else if (ch === "'" || ch === '"') q = ch;
+    else if (ch === ' ' || ch === '\t') { if (cur) { tokens.push(cur); cur = ''; } }
+    else cur += ch;
+  }
+  if (q) return null;
+  if (cur) tokens.push(cur);
+  return tokens;
+}
+
+// ============================================================================
+// Workspace boundary (desktop twin: native/boundary.ts — same threat model,
+// different root source). The connector's permitted workspace is ONE trusted
+// root: NEXUSS_WORKSPACE_ROOT (explicit override; used by tests) or the user
+// home directory (the web product's default workspace). Every client-supplied
+// cwd and every absolute path appearing in a command must canonicalize to a
+// location inside that root. UNC shares, other drives, `..` escapes, and
+// symlink/junction escapes are rejected. Fail closed. Client-supplied cwd and
+// any authorization-looking fields are never trusted on their own.
+//
+// Intentional difference from native/boundary.ts: the web client sends absolute
+// cwd paths (home-based), so absolute paths are accepted HERE only when they
+// canonicalize inside the trusted root; native (Electron, dialog-picked root)
+// rejects absolute paths entirely.
+// ============================================================================
+
+/** Resolve the single trusted workspace root for this connector process. */
+function resolveWorkspaceRoot() {
+  const override = (process.env.NEXUSS_WORKSPACE_ROOT || '').trim();
+  const raw = override || os.homedir() || process.env.USERPROFILE || process.env.HOME || '';
+  if (!raw) return null;
+  const stripped = stripExtendedPrefix(raw);
+  if (isUNCPath(stripped) || stripped.startsWith('\\\\')) {
+    console.error('[Nexuss Connector] Workspace root must be a local drive path, not UNC.');
+    return null;
+  }
+  try {
+    const real = fs.realpathSync.native ? fs.realpathSync.native(stripped) : fs.realpathSync(stripped);
+    return path.normalize(real);
+  } catch {
+    try { return path.normalize(path.resolve(stripped)); } catch { return null; }
+  }
+}
+
+function stripExtendedPrefix(p) {
+  if (typeof p !== 'string') return '';
+  if (p.startsWith('\\\\?\\UNC\\')) return '\\\\' + p.slice(8);
+  if (p.startsWith('\\\\?\\')) return p.slice(4);
+  return p;
+}
+
+function isUNCPath(p) {
+  const s = stripExtendedPrefix(String(p || ''));
+  return /^\\\\[^\\]+\\/.test(s) || /^\/\/[^/]+\//.test(s);
+}
+
+function isAbsolutePath(p) {
+  const s = stripExtendedPrefix(String(p || ''));
+  if (/^[a-zA-Z]:[\\/]/.test(s)) return true;
+  if (isUNCPath(s)) return true;
+  return s.startsWith('\\\\') || s.startsWith('//');
+}
+
+function canonicalizeExisting(p) {
+  try {
+    return fs.realpathSync.native ? fs.realpathSync.native(p) : fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/** realpath the deepest existing ancestor; re-append missing tail (write targets). */
+function realpathAllowingMissing(p) {
+  let existing = path.resolve(p);
+  const missing = [];
+  for (;;) {
+    const real = canonicalizeExisting(existing);
+    if (real) return missing.length ? path.join(real, ...missing.reverse()) : real;
+    const parent = path.dirname(existing);
+    if (parent === existing) return null;
+    missing.push(path.basename(existing));
+    existing = parent;
+  }
+}
+
+function trimTrailingSep(p) {
+  const n = path.normalize(p);
+  if (/^[a-zA-Z]:\\$/.test(n)) return n;
+  const t = n.replace(/[\\/]+$/, '');
+  return t || n;
+}
+
+/** True when candidate is root itself or lives under it (case-insensitive on win32). */
+function isInsideRoot(root, candidate) {
+  const r = trimTrailingSep(root).toLowerCase();
+  const c = trimTrailingSep(candidate).toLowerCase();
+  return c === r || c.startsWith(r + path.sep);
+}
+
+/**
+ * Validate a client-supplied cwd. Never trusts the client: absolute paths must
+ * canonicalize inside the trusted root; relative paths resolve against the root
+ * and may not contain `..`. Symlink/junction escapes are detected via realpath.
+ * Returns { ok: true, cwd } or { ok: false, error } with a static safe message.
+ */
+function validateConnectorCwd(root, rawCwd) {
+  const raw = (rawCwd == null ? '' : String(rawCwd)).trim();
+  if (!raw) return { ok: true, cwd: root };
+  if (isUNCPath(raw) || raw.startsWith('\\\\') || raw.startsWith('//')) {
+    return { ok: false, error: 'UNC paths are not allowed.' };
+  }
+  if (isAbsolutePath(raw)) {
+    const norm = path.normalize(stripExtendedPrefix(raw));
+    if (!isInsideRoot(root, norm)) {
+      return { ok: false, error: 'Working directory is outside the permitted workspace.' };
+    }
+    const realFull = canonicalizeExisting(norm);
+    if (realFull && !isInsideRoot(root, realFull)) {
+      return { ok: false, error: 'Working directory is outside the permitted workspace.' };
+    }
+    return { ok: true, cwd: realFull || norm };
+  }
+  const segments = raw.split(/[\\/]+/).filter((s) => s.length > 0);
+  if (segments.some((seg) => seg === '..')) {
+    return { ok: false, error: 'Working directory is outside the permitted workspace.' };
+  }
+  const joined = path.resolve(root, ...segments);
+  if (!isInsideRoot(root, joined)) {
+    return { ok: false, error: 'Working directory is outside the permitted workspace.' };
+  }
+  const realFull = canonicalizeExisting(joined);
+  if (realFull && !isInsideRoot(root, realFull)) {
+    return { ok: false, error: 'Working directory is outside the permitted workspace.' };
+  }
+  return { ok: true, cwd: realFull || joined };
+}
+
+/**
+ * Extract absolute Windows path candidates from a raw command string so each
+ * can be boundary-checked. Catches quoted and unquoted drive paths and UNC
+ * shares while ignoring $env: templates and things like http:// (letter
+ * preceded by a word char) or HKLM:\ registry paths.
+ */
+function extractPathCandidates(command) {
+  const out = new Set();
+  const quoted = /'([^']*)'|"([^"]*)"/g;
+  let m;
+  while ((m = quoted.exec(command))) {
+    const s = m[1] !== undefined ? m[1] : m[2];
+    if (typeof s === 'string' && (/^[a-zA-Z]:[\\/]/.test(s) || isUNCPath(s) || s.startsWith('\\\\'))) {
+      out.add(s);
+    }
+  }
+  const drive = /(?<![\w$])([a-zA-Z]:[\\/][^\s'"`]*)/g;
+  while ((m = drive.exec(command))) out.add(m[1]);
+  const unc = /(?<![\w])(\\\\[^\s'"`]+)/g;
+  while ((m = unc.exec(command))) out.add(m[1]);
+  return [...out];
+}
+
+/**
+ * Scan a command for absolute paths that escape the workspace root (or UNC
+ * shares). Returns a static safe error string, or null when clean. Write
+ * targets that do not exist yet are still containment-checked via the deepest
+ * existing ancestor, so `Set-Content` to D:\... is rejected before spawn.
+ */
+function findCommandPathViolation(root, command) {
+  for (const cand of extractPathCandidates(command)) {
+    if (isUNCPath(cand) || cand.startsWith('\\\\') || cand.startsWith('//')) {
+      return 'UNC paths are not allowed.';
+    }
+    const norm = path.normalize(stripExtendedPrefix(cand));
+    const resolved = path.resolve(norm);
+    if (!isInsideRoot(root, resolved)) {
+      return 'Path is outside the permitted workspace.';
+    }
+    const real = realpathAllowingMissing(resolved);
+    if (real && !isInsideRoot(root, real)) {
+      return 'Path is outside the permitted workspace.';
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a user-supplied simple-command path argument (cat/dir/ls) against
+ * cwd and revalidate against the root immediately before the filesystem op
+ * (TOCTOU mitigation). Returns { ok, abs, error }.
+ */
+function resolveSimpleArgPath(root, cwd, arg) {
+  if (isUNCPath(arg) || arg.startsWith('\\\\') || arg.startsWith('//')) {
+    return { ok: false, error: 'UNC paths are not allowed.' };
+  }
+  let abs;
+  if (isAbsolutePath(arg)) {
+    abs = path.normalize(stripExtendedPrefix(arg));
+  } else {
+    const segments = arg.split(/[\\/]+/).filter((s) => s.length > 0);
+    if (segments.some((s) => s === '..')) {
+      return { ok: false, error: 'Path is outside the permitted workspace.' };
+    }
+    abs = path.resolve(cwd, ...segments);
+  }
+  if (!isInsideRoot(root, abs)) {
+    return { ok: false, error: 'Path is outside the permitted workspace.' };
+  }
+  // Revalidate the canonical path right before use (symlink/junction escapes).
+  const real = realpathAllowingMissing(abs);
+  if (!real) return { ok: false, error: 'File not found.' };
+  if (!isInsideRoot(root, real)) {
+    return { ok: false, error: 'Path is outside the permitted workspace.' };
+  }
+  return { ok: true, abs: real };
 }
 
 // Conservative Ollama install detection: filesystem + PATH lookup only (no
@@ -159,6 +402,9 @@ function proxyToOllama(req, res, targetPath, method, bodyBuffer) {
     proxyReq.end();
   }
 }
+
+// Trusted workspace root for this process (resolved once at startup).
+const WORKSPACE_ROOT = resolveWorkspaceRoot();
 
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url);
@@ -277,7 +523,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Terminal endpoint: POST /v1/terminal/run -> real Windows process via native policy
+  // Terminal endpoint: POST /v1/terminal/run -> real Windows process, gated by
+  // the command policy AND the workspace boundary.
   if (pathname === '/v1/terminal/run') {
     if (req.method !== 'POST') {
       res.writeHead(405, { 'Content-Type': 'application/json' });
@@ -295,79 +542,150 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       (async () => {
         try {
+          const respondEarly = (status, payload) => {
+            if (res.headersSent || res.writableEnded || res.destroyed) return;
+            res.writeHead(status, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(payload));
+          };
+          if (!WORKSPACE_ROOT) {
+            respondEarly(500, { error: 'Workspace is not available on this machine.' });
+            return;
+          }
           const data = JSON.parse(body || '{}');
           const command = (data.command || '').trim();
           if (!command) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'command is required' }));
+            respondEarly(400, { error: 'command is required' });
             return;
           }
           // Reuse native policy: allow | for PowerShell pipelines, block && and ||
-          const FORBIDDEN_META = /[&;<>`\r\n%^$]/;
-          const FORBIDDEN_PIPE_CHAIN = /&&|\|\|/;
           if (FORBIDDEN_PIPE_CHAIN.test(command)) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Shell chaining && and || is not allowed.' }));
+            respondEarly(400, { error: 'Shell chaining && and || is not allowed.' });
             return;
           }
-          const isPowerShell = command.toLowerCase().includes("get-childitem") || command.toLowerCase().includes("get-psdrive") || command.toLowerCase().startsWith("powershell") || command.toLowerCase().startsWith("pwsh");
+          const isPowerShell = command.toLowerCase().includes('get-childitem') || command.toLowerCase().includes('get-psdrive') || command.toLowerCase().startsWith('powershell') || command.toLowerCase().startsWith('pwsh');
           if (!isPowerShell && /[|]/.test(command)) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Pipe | is only allowed for PowerShell terminal commands.' }));
+            respondEarly(400, { error: 'Pipe | is only allowed for PowerShell terminal commands.' });
             return;
           }
           if (!isPowerShell && FORBIDDEN_META.test(command)) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Shell metacharacters are not allowed.' }));
+            respondEarly(400, { error: 'Shell metacharacters are not allowed.' });
             return;
           }
-          if (isPowerShell && /[&;<>`\r\n%^]/.test(command)) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Shell metacharacters are not allowed.' }));
+          if (isPowerShell && FORBIDDEN_META_POWERSHELL.test(command)) {
+            respondEarly(400, { error: 'Shell metacharacters are not allowed.' });
             return;
           }
-          const ALLOWED_BINS = new Set(['npm','pnpm','yarn','bun','node','python','python3','py','pytest','pip','pip3','uv','poetry','go','cargo','make','deno','git','dir','ls','echo','pwd','Get-ChildItem','powershell','pwsh','cat','ls']);
-          const tokenize = (cmd) => {
-            const tokens=[]; let cur=""; let q=null;
-            for(let i=0;i<cmd.length;i++){ const ch=cmd[i]; if(q){ if(ch===q) q=null; else cur+=ch; } else if(ch==="'"||ch==='"'){ q=ch; } else if(ch===" "||ch==="\t"){ if(cur){ tokens.push(cur); cur=""; } } else cur+=ch; }
-            if(q) return null; if(cur) tokens.push(cur); return tokens;
-          };
-          // NOTE: tokenization is used ONLY for allow-list validation.
-          // Execution must preserve the original quoting, otherwise PowerShell
-          // receives unquoted paths and fails on names containing spaces.
-          const tokens = tokenize(command.trim());
-          if (!tokens || tokens.length===0) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Command could not be parsed.' }));
+          const tokens = tokenizeCommand(command.trim());
+          if (!tokens || tokens.length === 0) {
+            respondEarly(400, { error: 'Command could not be parsed.' });
             return;
           }
           const bin = tokens[0].toLowerCase();
-          // Allow dir/ls/echo/pwd/cat as simple terminal commands
-          const simpleBins = new Set(['dir','ls','echo','pwd','cat','Get-ChildItem']);
-          if (!ALLOWED_BINS.has(bin) && !simpleBins.has(tokens[0])) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: `"${bin}" is not an allowed command.` }));
+          if (!ALLOWED_BINS_LOWER.has(bin)) {
+            respondEarly(400, { error: `"${bin}" is not an allowed command.` });
             return;
           }
-          // Execute via child_process.spawn with same security as native/exec
+          // Workspace boundary: no absolute path inside the command may escape
+          // the trusted root (or be a UNC share). Checked BEFORE any spawn.
+          const pathViolation = findCommandPathViolation(WORKSPACE_ROOT, command);
+          if (pathViolation) {
+            respondEarly(400, { error: pathViolation });
+            return;
+          }
+          // Workspace boundary: client cwd is untrusted — must resolve inside
+          // the root (absolute-inside-root, or relative without `..`).
+          const cwdCheck = validateConnectorCwd(WORKSPACE_ROOT, data.cwd);
+          if (!cwdCheck.ok) {
+            respondEarly(400, { error: cwdCheck.error });
+            return;
+          }
+          const cwd = cwdCheck.cwd;
           const { spawn } = require('child_process');
           const start = Date.now();
-          let argv, spawnOpts;
-          // Respect client cwd when provided and absolute; otherwise use user's home (not repo) for relative safety
-          const rawCwd = (data.cwd || '').toString().trim();
-          let cwd;
-          if (rawCwd && /^[a-zA-Z]:[\\/]/.test(rawCwd)) {
-            cwd = rawCwd;
-          } else {
-            try { cwd = require('os').homedir() || process.env.USERPROFILE || process.env.HOME || process.cwd(); } catch { cwd = process.env.USERPROFILE || process.env.HOME || process.cwd(); }
-            // Never default to repo if homedir available; ensure we don't use Next.js repo dir
-            if (!cwd || cwd === process.cwd()) {
-              const home = process.env.USERPROFILE || process.env.HOME || require('os').homedir();
-              if (home && home !== process.cwd()) cwd = home;
+          let responded = false;
+          const respond = (payload) => {
+            if (responded || res.writableEnded || res.destroyed) return;
+            responded = true;
+            try {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(payload));
+            } catch {}
+          };
+          const basePayload = { command, cwd };
+
+          // ---- Node-side simple commands (NEVER routed through cmd.exe) ----
+          // cat/dir/ls/echo/pwd are implemented in-process with per-path
+          // boundary revalidation immediately before each filesystem op.
+          if (bin === 'cat' || bin === 'dir' || bin === 'ls' || bin === 'echo' || bin === 'pwd') {
+            const MAX = 512 * 1024;
+            const clip = (s) => (Buffer.byteLength(s, 'utf8') <= MAX ? s : s.slice(0, MAX));
+            const finishSimple = (ok, stdout, stderr, exitCode) => {
+              respond({
+                ...basePayload, success: ok, stdout: clip(stdout || ''), stderr: clip(stderr || ''),
+                exitCode, signal: null, durationMs: Date.now() - start, timedOut: false, killed: false,
+                outputTruncated: false, redacted: false
+              });
+            };
+            if (bin === 'echo') {
+              finishSimple(true, tokens.slice(1).join(' ') + '\r\n', '', 0);
+              return;
             }
+            if (bin === 'pwd') {
+              finishSimple(true, cwd + '\r\n', '', 0);
+              return;
+            }
+            // Flags like /b or -Force are ignored for these built-ins; at most one path.
+            const pathArgs = tokens.slice(1).filter((t) => !/^[-/][A-Za-z0-9]+$/.test(t));
+            if (bin === 'cat') {
+              if (pathArgs.length !== 1) {
+                finishSimple(false, '', 'cat accepts a single file path.', 1);
+                return;
+              }
+              const resolved = resolveSimpleArgPath(WORKSPACE_ROOT, cwd, pathArgs[0]);
+              if (!resolved.ok) {
+                respondEarly(400, { error: resolved.error });
+                return;
+              }
+              // Revalidate immediately before reading (TOCTOU mitigation).
+              let stat = null;
+              try { stat = fs.statSync(resolved.abs); } catch { stat = null; }
+              if (!stat || !stat.isFile()) {
+                finishSimple(false, '', 'File not found.', 1);
+                return;
+              }
+              let content = '';
+              try { content = fs.readFileSync(resolved.abs, 'utf8'); } catch (e) {
+                finishSimple(false, '', `Could not read file: ${e.message || 'unknown error'}`, 1);
+                return;
+              }
+              finishSimple(true, content, '', 0);
+              return;
+            }
+            // dir / ls — list a directory (default: cwd).
+            const targetArg = pathArgs.length === 0 ? null : (pathArgs.length === 1 ? pathArgs[0] : null);
+            if (pathArgs.length > 1) {
+              finishSimple(false, '', 'dir accepts a single path.', 1);
+              return;
+            }
+            let dirAbs = cwd;
+            if (targetArg) {
+              const resolved = resolveSimpleArgPath(WORKSPACE_ROOT, cwd, targetArg);
+              if (!resolved.ok) {
+                respondEarly(400, { error: resolved.error });
+                return;
+              }
+              dirAbs = resolved.abs;
+            }
+            let entries = null;
+            try { entries = fs.readdirSync(dirAbs); } catch {
+              finishSimple(false, '', 'Directory not found.', 1);
+              return;
+            }
+            finishSimple(true, entries.join('\r\n') + (entries.length ? '\r\n' : ''), '', 0);
+            return;
           }
-          const env = { ...process.env };
-          // For simple Windows builtins, wrap via cmd.exe
+
+          // ---- Spawn path for everything else (shell:false, never cmd.exe) ----
           let spawnCmd, spawnArgs;
           const isPsBin = /^(powershell|pwsh)(\.exe)?$/i.test(tokens[0]) || /^(get-childitem|get-psdrive)$/i.test(tokens[0]);
           if (isPsBin) {
@@ -375,10 +693,13 @@ const server = http.createServer((req, res) => {
             // inside the script (quoted paths, $env: expansion) is interpreted by
             // PowerShell exactly as authored. Re-tokenizing stripped those quotes and
             // broke every path containing a space.
+            // NOTE: internal/app templates intentionally target Windows PowerShell 5.1
+            // (`powershell`); `Set-Content -Encoding Byte` is 5.1-only. pwsh (7+) remains
+            // allowed for user-authored commands but is not the template default.
             const lowerCmd = command.toLowerCase();
             const cmdIdx = lowerCmd.indexOf('-command');
             const headRaw = (cmdIdx >= 0 ? command.slice(0, cmdIdx) : tokens[0]).trim();
-            const headWords = tokenize(headRaw) || [tokens[0]];
+            const headWords = tokenizeCommand(headRaw) || [tokens[0]];
             const flags = headWords.slice(1).filter((w) => w.startsWith('-'));
             const isShell = /^(powershell|pwsh)(\.exe)?$/i.test(tokens[0]);
             let script = null;
@@ -392,24 +713,12 @@ const server = http.createServer((req, res) => {
               spawnCmd = isShell ? tokens[0] : 'powershell';
               spawnArgs = [...(flags.length ? flags : ['-NoProfile']), '-Command', script];
             }
-          } else if (simpleBins.has(tokens[0]) || simpleBins.has(bin)) {
-            const cmd = tokens[0].toLowerCase();
-            if (cmd === 'dir' || cmd === 'ls' || cmd === 'get-childitem') {
-              spawnCmd = process.env.ComSpec || 'cmd.exe';
-              spawnArgs = ['/d', '/s', '/c', command];
-            } else if (cmd === 'echo' || cmd === 'pwd' || cmd === 'cat') {
-              spawnCmd = process.env.ComSpec || 'cmd.exe';
-              spawnArgs = ['/d', '/s', '/c', command];
-            } else {
-              spawnCmd = tokens[0];
-              spawnArgs = tokens.slice(1);
-            }
           } else {
             spawnCmd = tokens[0];
             spawnArgs = tokens.slice(1);
           }
-          // Special handling for npm --version, node --version, git status etc - allow as-is
           // Spawn with shell:false, windowsHide:true, detached false on win32
+          const env = { ...process.env };
           const child = spawn(spawnCmd, spawnArgs, { cwd, env, windowsHide: true, shell: false, detached: process.platform !== 'win32' });
           let stdout = '', stderr = '', stdoutBytes=0, stderrBytes=0;
           const MAX = 512*1024;
@@ -430,15 +739,6 @@ const server = http.createServer((req, res) => {
           // Guard against double responses: 'error' and 'close' can BOTH fire
           // (e.g. spawn ENOENT from a missing cwd). Writing headers twice used
           // to throw ERR_HTTP_HEADERS_SENT and kill the whole connector.
-          let responded = false;
-          const respond = (payload) => {
-            if (responded || res.writableEnded || res.destroyed) return;
-            responded = true;
-            try {
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify(payload));
-            } catch {}
-          };
           child.on('close', (code, signal) => {
             clearTimeout(timer);
             // Basic redaction of secrets (same as native/redact)
@@ -492,34 +792,62 @@ const server = http.createServer((req, res) => {
   proxyToOllama(req, res, targetPath, req.method, null);
 });
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    // Another connector already owns the port. If it answers /health, that is a
-    // healthy instance and starting a duplicate is not an error - exiting 1 here
-    // used to make launchers think the connector "died" when it was actually fine.
-    const probe = http.get(`http://127.0.0.1:${CONNECTOR_PORT}/health`, (pr) => {
-      pr.resume();
-      if (pr.statusCode === 200) {
-        console.log(`[Nexuss Connector] Port ${CONNECTOR_PORT} already served by a healthy connector. Nothing to start.`);
-        process.exit(0);
-      }
-      console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} is in use by another process that does not answer /health.`);
-      process.exit(1);
-    });
-    probe.on('error', () => {
-      console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} already in use but not responding to /health. Stop the other process first.`);
-      process.exit(1);
-    });
-    probe.setTimeout(2000, () => { probe.destroy(); });
-    return;
-  }
-  console.error(`[Nexuss Connector] Server error:`, err);
-  process.exit(1);
-});
+function startServer() {
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      // Another connector already owns the port. If it answers /health, that is a
+      // healthy instance and starting a duplicate is not an error - exiting 1 here
+      // used to make launchers think the connector "died" when it was actually fine.
+      const probe = http.get(`http://127.0.0.1:${CONNECTOR_PORT}/health`, (pr) => {
+        pr.resume();
+        if (pr.statusCode === 200) {
+          console.log(`[Nexuss Connector] Port ${CONNECTOR_PORT} already served by a healthy connector. Nothing to start.`);
+          process.exit(0);
+        }
+        console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} is in use by another process that does not answer /health.`);
+        process.exit(1);
+      });
+      probe.on('error', () => {
+        console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} already in use but not responding to /health. Stop the other process first.`);
+        process.exit(1);
+      });
+      probe.setTimeout(2000, () => { probe.destroy(); });
+      return;
+    }
+    console.error(`[Nexuss Connector] Server error:`, err);
+    process.exit(1);
+  });
 
-server.listen(CONNECTOR_PORT, '127.0.0.1', () => {
-  console.log(`[Nexuss Connector] Running on http://127.0.0.1:${CONNECTOR_PORT}`);
-  console.log(`[Nexuss Connector] Forwarding to Ollama at http://${OLLAMA_HOST}:${OLLAMA_PORT}`);
-  console.log(`[Nexuss Connector] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
-  console.log(`[Nexuss Connector] For production https://www.nexuss.in to access your local Ollama, keep this running.`);
-});
+  server.listen(CONNECTOR_PORT, '127.0.0.1', () => {
+    console.log(`[Nexuss Connector] Running on http://127.0.0.1:${CONNECTOR_PORT}`);
+    console.log(`[Nexuss Connector] Forwarding to Ollama at http://${OLLAMA_HOST}:${OLLAMA_PORT}`);
+    console.log(`[Nexuss Connector] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+    console.log(`[Nexuss Connector] Workspace root: ${WORKSPACE_ROOT || '(unavailable)'}`);
+    console.log(`[Nexuss Connector] For production https://www.nexuss.in to access your local Ollama, keep this running.`);
+  });
+}
+
+// Start only when executed directly (node server.js / the downloaded asset).
+// When required by tests, export the policy + boundary helpers instead.
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  FORBIDDEN_META,
+  FORBIDDEN_PIPE_CHAIN,
+  FORBIDDEN_META_POWERSHELL,
+  ALLOWED_BINS,
+  tokenizeCommand,
+  isAllowedOrigin,
+  WORKSPACE_ROOT,
+  resolveWorkspaceRoot,
+  validateConnectorCwd,
+  findCommandPathViolation,
+  extractPathCandidates,
+  isInsideRoot,
+  isUNCPath,
+  isAbsolutePath,
+  realpathAllowingMissing,
+  resolveSimpleArgPath,
+};
