@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useWorkspaceStore } from "@/workspace/store";
 import { useTerminalConnectionStore } from "@/workspace/terminalConnection";
+import { markTerminalSetupVerified } from "@/workspace/terminalSetup";
 import TerminalConnectionScreen from "@/components/TerminalConnectionScreen";
 import {
   ArrowRightLeftIcon,
@@ -66,6 +67,12 @@ export default function WorkspacePanel() {
     void checkConnection();
   }, [checkConnection]);
 
+  // A verified connection means the one-time setup (if any) is done: later
+  // failures show the simple recovery screen instead of the setup offer.
+  useEffect(() => {
+    if (terminalStatus === "connected") markTerminalSetupVerified();
+  }, [terminalStatus]);
+
   const handleSearch = (value: string) => {
     setQuery(value);
     search(value);
@@ -107,13 +114,17 @@ export default function WorkspacePanel() {
                   ? "Terminal connected"
                   : terminalStatus === "connecting"
                     ? "Connecting to terminal"
-                    : terminalStatus === "permission_required"
-                      ? "Local network permission required"
-                      : terminalStatus === "unavailable"
-                        ? "Local connector not running"
-                        : terminalStatus === "error"
-                          ? "Terminal connection failed"
-                          : "Terminal disconnected"
+                    : terminalStatus === "recovering"
+                      ? "Recovering terminal connection"
+                      : terminalStatus === "setting_up"
+                        ? "Setting up terminal"
+                        : terminalStatus === "permission_required"
+                          ? "Local network permission required"
+                          : terminalStatus === "unavailable"
+                            ? "Local connector not running"
+                            : terminalStatus === "error"
+                              ? "Terminal connection failed"
+                              : "Terminal disconnected"
               }
               className="flex shrink-0 items-center gap-1.5 pr-1"
             >
@@ -121,7 +132,9 @@ export default function WorkspacePanel() {
                 className={`h-2 w-2 rounded-full ${
                   terminalStatus === "connected"
                     ? "bg-emerald-500"
-                    : terminalStatus === "connecting"
+                    : terminalStatus === "connecting" ||
+                        terminalStatus === "recovering" ||
+                        terminalStatus === "setting_up"
                       ? "animate-pulse bg-primary"
                       : terminalStatus === "permission_required"
                         ? "bg-amber-500"
@@ -133,6 +146,16 @@ export default function WorkspacePanel() {
               {terminalStatus === "connecting" && (
                 <span className="text-[10px] font-mono font-normal text-muted-foreground">
                   Connecting…
+                </span>
+              )}
+              {terminalStatus === "recovering" && (
+                <span className="text-[10px] font-mono font-normal text-muted-foreground">
+                  Recovering…
+                </span>
+              )}
+              {terminalStatus === "setting_up" && (
+                <span className="text-[10px] font-mono font-normal text-muted-foreground">
+                  Setting up…
                 </span>
               )}
             </span>

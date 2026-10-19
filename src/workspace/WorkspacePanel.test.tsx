@@ -6,6 +6,16 @@ import {
   useTerminalConnectionStore,
   resetTerminalConnection
 } from "@/workspace/terminalConnection";
+import { isWindowsPlatform, hasTerminalSetupVerified } from "@/workspace/terminalSetup";
+import { configureTerminalRecovery } from "@/workspace/terminalRecovery";
+import { clearConnectorLauncherMemory } from "@/workspace/connectorProtocol";
+
+// Deterministic platform: the setup/recovery branches key off Windows, and
+// jsdom's UA varies with the host OS.
+vi.mock("@/workspace/terminalSetup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/workspace/terminalSetup")>();
+  return { ...actual, isWindowsPlatform: vi.fn(actual.isWindowsPlatform) };
+});
 
 /** Health response the local connector answers with when it is running. */
 function healthOk() {
@@ -28,6 +38,9 @@ function stubHealth(reachable: boolean) {
 
 beforeEach(async () => {
   resetTerminalConnection();
+  clearConnectorLauncherMemory();
+  vi.mocked(isWindowsPlatform).mockReturnValue(true);
+  window.localStorage.removeItem("nexuss.terminal.setupVerified");
   await useWorkspaceStore.getState().disconnect();
   useWorkspaceStore.getState().closePanel();
 });
@@ -80,18 +93,23 @@ describe("WorkspacePanel connection screen", () => {
     expect(screen.queryByRole("button", { name: /Connect Terminal/ })).not.toBeInTheDocument();
   });
 
-  it("shows the error screen with a Try Again action, without technical details", async () => {
+  it("offers the one-time setup card on failure without any technical details", async () => {
     useTerminalConnectionStore.setState({
       status: "error",
       failureReason: "invalid-response",
       lastError: "unexpected health response"
     });
     render(<WorkspacePanel />);
-    // The passive check re-attempts once and settles back to the error screen.
-    expect(await screen.findByText("Terminal connection failed", {}, { timeout: 5000 })).toBeInTheDocument();
-    expect(screen.getByText("node local-connector/server.js")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Try Again/ })).toBeInTheDocument();
-    expect(screen.queryByText(/127\.0\.0\.1|ECONNREFUSED|Failed to fetch/)).not.toBeInTheDocument();
+    // Passive check re-attempts and settles back to the failure screen.
+    // (Heading + button share the label, so use findAllByText.)
+    expect(
+      (await screen.findAllByText("Set up terminal access", {}, { timeout: 5000 })).length
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Set up terminal access/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry/ })).toBeInTheDocument();
+    expect(
+      screen.queryByText(/node local-connector|server\.js|127\.0\.0\.1|localhost|ECONNREFUSED|Failed to fetch/)
+    ).not.toBeInTheDocument();
   });
 
   it("connects the terminal after clicking Connect Terminal", async () => {
@@ -110,17 +128,117 @@ describe("WorkspacePanel connection screen", () => {
     expect(useTerminalConnectionStore.getState().status).toBe("connected");
   });
 
-  it("shows the connector-unavailable screen with the startup command when unreachable", async () => {
+  it("shows the first-time setup offer when the connector is unreachable", async () => {
     stubHealth(false);
     render(<WorkspacePanel />);
     const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
     fireEvent.click(connectBtn);
 
-    expect(await screen.findByText("Local connector not running", {}, { timeout: 5000 })).toBeInTheDocument();
-    expect(screen.getByText("node local-connector/server.js")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Try Again/ })).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("Set up terminal access", {}, { timeout: 5000 })).length
+    ).toBeGreaterThan(0);
+    expect(hasTerminalSetupVerified()).toBe(false);
     expect(useTerminalConnectionStore.getState().status).toBe("unavailable");
-    expect(screen.queryByText(/127\.0\.0\.1|ECONNREFUSED|Failed to fetch/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/node local-connector|server\.js|127\.0\.0\.1|localhost|port/)
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the simple recovery screen after a previously working setup", async () => {
+    // A verified install triggers one bounded auto-recovery session before the
+    // failure screen — keep it fast and deterministic for the test.
+    const prevCfg = configureTerminalRecovery({ baseDelayMs: 5, maxDelayMs: 10, maxAttempts: 1, jitterRatio: 0 });
+    try {
+      window.localStorage.setItem("nexuss.terminal.setupVerified", "1");
+      stubHealth(false);
+      render(<WorkspacePanel />);
+      const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+      fireEvent.click(connectBtn);
+
+      expect(await screen.findByText("Terminal connection lost", {}, { timeout: 5000 })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Retry/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Set up again/ })).toBeInTheDocument();
+    } finally {
+      configureTerminalRecovery(prevCfg);
+    }
+  });
+
+  it("shows the recovering screen with progress and Cancel during a repair", async () => {
+    useTerminalConnectionStore.setState({
+      status: "recovering",
+      recoveryStep: "restarting",
+      recoveryAttempt: 0
+    });
+    render(<WorkspacePanel />);
+    expect(screen.getByText("Recovering connection…")).toBeInTheDocument();
+    expect(screen.getByText("Restarting the terminal service…")).toBeInTheDocument();
+    expect(screen.getByLabelText("Recovering terminal connection")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cancel/ })).toBeInTheDocument();
+    expect(screen.queryByText("Terminal Connected")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+    expect(useTerminalConnectionStore.getState().status).toBe("unavailable");
+  });
+
+  it("shows the setup progress screen while the one-time setup is in progress", async () => {
+    useTerminalConnectionStore.setState({ status: "setting_up" });
+    render(<WorkspacePanel />);
+    expect(screen.getByText("Setting up terminal access")).toBeInTheDocument();
+    expect(screen.getByLabelText("Setting up terminal")).toBeInTheDocument();
+    expect(screen.getByText(/Nexuss-Terminal-Setup\.cmd/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Download setup file again/ })).toBeInTheDocument();
+    expect(screen.queryByText(/127\.0\.0\.1|ECONNREFUSED|localhost/)).not.toBeInTheDocument();
+  });
+
+  it("downloads the guided setup file when Set up terminal access is clicked", async () => {
+    stubHealth(false);
+    const createObjectURL = vi.fn(() => "blob:setup");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    let captured: { download: string; href: string } | null = null;
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        captured = { download: this.download, href: this.href };
+      });
+
+    render(<WorkspacePanel />);
+    const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+    fireEvent.click(connectBtn);
+    fireEvent.click(await screen.findByRole("button", { name: /Set up terminal access/ }, { timeout: 5000 }));
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(captured).not.toBeNull();
+    expect(captured!.download).toBe("Nexuss-Terminal-Setup.cmd");
+    expect(captured!.href).toBe("blob:setup");
+    clickSpy.mockRestore();
+    delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+    delete (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
+  });
+
+  it("explains the platform limitation instead of setup on non-Windows", async () => {
+    vi.mocked(isWindowsPlatform).mockReturnValue(false);
+    stubHealth(false);
+    render(<WorkspacePanel />);
+    const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+    fireEvent.click(connectBtn);
+
+    expect(await screen.findByText("Terminal access unavailable", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByText(/supports Windows computers/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Set up terminal access/ })).not.toBeInTheDocument();
+  });
+
+  it("marks the one-time setup as verified after a successful connection", async () => {
+    stubHealth(false);
+    render(<WorkspacePanel />);
+    const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+    stubHealth(true);
+    fireEvent.click(connectBtn);
+
+    expect(await screen.findByText("Terminal Connected", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(hasTerminalSetupVerified()).toBe(true);
   });
 
   it("shows permission guidance when the browser blocks the local-network request", async () => {
