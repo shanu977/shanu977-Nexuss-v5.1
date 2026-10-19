@@ -4,16 +4,35 @@ import {
   isTerminalConnected,
   markUnavailable,
   toUserFacingTerminalError,
-  resetTerminalConnection
+  resetTerminalConnection,
+  runTerminalHeartbeatTick
 } from "@/workspace/terminalConnection";
 import { probeLocalConnector } from "@/workspace/localTerminalRuntime";
 import { useWorkspaceStore } from "@/workspace/store";
+import { configureTerminalRecovery, DEFAULT_RECOVERY_CONFIG } from "@/workspace/terminalRecovery";
+import { clearConnectorLauncherMemory, rememberConnectorProtocol } from "@/workspace/connectorProtocol";
 
-function healthOk() {
-  return new Response(JSON.stringify({ status: "ok", connector: "nexuss-local", terminal: "enabled" }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
-  });
+// Deterministic platform for recovery branches (jsdom UA varies by host OS).
+vi.mock("@/workspace/terminalSetup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/workspace/terminalSetup")>();
+  return { ...actual, isWindowsPlatform: vi.fn(actual.isWindowsPlatform) };
+});
+
+import { isWindowsPlatform } from "@/workspace/terminalSetup";
+
+function healthOk(protocol?: number) {
+  return new Response(
+    JSON.stringify({
+      status: "ok",
+      connector: "nexuss-local",
+      ...(protocol !== undefined ? { protocol } : {}),
+      terminal: "enabled"
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    }
+  );
 }
 
 /** Connection refusal / browser network failure. */
@@ -59,6 +78,9 @@ const store = () => useTerminalConnectionStore.getState();
 beforeEach(() => {
   resetTerminalConnection();
   clearPermissions();
+  clearConnectorLauncherMemory();
+  vi.mocked(isWindowsPlatform).mockReturnValue(true);
+  window.localStorage.removeItem("nexuss.terminal.setupVerified");
   useWorkspaceStore.setState({
     runtime: null,
     pathEnabled: false,
@@ -72,6 +94,8 @@ beforeEach(() => {
 afterEach(() => {
   resetTerminalConnection();
   clearPermissions();
+  clearConnectorLauncherMemory();
+  configureTerminalRecovery(DEFAULT_RECOVERY_CONFIG);
   vi.unstubAllGlobals();
 });
 
@@ -158,6 +182,12 @@ describe("probeLocalConnector()", () => {
     );
     const probe = await probeLocalConnector({ force: true });
     expect(probe).toEqual({ ok: false, reason: "http-error", httpStatus: 500 });
+  });
+
+  it("captures the reported protocol and version on success", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => healthOk(2)));
+    const probe = await probeLocalConnector({ force: true });
+    expect(probe).toEqual({ ok: true, protocol: 2, version: undefined });
   });
 });
 
@@ -345,5 +375,267 @@ describe("resetTerminalConnection()", () => {
     expect(store().failureReason).toBeNull();
     expect(store().lastVerifiedAt).toBeNull();
     expect(window.sessionStorage.getItem("nexuss.terminal.disconnected")).toBeNull();
+  });
+});
+
+describe("incompatible connector protocol", () => {
+  it("refuses to report connected for an explicitly outdated protocol", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => healthOk(0)));
+    const ok = await store().connect();
+    expect(ok).toBe(false);
+    expect(store().status).toBe("error");
+    expect(store().failureReason).toBe("incompatible");
+    expect(store().diagnosticCode).toBe("connector_incompatible");
+    expect(isTerminalConnected()).toBe(false);
+    expect(useWorkspaceStore.getState().pathEnabled).toBe(false);
+  });
+
+  it("still accepts a legacy connector with no protocol field", async () => {
+    stubHealthOk();
+    const ok = await store().connect();
+    expect(ok).toBe(true);
+    expect(store().status).toBe("connected");
+  });
+});
+
+describe("beginSetup()", () => {
+  it("enters the setup progress state and clears any disconnect flag", async () => {
+    stubHealthOk();
+    await store().connect();
+    await store().disconnect();
+
+    store().beginSetup();
+
+    expect(store().status).toBe("setting_up");
+    expect(window.sessionStorage.getItem("nexuss.terminal.disconnected")).toBeNull();
+    expect(isTerminalConnected()).toBe(false);
+  });
+
+  it("lets an explicit connect take over from the setup state", async () => {
+    store().beginSetup();
+    stubHealthOk();
+    const ok = await store().connect();
+    expect(ok).toBe(true);
+    expect(store().status).toBe("connected");
+  });
+});
+
+describe("self-healing recovery", () => {
+  /** Simulate a machine with a completed one-time install (launcher registered). */
+  function armVerifiedInstall() {
+    window.localStorage.setItem("nexuss.terminal.setupVerified", "1");
+    rememberConnectorProtocol(2);
+  }
+
+  let prevCfg: ReturnType<typeof configureTerminalRecovery>;
+  beforeEach(() => {
+    prevCfg = configureTerminalRecovery({ baseDelayMs: 1, maxDelayMs: 2, maxAttempts: 3, jitterRatio: 0 });
+  });
+  afterEach(() => {
+    configureTerminalRecovery(prevCfg);
+  });
+
+  it("recovers automatically after a transient failure on a verified install", async () => {
+    armVerifiedInstall();
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        // Exhaust the connect retries, then the connector comes back.
+        if (calls <= 3) throw new TypeError("Failed to fetch");
+        return healthOk(2);
+      })
+    );
+
+    const ok = await store().connect();
+
+    expect(ok).toBe(true);
+    expect(store().status).toBe("connected");
+    expect(store().failureReason).toBeNull();
+    expect(store().diagnosticCode).toBeNull();
+    expect(isTerminalConnected()).toBe(true);
+  });
+
+  it("falls back to the honest unavailable state when recovery is exhausted", async () => {
+    armVerifiedInstall();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      })
+    );
+
+    const ok = await store().connect();
+
+    expect(ok).toBe(false);
+    expect(store().status).toBe("unavailable");
+    expect(store().diagnosticCode).toBe("connector_stopped");
+    expect(isTerminalConnected()).toBe(false);
+  });
+
+  it("does not start recovery on a machine without a verified install", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ok = await store().connect();
+
+    expect(ok).toBe(false);
+    expect(store().status).toBe("unavailable");
+    // Exactly the connect retries — no extra recovery probes.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops recovery and surfaces permission_required when Local Network Access is denied", async () => {
+    armVerifiedInstall();
+    let queries = 0;
+    Object.defineProperty(window.navigator, "permissions", {
+      configurable: true,
+      value: {
+        query: vi.fn(async () => {
+          queries += 1;
+          return { state: queries <= 6 ? "prompt" : "denied" };
+        })
+      }
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      })
+    );
+
+    const ok = await store().connect();
+
+    expect(ok).toBe(false);
+    expect(store().status).toBe("permission_required");
+    expect(store().failureReason).toBe("permission");
+    expect(store().diagnosticCode).toBe("browser_permission_denied");
+  });
+
+  it("tolerates a single heartbeat miss and recovers on the second", async () => {
+    armVerifiedInstall();
+    stubHealthOk();
+    await store().connect();
+    expect(store().status).toBe("connected");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      })
+    );
+
+    await runTerminalHeartbeatTick();
+    // One miss is transient — the session must survive it.
+    expect(store().status).toBe("connected");
+
+    await runTerminalHeartbeatTick();
+    // Second confirmed miss: bounded recovery ran and exhausted honestly.
+    expect(store().status).toBe("unavailable");
+    expect(isTerminalConnected()).toBe(false);
+  });
+
+  it("restores a verified connection when the connector comes back mid-recovery", async () => {
+    armVerifiedInstall();
+    stubHealthOk();
+    await store().connect();
+
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls <= 1) throw new TypeError("Failed to fetch"); // first heartbeat miss
+        if (calls <= 2) throw new TypeError("Failed to fetch"); // second miss → recovery
+        if (calls <= 3) throw new TypeError("Failed to fetch"); // recovery first probe
+        return healthOk(2); // connector back
+      })
+    );
+
+    await runTerminalHeartbeatTick();
+    expect(store().status).toBe("connected");
+    await runTerminalHeartbeatTick();
+
+    expect(store().status).toBe("connected");
+    expect(store().lastVerifiedAt).not.toBeNull();
+    expect(isTerminalConnected()).toBe(true);
+  });
+
+  it("deduplicates concurrent recovery attempts into one session", async () => {
+    armVerifiedInstall();
+    const probeMock = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    vi.stubGlobal("fetch", probeMock);
+
+    const [a, b] = await Promise.all([store().recover("test-a"), store().recover("test-b")]);
+
+    expect(a).toBe(false);
+    expect(b).toBe(false);
+    expect(store().status).toBe("unavailable");
+    // One session: bounded probe count (checking + backoff retries), not doubled.
+    expect(probeMock.mock.calls.length).toBeLessThanOrEqual(5);
+  });
+
+  it("cancelRecovery stops an in-flight session and shows the failure screen", async () => {
+    // Slower backoff so the session is still on screen when we cancel.
+    configureTerminalRecovery({ baseDelayMs: 50, maxDelayMs: 100, maxAttempts: 5, jitterRatio: 0 });
+    armVerifiedInstall();
+    stubHealthOk();
+    await store().connect();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      })
+    );
+
+    await runTerminalHeartbeatTick(); // miss 1 (tolerated)
+    expect(store().status).toBe("connected");
+
+    const tick = runTerminalHeartbeatTick(); // miss 2 → recovery session
+    await vi.waitFor(() => expect(store().status).toBe("recovering"), { timeout: 2000 });
+    store().cancelRecovery();
+    await tick;
+
+    expect(store().status).toBe("unavailable");
+    expect(store().recoveryStep).toBeNull();
+    expect(isTerminalConnected()).toBe(false);
+  });
+
+  it("rejects a stale connect response that resolves after a disconnect", async () => {
+    let resolveFetch: ((r: Response) => void) | null = null;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const connecting = store().connect();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), { timeout: 5000 });
+
+    await store().disconnect();
+    resolveFetch!(healthOk(2));
+
+    const ok = await connecting;
+    expect(ok).toBe(false);
+    expect(store().status).toBe("disconnected");
+    expect(isTerminalConnected()).toBe(false);
+    expect(useWorkspaceStore.getState().pathEnabled).toBe(false);
+  });
+
+  it("commands stay blocked while recovering", async () => {
+    armVerifiedInstall();
+    stubHealthOk();
+    await store().connect();
+
+    useTerminalConnectionStore.setState({ status: "recovering", recoveryStep: "restarting" });
+    expect(isTerminalConnected()).toBe(false);
   });
 });

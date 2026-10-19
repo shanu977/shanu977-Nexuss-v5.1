@@ -23,6 +23,12 @@ const os = require('os');
 const CONNECTOR_PORT = process.env.NEXUSS_CONNECTOR_PORT ? parseInt(process.env.NEXUSS_CONNECTOR_PORT, 10) : 11435;
 const OLLAMA_HOST = '127.0.0.1';
 const OLLAMA_PORT = 11434;
+// Health-contract version advertised to the web app. Bump when /health or the
+// terminal endpoints change shape in a way older clients cannot tolerate;
+// the client refuses protocol values below its minimum and offers a safe,
+// idempotent update (re-running the one-time setup re-downloads this file).
+const CONNECTOR_PROTOCOL = 2;
+const CONNECTOR_VERSION = '1.1.0';
 
 const ALLOWED_ORIGINS = [
   'https://www.nexuss.in',
@@ -426,7 +432,7 @@ const server = http.createServer((req, res) => {
   // Health check for connector itself (does not proxy to Ollama)
   if (pathname === '/health' || pathname === '/v1/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', connector: 'nexuss-local', ollama: `http://${OLLAMA_HOST}:${OLLAMA_PORT}`, terminal: 'enabled' }));
+    res.end(JSON.stringify({ status: 'ok', connector: 'nexuss-local', protocol: CONNECTOR_PROTOCOL, version: CONNECTOR_VERSION, ollama: `http://${OLLAMA_HOST}:${OLLAMA_PORT}`, terminal: 'enabled' }));
     return;
   }
 

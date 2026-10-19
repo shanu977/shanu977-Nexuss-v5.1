@@ -99,7 +99,13 @@ export type ConnectorProbeFailureReason =
   | "invalid-response";
 
 export type ConnectorProbeResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /** Health-contract protocol reported by the connector (absent on legacy installs). */
+      protocol?: number;
+      /** Connector self-reported version string, when provided. */
+      version?: string;
+    }
   | { ok: false; reason: ConnectorProbeFailureReason; httpStatus?: number };
 
 let cachedProbe: ConnectorProbeResult | null = null;
@@ -179,12 +185,16 @@ export async function probeLocalConnector(opts?: {
     const data = (await res.json().catch(() => null)) as {
       terminal?: string;
       connector?: string;
+      protocol?: unknown;
+      version?: unknown;
     } | null;
     if (!data || (data.terminal !== "enabled" && data.connector !== "nexuss-local")) {
       cachedProbe = { ok: false, reason: "invalid-response" };
       return cachedProbe;
     }
-    cachedProbe = { ok: true };
+    const protocol = typeof data.protocol === "number" ? data.protocol : undefined;
+    const version = typeof data.version === "string" ? data.version : undefined;
+    cachedProbe = { ok: true, protocol, version };
     return cachedProbe;
   } catch (e) {
     if (isAbortError(e)) {
