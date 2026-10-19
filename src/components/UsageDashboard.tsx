@@ -219,7 +219,7 @@ export default function UsageDashboard() {
 
   const providerLabel = PROVIDER_LABELS[provider] ?? provider;
   const modelLabel = model ? getModelLabel(provider, model) : "";
-  const hasUsage = !loading && summary.totalRequests > 0;
+  const hasUsage = !loading && !error && summary.totalRequests > 0;
 
   const handleCancelClear = () => setConfirmClear(false);
 
@@ -315,7 +315,7 @@ export default function UsageDashboard() {
           >
             API usage
           </h4>
-          {!loading && (
+          {!loading && !error && (
             <span className="shrink-0 text-[10px] text-muted-foreground">
               {hasUsage
                 ? `${summary.totalRequests.toLocaleString()} recorded ${
@@ -330,6 +330,26 @@ export default function UsageDashboard() {
           <div className="grid grid-cols-2 gap-2" aria-hidden="true">
             <MetricSkeleton />
             <MetricSkeleton />
+          </div>
+        ) : error ? (
+          /* Load-error state */
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/40 bg-destructive/5 px-5 py-6 text-center"
+          >
+            <h5 className="text-xs font-semibold text-foreground">
+              Could not load usage statistics
+            </h5>
+            <p className="mx-auto mt-1.5 max-w-[280px] text-[11px] leading-5 text-muted-foreground">
+              {error}
+            </p>
+            <button
+              type="button"
+              onClick={() => void loadSummary()}
+              className="mt-3 cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              Try again
+            </button>
           </div>
         ) : hasUsage ? (
           <div className="space-y-3">
@@ -414,23 +434,51 @@ export default function UsageDashboard() {
           id="usage-clear-heading"
           className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
         >
-          {confirmClear ? "Click again to confirm clear" : "Clear Usage Statistics"}
-        </button>
-        {confirmClear && (
-          <p role="alert" className="mt-2 text-xs text-destructive">
-            This permanently deletes your saved usage statistics for this account.
-            Your conversations will not be deleted.
-          </p>
-        )}
-        {confirmClear && (
-          <button
-            type="button"
-            onClick={() => setConfirmClear(false)}
-            className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-mono text-muted-foreground hover:text-foreground cursor-pointer"
-          >
-            Cancel
-          </button>
-        )}
+          Usage history
+        </h4>
+        <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
+          Clears the usage records stored in this browser for your account.
+          Conversation messages and any records held by your AI providers are
+          not affected.
+        </p>
+
+        <div className="mt-2.5">
+          {confirmClear ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-destructive/40 bg-destructive/5 p-2.5"
+            >
+              <p className="text-[11px] font-medium text-destructive">
+                Clear all recorded usage statistics? This cannot be undone.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleCancelClear}
+                  className="flex-1 cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleConfirmClear()}
+                  className="flex-1 cursor-pointer rounded-lg border border-destructive bg-destructive px-3 py-1.5 text-[11px] font-medium text-destructive-foreground transition-opacity hover:opacity-90"
+                >
+                  Confirm clear
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmClear(true)}
+              disabled={!hasUsage}
+              className="cursor-pointer rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-destructive/5"
+            >
+              Clear usage history
+            </button>
+          )}
+        </div>
       </section>
     </div>
   );
