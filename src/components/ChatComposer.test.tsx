@@ -1,9 +1,29 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import ChatComposer from "@/components/ChatComposer";
+import { useChatStore } from "@/store";
+import { PROVIDER_MODEL_OPTIONS, type ProviderType } from "@/types/providers";
+import { settingsService } from "@/services/settings";
+
+vi.mock("@/services/settings", () => ({
+  settingsService: {
+    get: vi.fn(),
+    update: vi.fn().mockResolvedValue({})
+  }
+}));
 
 afterEach(() => {
   cleanup();
+});
+
+beforeEach(() => {
+  window.localStorage.clear();
+  vi.mocked(settingsService.update).mockClear();
+  useChatStore.setState({
+    provider: "groq",
+    model: "openai/gpt-oss-120b",
+    fallbackNotice: null
+  });
 });
 
 function renderComposer(overrides: {
@@ -98,5 +118,103 @@ describe("ChatComposer Stop button", () => {
     fireEvent.click(stop);
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatComposer model selector", () => {
+  const CLOUD_PROVIDERS: ProviderType[] = ["groq", "gemini", "openrouter"];
+
+  function openMenu() {
+    const pill = screen.getByTitle("Select model");
+    fireEvent.click(pill);
+    return pill;
+  }
+
+  it("opens the model menu from the pill and lists the configured providers and models", () => {
+    renderComposer();
+    const pill = screen.getByTitle("Select model");
+    expect(pill).toHaveAttribute("aria-expanded", "false");
+    expect(pill).toHaveTextContent("Groq");
+    expect(pill).toHaveTextContent("GPT-OSS 120B");
+
+    openMenu();
+
+    expect(pill).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("listbox", { name: "Choose model" })).toBeInTheDocument();
+
+    for (const p of CLOUD_PROVIDERS) {
+      expect(screen.getByText(p === "groq" ? "Groq" : p === "gemini" ? "Gemini" : "OpenRouter")).toBeInTheDocument();
+    }
+
+    const options = screen.getAllByRole("option");
+    const catalogSize = CLOUD_PROVIDERS.reduce(
+      (n, p) => n + PROVIDER_MODEL_OPTIONS[p as Exclude<ProviderType, "local">].length,
+      0
+    );
+    expect(options.length).toBeGreaterThanOrEqual(catalogSize);
+    expect(
+      screen.getByRole("option", { name: /Gemini 2\.5 Pro/ })
+    ).toBeInTheDocument();
+
+    const selected = options.filter((o) => o.getAttribute("aria-selected") === "true");
+    expect(selected).toHaveLength(1);
+    expect(selected[0]).toHaveTextContent("GPT-OSS 120B");
+  });
+
+  it("selecting a model updates the pill, the shared chat store, Settings sync, and closes the menu", () => {
+    renderComposer();
+    openMenu();
+
+    fireEvent.click(screen.getByRole("option", { name: /Gemini 2\.5 Pro/ }));
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    const cs = useChatStore.getState();
+    expect(cs.provider).toBe("gemini");
+    expect(cs.model).toBe("gemini-2.5-pro");
+
+    const pill = screen.getByTitle("Select model");
+    expect(pill).toHaveTextContent("Gemini");
+    expect(pill).toHaveTextContent("Gemini 2.5 Pro");
+
+    expect(settingsService.update).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "gemini" })
+    );
+    expect(settingsService.update).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gemini-2.5-pro" })
+    );
+  });
+
+  it("reflects a Settings-driven store change in the pill (same source of truth)", () => {
+    renderComposer();
+
+    act(() => {
+      useChatStore.getState().setProvider("openrouter");
+      useChatStore.getState().setModel("openrouter/free");
+    });
+
+    const pill = screen.getByTitle("Select model");
+    expect(pill).toHaveTextContent("OpenRouter");
+    expect(pill).toHaveTextContent("OpenRouter Free Router");
+  });
+
+  it("closes the menu when clicking outside", () => {
+    renderComposer();
+    openMenu();
+    expect(screen.getByRole("listbox", { name: "Choose model" })).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("cannot open the menu while a response is streaming", () => {
+    render(
+      <ChatComposer onSend={vi.fn()} onStop={vi.fn()} loading={true} />
+    );
+    const pill = screen.getByTitle("Select model");
+    expect(pill).toBeDisabled();
+    fireEvent.click(pill);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 });

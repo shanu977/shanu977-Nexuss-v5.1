@@ -1,0 +1,574 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import ModelsSettings from "@/components/ModelsSettings";
+import SettingsContent from "@/components/SettingsContent";
+import { useLocalModelStore } from "@/store/localModelStore";
+import { useChatStore } from "@/store";
+import db from "@/lib/db/db";
+import { DEFAULT_PROVIDER_MODELS } from "@/types/providers";
+
+const mocks = vi.hoisted(() => {
+  const auth = { user: null as { uid: string } | null };
+  const useAuthStore = Object.assign(
+    (selector: (s: typeof auth) => unknown) => selector(auth),
+    {
+      getState: () => auth,
+      setState: vi.fn(),
+      subscribe: () => () => {}
+    }
+  );
+  return {
+    discover: vi.fn(),
+    testLocalEndpoint: vi.fn(),
+    detectOllamaSetup: vi.fn(),
+    fetchConnectorDiskInfo: vi.fn(
+      (): Promise<{ freeBytes: number; totalBytes: number | null } | null> => Promise.resolve(null)
+    ),
+    fetchConnectorOllamaStatus: vi.fn(
+      (): Promise<{ installed: boolean | null; running: boolean } | null> => Promise.resolve(null)
+    ),
+    verifyLocalChat: vi.fn(),
+    useAuthStore,
+    setUid: (uid: string | null) => {
+      auth.user = uid ? { uid } : null;
+    }
+  };
+});
+
+vi.mock("@/services/localModels", () => ({
+  testLocalEndpoint: mocks.testLocalEndpoint,
+  discoverLocalModels: vi.fn(async () => [] as string[]),
+  discoverOllamaModelsDetailed: mocks.discover,
+  pullOllamaModel: vi.fn(async () => undefined),
+  streamLocalChat: vi.fn(async function* () {}),
+  timeoutFetch: vi.fn(),
+  cancelOllamaPull: vi.fn(),
+  activeOllamaPullModel: vi.fn(() => null),
+  isPullCancelled: vi.fn(() => false)
+}));
+vi.mock("@/services/ollamaSetup", () => ({
+  detectOllamaSetup: mocks.detectOllamaSetup,
+  fetchConnectorDiskInfo: mocks.fetchConnectorDiskInfo,
+  fetchConnectorOllamaStatus: mocks.fetchConnectorOllamaStatus,
+  verifyLocalChat: mocks.verifyLocalChat,
+  friendlySetupError: (e: unknown) => (e instanceof Error ? e.message : String(e)),
+  unknownReasonCopy: () => "We couldn't check your device.",
+  CONNECTOR_BASE: "http://127.0.0.1:11435"
+}));
+vi.mock("@/store/useAuthStore", () => ({ useAuthStore: mocks.useAuthStore }));
+// In-memory db: fake-indexeddb wedges when a dangling write overlaps the
+// next test's clear transaction, hanging otherwise-passing connect tests.
+vi.mock("@/lib/db/db", async () => {
+  const { createMemoryDb } = await import("@/test/memoryDb");
+  return { default: createMemoryDb() };
+});
+vi.mock("@/services/chat", () => ({ chatService: { sendStream: vi.fn() } }));
+vi.mock("@/services/settings", () => ({
+  settingsService: {
+    get: vi.fn().mockResolvedValue({ provider: "groq", model: "openai/gpt-oss-120b", theme: "dark" }),
+    update: vi.fn().mockResolvedValue({})
+  }
+}));
+vi.mock("@/services/account", () => ({
+  getAccountInfo: vi.fn(),
+  fetchServerExport: vi.fn(),
+  downloadJson: vi.fn(),
+  getDeletionStatus: vi.fn(),
+  getReauthMethod: vi.fn(),
+  DELETION_STAGE_LABELS: {}
+}));
+vi.mock("@/services/accountData", () => ({
+  gatherLocalAccountExport: vi.fn(),
+  purgeLocalAccountData: vi.fn()
+}));
+vi.mock("@/workspace/store", () => ({
+  useWorkspaceStore: vi.fn((selector: (s: unknown) => unknown) =>
+    selector({ workspace: { name: "Test Workspace", root: "/tmp/x" } })
+  )
+}));
+
+const OLLAMA_PROVIDER_ID = "prov-ollama-1";
+// Connect-flow tests await detect + refresh + verify end-to-end; under full
+// suite parallel load that can exceed vitest's 5s default test timeout.
+const OPT = { timeout: 20000 };
+vi.setConfig({ testTimeout: 20000 });
+
+interface SeedModel {
+  modelId: string;
+  family?: string;
+  parameterSize?: string;
+  size?: number;
+}
+
+function discovered(m: SeedModel) {
+  return {
+    id: `disc-${m.modelId}`,
+    modelId: m.modelId,
+    family: m.family,
+    parameterSize: m.parameterSize,
+    size: m.size
+  };
+}
+
+/** Seed the local store exactly as a working Ollama connection would leave it. */
+function seedOllama(options: {
+  status: "connected" | "not_connected" | "error";
+  discovered: SeedModel[];
+  persisted?: SeedModel[];
+}) {
+  useLocalModelStore.setState({
+    hydrated: true,
+    providers: [
+      {
+        id: OLLAMA_PROVIDER_ID,
+        userId: "uid-1",
+        name: "Ollama",
+        providerType: "ollama",
+        endpoint: "http://localhost:11434/v1",
+        enabled: true,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    models: (options.persisted ?? []).map((m) => ({
+      id: `lm-${m.modelId}`,
+      userId: "uid-1",
+      providerId: OLLAMA_PROVIDER_ID,
+      modelId: m.modelId,
+      displayName: m.modelId,
+      enabled: true,
+      createdAt: 1,
+      updatedAt: 1,
+      family: m.family,
+      parameterSize: m.parameterSize,
+      size: m.size
+    })),
+    discoveredOllamaModels: options.discovered.map(discovered),
+    ollamaStatus: options.status,
+    ollamaError: null,
+    ollamaLastRefresh: Date.now(),
+    ollamaPullProgress: null
+  });
+}
+
+beforeEach(async () => {
+  window.localStorage.clear();
+  mocks.setUid("uid-1");
+  await db.transaction(
+    "rw",
+    db.chats,
+    db.messages,
+    db.usageRecords,
+    db.localProviders,
+    db.localModels,
+    async () => {
+      await db.chats.clear();
+      await db.messages.clear();
+      await db.usageRecords.clear();
+      await db.localProviders.clear();
+      await db.localModels.clear();
+    }
+  );
+  useLocalModelStore.getState().reset();
+  useChatStore.setState({ provider: "groq", model: DEFAULT_PROVIDER_MODELS.groq });
+  mocks.discover.mockResolvedValue({ models: [], endpointReachable: true });
+  mocks.testLocalEndpoint.mockResolvedValue({
+    ok: true,
+    message: "Connected.",
+    models: [],
+    endpointReachable: true,
+    modelsDiscoverable: true
+  });
+});
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("ModelsSettings — local providers as a first-class provider", () => {
+  it("shows Ollama in the provider dropdown with its discovered models", async () => {
+    const installed: SeedModel[] = [
+      { modelId: "qwen2.5-coder:7b", family: "qwen3", parameterSize: "7.6B", size: 5_000_000_000 },
+      { modelId: "llama3.3:latest", family: "llama", parameterSize: "8.0B", size: 4_000_000_000 }
+    ];
+    seedOllama({ status: "connected", discovered: installed });
+    mocks.discover.mockResolvedValue({ models: installed.map(discovered), endpointReachable: true });
+    useChatStore.setState({ provider: "local", model: "qwen2.5-coder:7b" });
+
+    render(<ModelsSettings />);
+
+    const providerSelect = (await screen.findByLabelText("Provider")) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(providerSelect.selectedOptions[0]).toHaveTextContent("Ollama • Connected");
+    });
+    expect(
+      within(providerSelect).getByRole("option", { name: "Groq" })
+    ).toBeInTheDocument();
+    expect(
+      within(providerSelect).getByRole("option", { name: "Ollama • Connected" })
+    ).toBeInTheDocument();
+
+    const modelSelect = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(modelSelect.value).toBe("qwen2.5-coder:7b");
+    });
+    const optionLabels = within(modelSelect)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(optionLabels).toContain("qwen2.5-coder:7b");
+    expect(optionLabels).toContain("llama3.3:latest");
+    // Metadata stays secondary: it is not part of the closed dropdown value.
+    expect(screen.getByTestId("selected-model-meta")).toHaveTextContent(
+      "qwen3 • 7.6B • 5.0 GB disk"
+    );
+  });
+
+  it("selecting a discovered local model updates the existing selected-model state", async () => {
+    const installed: SeedModel[] = [
+      { modelId: "qwen2.5-coder:7b", family: "qwen3", parameterSize: "7.6B" },
+      { modelId: "llama3.3:latest", family: "llama", parameterSize: "8.0B" }
+    ];
+    seedOllama({ status: "connected", discovered: installed, persisted: [installed[0]] });
+    mocks.discover.mockResolvedValue({ models: installed.map(discovered), endpointReachable: true });
+    useChatStore.setState({ provider: "local", model: "qwen2.5-coder:7b" });
+
+    render(<ModelsSettings />);
+
+    const modelSelect = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    await waitFor(() => expect(modelSelect.value).toBe("qwen2.5-coder:7b"));
+
+    fireEvent.change(modelSelect, { target: { value: "llama3.3:latest" } });
+
+    await waitFor(() => {
+      expect(useChatStore.getState().provider).toBe("local");
+      expect(useChatStore.getState().model).toBe("llama3.3:latest");
+    });
+    // The selection is persisted so it survives reopening the panel.
+    await waitFor(() => {
+      expect(
+        useLocalModelStore.getState().models.some((m) => m.modelId === "llama3.3:latest")
+      ).toBe(true);
+    });
+  });
+
+  it("switches the chat provider when a local provider is chosen in the dropdown", async () => {
+    const installed: SeedModel[] = [{ modelId: "qwen3:4b", family: "qwen3", parameterSize: "4B" }];
+    seedOllama({ status: "connected", discovered: installed });
+    mocks.discover.mockResolvedValue({ models: installed.map(discovered), endpointReachable: true });
+
+    render(<ModelsSettings />);
+
+    const providerSelect = (await screen.findByLabelText("Provider")) as HTMLSelectElement;
+    expect(providerSelect.value).toBe("groq");
+
+    fireEvent.change(providerSelect, { target: { value: `local:${OLLAMA_PROVIDER_ID}` } });
+
+    await waitFor(() => {
+      expect(useChatStore.getState().provider).toBe("local");
+    });
+    const modelSelect = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    await waitFor(() => expect(modelSelect.value).toBe("qwen3:4b"));
+  });
+
+  it("refresh updates the model list from the local connector", async () => {
+    const first: SeedModel[] = [{ modelId: "qwen3:4b" }];
+    const second: SeedModel[] = [...first, { modelId: "phi3:latest" }];
+    seedOllama({ status: "connected", discovered: first, persisted: first });
+    mocks.discover.mockResolvedValue({ models: first.map(discovered), endpointReachable: true });
+    useChatStore.setState({ provider: "local", model: "qwen3:4b" });
+
+    render(<ModelsSettings />);
+    const modelSelect = (await screen.findByLabelText("Model")) as HTMLSelectElement;
+    await waitFor(() => expect(modelSelect.value).toBe("qwen3:4b"));
+    expect(within(modelSelect).queryByRole("option", { name: "phi3:latest" })).toBeNull();
+
+    mocks.discover.mockResolvedValue({ models: second.map(discovered), endpointReachable: true });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Models" }));
+
+    await waitFor(() => {
+      expect(
+        within(modelSelect).getByRole("option", { name: "phi3:latest" })
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("renders a disconnected state instead of offering the provider as available", async () => {
+    seedOllama({ status: "not_connected", discovered: [] });
+    mocks.discover.mockResolvedValue({ models: [], endpointReachable: false });
+    useChatStore.setState({ provider: "local", model: "" });
+
+    render(<ModelsSettings />);
+
+    const providerSelect = (await screen.findByLabelText("Provider")) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(providerSelect.selectedOptions[0]).toHaveTextContent("Ollama • Disconnected");
+    });
+
+    expect(await screen.findByRole("button", { name: "Connect Ollama" })).toBeInTheDocument();
+    expect(screen.getByTestId("local-status-disconnected")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Advanced connection settings" })
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+    expect(screen.queryByText("No models found")).not.toBeInTheDocument();
+    expect(screen.getByText(/Run AI models locally with Ollama/)).toBeInTheDocument();
+  });
+
+  it("renders a clean empty state when Ollama is connected but has no models", async () => {
+    seedOllama({ status: "connected", discovered: [] });
+  mocks.discover.mockResolvedValue({ models: [], endpointReachable: true });
+  mocks.detectOllamaSetup.mockResolvedValue({
+    state: "unknown",
+    reason: "connector_unreachable",
+    via: "direct"
+  });
+  mocks.verifyLocalChat.mockResolvedValue({ ok: true });
+    useChatStore.setState({ provider: "local", model: "" });
+
+    render(<ModelsSettings />);
+
+    expect(await screen.findByText("No models found")).toBeInTheDocument();
+    expect(
+      screen.getByText("Your provider is connected, but no models are available yet.")
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+    expect(screen.getByTestId("local-status-connected")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Refresh Models" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+  });
+});
+
+describe("Settings → Models tab", () => {
+  it("renders the Provider/Model picker and local provider management", async () => {
+    const installed: SeedModel[] = [{ modelId: "qwen3:4b", family: "qwen3", parameterSize: "4B" }];
+    seedOllama({ status: "connected", discovered: installed });
+    mocks.discover.mockResolvedValue({ models: installed.map(discovered), endpointReachable: true });
+    useChatStore.setState({ provider: "local", model: "qwen3:4b" });
+
+    render(<SettingsContent initialTab="models" />);
+
+    expect(screen.getByRole("heading", { name: "Models" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Provider")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh Models" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Local Providers" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "+ Add Local Provider" })
+    ).toBeInTheDocument();
+    // The legacy local setup UI is gone.
+    expect(screen.queryByText("Local Models")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Quick setup")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Test Connection" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/OLLAMA_ORIGINS/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Local Providers — one-click connect flow", () => {
+  /** Empty local store: nothing persisted, nothing reachable yet. */
+  function seedEmpty() {
+    useLocalModelStore.setState({
+      hydrated: true,
+      providers: [],
+      models: [],
+      discoveredOllamaModels: [],
+      ollamaStatus: "not_connected",
+      ollamaError: null,
+      ollamaLastRefresh: null,
+      ollamaPullProgress: null
+    });
+  }
+
+  it("first run opens the guided local setup; advanced configuration shows the chooser", async () => {
+    seedEmpty();
+    mocks.detectOllamaSetup.mockResolvedValue({
+      state: "unknown",
+      reason: "connector_unreachable",
+      via: "direct"
+    });
+    mocks.fetchConnectorDiskInfo.mockResolvedValue({
+      freeBytes: 60_000_000_000,
+      totalBytes: 512_000_000_000
+    });
+
+    render(<ModelsSettings />);
+
+    // The guided setup owns first run and auto-opens at the intro step.
+    expect(await screen.findByTestId("local-setup-panel", undefined, OPT)).toBeInTheDocument();
+    expect(screen.getByTestId("setup-intro")).toBeInTheDocument();
+    expect(screen.queryByText("Connect a local AI")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Add Local Provider" })).not.toBeInTheDocument();
+
+    // Developer-oriented setup UI is gone.
+    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Test Connection" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Quick setup/)).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/model id/i)).not.toBeInTheDocument();
+
+    // Running the checks keeps an unknown probe honest — it never claims a
+    // provider is installed (or missing) when it couldn't check.
+    fireEvent.click(screen.getByTestId("setup-start"));
+    const notice = await screen.findByTestId("setup-provider-notice", undefined, OPT);
+    expect(within(notice).getByText("We couldn't check your device.")).toBeInTheDocument();
+
+    // The manual provider chooser stays reachable through Advanced configuration.
+    fireEvent.click(screen.getByTestId("setup-advanced"));
+    expect(await screen.findByText("Connect a local AI", undefined, OPT)).toBeInTheDocument();
+    expect(screen.getByText("Choose your local provider:")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Ollama/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^LM Studio/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^vLLM/ })).toBeInTheDocument();
+  });
+
+  it("Case A — with a connected provider, Add Local Provider focuses its card, not a wizard", async () => {
+    const installed: SeedModel[] = [
+      { modelId: "qwen2.5-coder:7b", family: "qwen3", parameterSize: "7.6B", size: 5_000_000_000 },
+      { modelId: "llama3.3:latest", family: "llama", parameterSize: "8.0B", size: 4_000_000_000 }
+    ];
+    seedOllama({ status: "connected", discovered: installed, persisted: [installed[0]] });
+    mocks.discover.mockResolvedValue({ models: installed.map(discovered), endpointReachable: true });
+    useChatStore.setState({ provider: "local", model: "qwen2.5-coder:7b" });
+
+    render(<ModelsSettings />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "+ Add Local Provider" }, OPT)
+    );
+
+    // No wizard: the already-connected card becomes the primary interface.
+    await waitFor(
+      () => expect(screen.getByTestId("add-provider-note")).toBeInTheDocument(),
+      OPT
+    );
+    expect(screen.queryByTestId("local-setup-panel")).not.toBeInTheDocument();
+    expect(screen.getByTestId("add-provider-note")).toHaveTextContent(
+      "already connected — choose a model on its card below"
+    );
+
+    // Exactly one card for the provider, and it shows the working endpoint.
+    const cards = screen.getAllByTestId("local-provider-card-ollama");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent("2 models available");
+    expect(cards[0]).toHaveTextContent("http://localhost:11434/v1");
+    expect(within(cards[0]).getByTestId("local-status-connected")).toBeInTheDocument();
+
+    // The focused card owns the model picker.
+    const cardPicker = within(cards[0]).getByLabelText("Model") as HTMLSelectElement;
+    expect(cardPicker.id).toMatch(/^local-model-/);
+    expect(cardPicker.value).toBe("qwen2.5-coder:7b");
+
+    // Never fell back to a redundant install/connect flow.
+    expect(screen.queryByTestId("setup-install")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Install Ollama/)).not.toBeInTheDocument();
+  });
+
+  it("Case B — installed and running but unregistered opens the wizard at the check step", async () => {
+    const installed: SeedModel[] = [
+      { modelId: "qwen3:4b", family: "qwen3", parameterSize: "4B", size: 2_500_000_000 }
+    ];
+    seedEmpty();
+    mocks.detectOllamaSetup.mockResolvedValue({
+      state: "models",
+      models: installed.map(discovered),
+      via: "connector"
+    });
+    mocks.fetchConnectorDiskInfo.mockResolvedValue({
+      freeBytes: 60_000_000_000,
+      totalBytes: 512_000_000_000
+    });
+    useChatStore.setState({ provider: "groq", model: DEFAULT_PROVIDER_MODELS.groq });
+
+    render(<ModelsSettings />);
+
+    // First run inspects the device: a running provider skips the intro and
+    // opens straight on the checks.
+    expect(await screen.findByTestId("setup-check", undefined, OPT)).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-intro")).not.toBeInTheDocument();
+
+    // One-click connect reuses what is already installed: no download step.
+    const notice = await screen.findByTestId("setup-connect-existing", undefined, OPT);
+    expect(notice).toHaveTextContent(/nothing is installed or downloaded again/);
+    expect(screen.getByTestId("setup-connect")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-install-steps")).not.toBeInTheDocument();
+
+    // Closing the wizard and using Add Local Provider lands on the same checks.
+    fireEvent.click(screen.getByLabelText("Close setup"));
+    expect(screen.queryByTestId("local-setup-panel")).not.toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "+ Add Local Provider" }, OPT)
+    );
+    expect(await screen.findByTestId("setup-connect-existing", undefined, OPT)).toBeInTheDocument();
+  });
+
+  it("connects Ollama, discovers its models and selects the first one", async () => {
+    const installed: SeedModel[] = [
+      { modelId: "qwen2.5-coder:7b", family: "qwen3", parameterSize: "7.6B", size: 5_000_000_000 },
+      { modelId: "qwen3:4b", family: "qwen3", parameterSize: "4B" }
+    ];
+    seedEmpty();
+    mocks.discover.mockResolvedValue({ models: [], endpointReachable: false });
+
+    render(<ModelsSettings />);
+
+    // Leave the guided setup for the manual provider chooser.
+    fireEvent.click(await screen.findByRole("button", { name: "Advanced configuration" }, OPT));
+
+    // 1. choose the provider
+    fireEvent.click(await screen.findByRole("button", { name: /^Ollama/ }, OPT));
+
+    // 2. one click connects + discovers
+    mocks.discover.mockResolvedValue({
+      models: installed.map(discovered),
+      endpointReachable: true
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Ollama" }, OPT));
+
+    // 3. connected state with the discovered models
+    expect(await screen.findByTestId("local-status-connected", undefined, OPT)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("2 models available")).toBeInTheDocument(), OPT);
+
+    await waitFor(() => {
+      expect(useChatStore.getState().provider).toBe("local");
+      expect(useChatStore.getState().model).toBe("qwen2.5-coder:7b");
+    }, OPT);
+
+    // The card owns the model picker while a local provider is active.
+    const modelSelect = (await screen.findByLabelText("Model", undefined, OPT)) as HTMLSelectElement;
+    expect(modelSelect.id).toMatch(/^local-model-/);
+    await waitFor(() => expect(modelSelect.value).toBe("qwen2.5-coder:7b"), OPT);
+    const providerSelect = (await screen.findByLabelText("Provider", undefined, OPT)) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(providerSelect.selectedOptions[0]).toHaveTextContent("Ollama • Connected");
+    }, OPT);
+    await waitFor(() => {
+      expect(
+        useLocalModelStore
+          .getState()
+          .providers.some((p) => p.providerType === "ollama" && p.enabled)
+      ).toBe(true);
+    }, OPT);
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Ollama" })).not.toBeInTheDocument();
+  });
+
+  it("a failed connection shows a friendly message, not a raw error", async () => {
+    seedEmpty();
+    mocks.discover.mockRejectedValue(new TypeError("fetch failed: CORS blocked by OLLAMA_ORIGINS"));
+
+    render(<ModelsSettings />);
+    fireEvent.click(await screen.findByRole("button", { name: "Advanced configuration" }, OPT));
+    fireEvent.click(await screen.findByRole("button", { name: /^Ollama/ }, OPT));
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Ollama" }, OPT));
+
+    const alert = await screen.findByRole("alert", undefined, OPT);
+    expect(alert).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByTestId("local-status-failed")).toBeInTheDocument();
+    expect(screen.queryByText(/OLLAMA_ORIGINS/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/fetch failed/)).not.toBeInTheDocument();
+  });
+});

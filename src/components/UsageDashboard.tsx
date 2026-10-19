@@ -191,6 +191,7 @@ function ProviderRow({
 export default function UsageDashboard() {
   const summary = useUsageStore((s) => s.summary);
   const loading = useUsageStore((s) => s.loading);
+  const error = useUsageStore((s) => s.error);
   const loadSummary = useUsageStore((s) => s.loadSummary);
   const clearUsage = useUsageStore((s) => s.clearUsage);
   const estimateContextTokens = useUsageStore((s) => s.estimateContextTokens);
@@ -413,51 +414,23 @@ export default function UsageDashboard() {
           id="usage-clear-heading"
           className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
         >
-          Usage history
-        </h4>
-        <p className="mt-1.5 text-[11px] leading-5 text-muted-foreground">
-          Clears the usage records stored in this browser for your account.
-          Conversation messages and any records held by your AI providers are
-          not affected.
-        </p>
-
-        <div className="mt-2.5">
-          {confirmClear ? (
-            <div
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-2.5"
-            >
-              <p className="text-[11px] font-medium text-destructive">
-                Clear all recorded usage statistics? This cannot be undone.
-              </p>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleCancelClear}
-                  className="flex-1 cursor-pointer rounded-lg border border-border bg-background px-3 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleConfirmClear()}
-                  className="flex-1 cursor-pointer rounded-lg border border-destructive bg-destructive px-3 py-1.5 text-[11px] font-medium text-destructive-foreground transition-opacity hover:opacity-90"
-                >
-                  Confirm clear
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmClear(true)}
-              disabled={!hasUsage}
-              className="cursor-pointer rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-destructive/5"
-            >
-              Clear usage history
-            </button>
-          )}
-        </div>
+          {confirmClear ? "Click again to confirm clear" : "Clear Usage Statistics"}
+        </button>
+        {confirmClear && (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            This permanently deletes your saved usage statistics for this account.
+            Your conversations will not be deleted.
+          </p>
+        )}
+        {confirmClear && (
+          <button
+            type="button"
+            onClick={() => setConfirmClear(false)}
+            className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-mono text-muted-foreground hover:text-foreground cursor-pointer"
+          >
+            Cancel
+          </button>
+        )}
       </section>
     </div>
   );

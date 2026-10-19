@@ -1,4 +1,5 @@
 from .models import (
+    AccountDeletion,
     AppSetting,
     AuditLog,
     Conversation,
@@ -22,4 +23,5 @@ __all__ = [
     "Feedback",
     "AppSetting",
     "AuditLog",
+    "AccountDeletion",
 ]

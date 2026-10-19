@@ -1,9 +1,10 @@
 // Reproduction test for Problem #1
 import { describe, it, expect, beforeEach } from "vitest";
 import { runAuthorizedGoal } from "./authorizedExecutor";
-import { getAgentState, clearAgentState } from "./agentState";
-import { getRecentExecutionContext, clearExecutionContext } from "./executionContext";
+import { clearAgentState } from "./agentState";
+import { clearExecutionContext } from "./executionContext";
 import { useWorkspaceStore } from "@/workspace/store";
+import { useTerminalConnectionStore } from "@/workspace/terminalConnection";
 import { InMemoryBridge } from "@/workspace/bridge";
 import { toolRun } from "./tools";
 import { vi } from "vitest";
@@ -36,6 +37,7 @@ vi.mock("./loop", async () => {
 
 function setupWorkspace(panelOpen = true) {
   useWorkspaceStore.setState({ panelOpen, workspacePath: "C:\\mock", bridge: new InMemoryBridge("test", {}), index: null, connected: true, runtime: { run: async (req:any)=> (toolRun as any)({}, req.command), capabilities: ()=> ({ run:true, test:true }) } as any });
+  useTerminalConnectionStore.setState({ status: "connected", lastVerifiedAt: Date.now(), justConnected: false, lastError: null });
 }
 
 describe("Problem #1 - Explicit target overrides old execution context", () => {

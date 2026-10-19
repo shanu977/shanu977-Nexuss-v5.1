@@ -41,6 +41,10 @@ import Dexie from "dexie";
 
 import { resolveIntent } from "@/workspace/agent/intent";
 import { runAuthorizedGoal } from "@/workspace/agent/authorizedExecutor";
+import {
+  TERMINAL_CONNECT_REQUIRED_MESSAGE,
+  useTerminalConnectionStore
+} from "@/workspace/terminalConnection";
 
 interface ChatStore extends ChatState {
   theme: string;
@@ -323,7 +327,7 @@ async function requestAssistant(
       const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
       const wsStateForPrompt = useWorkspaceStore.getState();
       // Lightweight vs full context: normal chat skips terminal/workspace/execution bloat
-      // Cache static strings: basePrompt/minimal are constants, terminalStatus only varies by panelOpen+model
+      // Cache static strings: basePrompt/minimal are constants, terminalStatus only varies by terminal connection + model
       const allMessages: { role: string; content: string }[] = (() => {
         const isNormal = preIntent && (preIntent.kind === "none" || preIntent.kind === "howto");
         if (isNormal) {
@@ -343,13 +347,14 @@ async function requestAssistant(
         // Full terminal/action path
         const workspaceResult = useWorkspaceStore.getState().buildContextFor(text);
         const basePrompt = isPhi3 ? PHI3_SYSTEM_PROMPT : SYSTEM_PROMPT;
-        const terminalStatus = wsStateForPrompt.panelOpen
+        const terminalConnected = useTerminalConnectionStore.getState().status === "connected";
+        const terminalStatus = terminalConnected
           ? isPhi3
-            ? "Terminal is OPEN — use <terminal>COMMAND</terminal> for inspection."
-            : "Terminal panel is OPEN — terminal is available via ```workspace-command {\"run\":{\"command\":\"...\"}}``` and will be auto-executed."
+            ? "Terminal is CONNECTED — use <terminal>COMMAND</terminal> for inspection."
+            : "Terminal is CONNECTED — terminal is available via ```workspace-command {\"run\":{\"command\":\"...\"}}``` and will be auto-executed."
           : isPhi3
-            ? "Terminal is CLOSED — you do NOT have terminal access right now. Do NOT output <terminal>. Explain or answer directly without terminal."
-            : "Terminal is CLOSED — you do NOT have terminal access. Do NOT use workspace-command. Explain or answer directly.";
+            ? "Terminal is NOT connected — you do NOT have terminal access right now. Do NOT output <terminal>. Explain or answer directly without terminal."
+            : "Terminal is NOT connected — you do NOT have terminal access. Do NOT use workspace-command. Explain or answer directly.";
         const execContextText = formatExecutionContextForPrompt(chat.id);
         return [
           { role: "system", content: basePrompt },
@@ -365,7 +370,7 @@ async function requestAssistant(
       if (process.env.NODE_ENV !== "production") {
         const cap = wsStateForPrompt;
         const ws = useWorkspaceStore.getState();
-        console.debug(`[TerminalCapability] panelOpen:${cap.panelOpen} pathEnabled:${cap.pathEnabled} connected:${ws.connected} terminalAvailable:${cap.panelOpen} model:${localModel.modelId}`);
+        console.debug(`[TerminalCapability] terminal:${useTerminalConnectionStore.getState().status} panelOpen:${cap.panelOpen} pathEnabled:${cap.pathEnabled} workspace:${ws.connected} model:${localModel.modelId}`);
         console.debug("[Agent] user request", text.slice(0, 200));
         // Log exact LLM request messages (truncated, no secrets)
         console.debug(`[LLM Request] model=${localModel.modelId} messages=${allMessages.map(m=>`[${m.role}:${m.content.slice(0,180).replace(/\n/g,' ')}]`).join(' | ')}`);
@@ -533,35 +538,45 @@ async function requestAssistant(
     // For filesystem ACTION, run through authorized executor BEFORE using model prose as answer.
     // Model output never becomes a terminal command.
     if (intent.kind === "action" && !abortController.signal.aborted) {
-      try {
-        const report = await runAuthorizedGoal(chat.id, text, {
-          panelOpen: wsState.panelOpen,
-          workspacePath: wsState.workspacePath || null,
-        });
-        if (report.finalResponse) {
-          // Execution produced an honest verified response (success, failure, clarification, terminal closed)
-          // That is authoritative; do not use model hallucination.
-          finalContent = report.finalResponse;
-          // Show execution progress immediately
-          display = finalContent;
-          updateMessage(true);
-          flushPending();
-        } else {
-          // No deterministic plan but intent was action and executor asked for model-based answer?
-          // Fall back to stripping fences and not executing model commands
-          const stripped = stripAllFences(loopDisplay).trim() || EMPTY_REPLY_FALLBACK;
-          // Ensure no model fence leaked into execution: never call executeFencedTools here
-          finalContent = stripped;
+      const terminalStatusNow = useTerminalConnectionStore.getState().status;
+      if (terminalStatusNow !== "connected") {
+        // Terminal not verified as connected: never execute and never fake it.
+        // Answer with the inline action that opens the Terminal connection screen.
+        finalContent = TERMINAL_CONNECT_REQUIRED_MESSAGE;
+        display = finalContent;
+        updateMessage(true);
+        flushPending();
+      } else {
+        try {
+          const report = await runAuthorizedGoal(chat.id, text, {
+            panelOpen: wsState.panelOpen,
+            workspacePath: wsState.workspacePath || null,
+          });
+          if (report.finalResponse) {
+            // Execution produced an honest verified response (success, failure, clarification, terminal closed)
+            // That is authoritative; do not use model hallucination.
+            finalContent = report.finalResponse;
+            // Show execution progress immediately
+            display = finalContent;
+            updateMessage(true);
+            flushPending();
+          } else {
+            // No deterministic plan but intent was action and executor asked for model-based answer?
+            // Fall back to stripping fences and not executing model commands
+            const stripped = stripAllFences(loopDisplay).trim() || EMPTY_REPLY_FALLBACK;
+            // Ensure no model fence leaked into execution: never call executeFencedTools here
+            finalContent = stripped;
+            display = finalContent;
+            updateMessage(true);
+            flushPending();
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          finalContent = `Execution failed: ${msg}`;
           display = finalContent;
           updateMessage(true);
           flushPending();
         }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        finalContent = `Execution failed: ${msg}`;
-        display = finalContent;
-        updateMessage(true);
-        flushPending();
       }
     } else if (intent.kind === "howto") {
       // HOW-TO: explain only, never execute. Strip any fences model may have hallucinated.
@@ -612,6 +627,23 @@ async function requestAssistant(
       display = finalContent;
       updateMessage(true);
       flushPending();
+    }
+
+    // Terminal/connector availability is infrastructure state, not an AI answer.
+    // Never persist internal connector error tokens (URLs, ports, CORS details)
+    // as an assistant reply; keep the technical detail in developer logs only
+    // and surface a human-readable notice + the real connection state instead.
+    if (finalContent.includes("CONNECTOR_UNAVAILABLE")) {
+      const detail = finalContent.split("CONNECTOR_UNAVAILABLE:")[1]?.trim() || "";
+      console.debug("[Terminal] connector unavailable (developer detail):", detail);
+      useTerminalConnectionStore.getState().markUnavailable(detail);
+      const notice = [
+        "The terminal connection was unavailable, so nothing was changed on your machine.",
+        "Open the Terminal panel, connect to your terminal, then try again."
+      ].join("\n");
+      useChatStore.setState({ error: notice });
+      finalContent = notice;
+      display = finalContent;
     }
 
     const asstMsg: Message = {

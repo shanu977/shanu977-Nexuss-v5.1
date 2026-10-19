@@ -14,6 +14,7 @@ from .config import settings
 from .database import Base, engine, check_database, get_db
 from .middleware.rate_limit import RateLimitMiddleware
 from .routes import (
+    account,
     admin,
     admin_analytics,
     admin_feedback,
@@ -28,6 +29,7 @@ from .routes import (
     sync,
 )
 from .services import firebase_service
+from .services.account_deletion import deletion_loop
 from .services.cleanup import cleanup_loop
 from .services.db_health import check_and_log
 from .services.fallback_service import ProviderFailureError
@@ -65,12 +67,16 @@ async def lifespan(app: FastAPI):
             )
         firebase_service.initialize_firebase()
     task = None
+    deletion_task = None
     if not is_test:
         task = asyncio.create_task(cleanup_loop())
+        deletion_task = asyncio.create_task(deletion_loop())
     logger.info("Backend started")
     yield
     if task is not None:
         task.cancel()
+    if deletion_task is not None:
+        deletion_task.cancel()
 
 
 app = FastAPI(
@@ -94,6 +100,7 @@ app.add_middleware(
         ("/auth/otp/send", 5),
         ("/auth/user-status", 10),
         ("/admin/", 15),
+        ("/account/delete", 5),
     ),
 )
 
@@ -106,6 +113,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(account.router)
 app.include_router(admin.router)
 app.include_router(admin_users.router)
 app.include_router(admin_analytics.router)

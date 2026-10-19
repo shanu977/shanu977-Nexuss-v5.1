@@ -225,3 +225,73 @@ def update_user_password(uid: str, password: str) -> bool:
     except Exception as e:
         logger.error(f"Failed to update Firebase password for UID {uid}: {e}")
         raise ValueError(f"Failed to update password: {str(e)}")
+
+
+def user_exists(uid: str) -> bool:
+    """Return True when the Firebase Authentication user still exists.
+
+    Used by the deletion verifier to prove the auth account is really gone,
+    and by identity resolution to refuse re-provisioning a user whose Firebase
+    account has already been deleted (an expired-but-unrevoked ID token would
+    otherwise recreate the row).
+
+    When the Admin SDK cannot answer (not initialized, transient outage) the
+    answer defaults to True so an uncertain state never silently drops or
+    duplicates data — the deletion job retries instead.
+    """
+    initialize_firebase()
+    try:
+        from firebase_admin import auth
+        from firebase_admin.auth import UserNotFoundError
+    except Exception:  # pragma: no cover - firebase_admin always installed
+        return True
+
+    try:
+        auth.get_user(uid)
+        return True
+    except UserNotFoundError:
+        return False
+    except Exception as e:
+        logger.warning(
+            "Could not determine whether the Firebase user exists (%s); "
+            "assuming it does so the operation retries safely.",
+            type(e).__name__,
+        )
+        return True
+
+
+def delete_user(uid: str) -> None:
+    """Permanently delete the Firebase Authentication user for ``uid``.
+
+    Uses the Admin SDK, which is authorized by the service account (the
+    service credential never leaves the backend). No recent-login prompt is
+    required by Firebase for Admin-SDK deletion — the caller must already
+    have proven possession of a verified, freshly issued ID token.
+
+    Raises:
+        ValueError: the Firebase user could not be deleted (SDK unavailable,
+            missing Admin credentials, network failure, ...). A user that
+            does not exist is treated as success so a retry after a partial
+            failure can still complete.
+    """
+    initialize_firebase()
+    try:
+        from firebase_admin import auth
+        from firebase_admin.auth import UserNotFoundError
+    except Exception as e:  # pragma: no cover - firebase_admin always installed
+        logger.error(f"firebase_admin import failed during user deletion: {e}")
+        raise ValueError("Firebase Admin SDK is unavailable.")
+
+    try:
+        auth.delete_user(uid)
+        logger.info("Firebase authentication user deleted")
+    except UserNotFoundError:
+        # Already gone (e.g. retry after a partially completed deletion).
+        logger.info("Firebase user already deleted; treating as success")
+    except Exception as e:
+        logger.error(
+            f"Failed to delete Firebase authentication user: {type(e).__name__}"
+        )
+        raise ValueError(
+            "The sign-in account could not be deleted. Please try again."
+        )

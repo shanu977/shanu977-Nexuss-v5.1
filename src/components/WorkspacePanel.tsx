@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWorkspaceStore } from "@/workspace/store";
+import { useTerminalConnectionStore } from "@/workspace/terminalConnection";
+import TerminalConnectionScreen from "@/components/TerminalConnectionScreen";
 import {
   ArrowRightLeftIcon,
   CheckIcon,
@@ -14,30 +16,21 @@ import {
 } from "@/components/icons";
 
 /**
- * Terminal / Agent workspace panel. Collapsed to a single header row it only
- * shows the connected workspace name; expanded it shows connection controls
- * and, once connected, the file count, live search, agent activity and terminal
- * output. The underlying workspace/terminal/agent loop is the same validated
- * bridge (FileSystemAccessBridge / InMemoryBridge / native) — this component
- * only presents it as a terminal workspace, not a legacy folder picker.
+ * Terminal / Agent workspace panel. The body is driven by the verified
+ * terminal connection state (single source of truth): while the local
+ * connector is not verified it shows the simple connection screen (one
+ * "Connect Terminal" action, no manual port/URL configuration), and once
+ * connected it shows the terminal connection status plus the workspace file
+ * search, staged changes and command execution surfaces. All execution still
+ * flows through the existing authorized terminal runtime — this component only
+ * presents the connection and its results.
  */
 export default function WorkspacePanel() {
-  const workspace = useWorkspaceStore((s) => s.workspace);
-  const connected = useWorkspaceStore((s) => s.connected);
-  const connecting = useWorkspaceStore((s) => s.connecting);
-  const status = useWorkspaceStore((s) => s.status);
   const error = useWorkspaceStore((s) => s.error);
   const clearError = useWorkspaceStore((s) => s.clearError);
   const index = useWorkspaceStore((s) => s.index);
-  // Diagnostic: log Zustand selector values on every render to verify single store instance
-  if (typeof window !== "undefined") {
-    console.debug("[Path Panel] render selectors", { connected, hasWorkspace: !!workspace, workspaceName: workspace?.name, status, hasIndex: !!index, timestamp: Date.now() });
-  }
   const searchResults = useWorkspaceStore((s) => s.searchResults);
   const searching = useWorkspaceStore((s) => s.searching);
-  const connectLocal = useWorkspaceStore((s) => s.connectLocal);
-  const connectDemo = useWorkspaceStore((s) => s.connectDemo);
-  const disconnect = useWorkspaceStore((s) => s.disconnect);
   const search = useWorkspaceStore((s) => s.search);
   const closePanel = useWorkspaceStore((s) => s.closePanel);
   const pendingChanges = useWorkspaceStore((s) => s.pendingChanges);
@@ -56,16 +49,22 @@ export default function WorkspacePanel() {
   const rejectPendingCommand = useWorkspaceStore((s) => s.rejectPendingCommand);
   const clearCommandError = useWorkspaceStore((s) => s.clearCommandError);
   const clearLastCommandResult = useWorkspaceStore((s) => s.clearLastCommandResult);
+  const terminalStatus = useTerminalConnectionStore((s) => s.status);
+  const justConnected = useTerminalConnectionStore((s) => s.justConnected);
+  const checkConnection = useTerminalConnectionStore((s) => s.checkConnection);
+  const connectTerminal = useTerminalConnectionStore((s) => s.connect);
+  const disconnectTerminal = useTerminalConnectionStore((s) => s.disconnect);
   const [query, setQuery] = useState("");
-  const [isExpanded, setIsExpanded] = useState(false);
+  // Opening the Terminal must show the connection screen immediately; the
+  // connected panel keeps the existing compact-by-default behaviour.
+  const [isExpanded, setIsExpanded] = useState(terminalStatus !== "connected");
   const panelId = "workspace-details";
 
-  const connectingLabel =
-    status === "indexing"
-      ? "Indexing files…"
-      : status === "reading"
-        ? "Reading folder…"
-        : "Selecting folder…";
+  // Opening the panel verifies whether the local connector is already
+  // reachable — no manual configuration, no fake "ready" state.
+  useEffect(() => {
+    void checkConnection();
+  }, [checkConnection]);
 
   const handleSearch = (value: string) => {
     setQuery(value);
@@ -79,10 +78,10 @@ export default function WorkspacePanel() {
           aria-label="Terminal workspace"
           className="overflow-hidden rounded-2xl border border-border bg-card shadow-lg animate-fade-in-up"
         >
-          {/* Header row: the left side toggles collapse/expand (the compact
-              collapsed row shows the connected workspace name); the X fully
+          {/* Header row: the left side toggles collapse/expand; the X fully
               closes the panel. Collapsing only hides the body below — it never
-              touches the connection, index, or permissions. */}
+              touches the connection or staged work. The small status dot shows
+              the verified terminal connection state. */}
           <div className="flex w-full items-center gap-1 px-4 py-3">
             <button
               type="button"
@@ -94,17 +93,6 @@ export default function WorkspacePanel() {
               <span className="flex min-w-0 items-center gap-2 text-xs font-mono font-semibold text-foreground">
                 <TerminalIcon className="h-4 w-4 shrink-0 text-primary" />
                 <span className="truncate">Terminal</span>
-                {connected && workspace && !isExpanded && (
-                  <span className="truncate text-[10px] font-normal text-muted-foreground">
-                    • {workspace.name}
-                  </span>
-                )}
-                {connecting && (
-                  <span className="flex items-center gap-1.5 text-[10px] font-normal text-muted-foreground">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
-                    {connectingLabel}
-                  </span>
-                )}
               </span>
               <ChevronDownIcon
                 className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
@@ -112,6 +100,42 @@ export default function WorkspacePanel() {
                 }`}
               />
             </button>
+            <span
+              role="status"
+              aria-label={
+                terminalStatus === "connected"
+                  ? "Terminal connected"
+                  : terminalStatus === "connecting"
+                    ? "Connecting to terminal"
+                    : terminalStatus === "permission_required"
+                      ? "Local network permission required"
+                      : terminalStatus === "unavailable"
+                        ? "Local connector not running"
+                        : terminalStatus === "error"
+                          ? "Terminal connection failed"
+                          : "Terminal disconnected"
+              }
+              className="flex shrink-0 items-center gap-1.5 pr-1"
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  terminalStatus === "connected"
+                    ? "bg-emerald-500"
+                    : terminalStatus === "connecting"
+                      ? "animate-pulse bg-primary"
+                      : terminalStatus === "permission_required"
+                        ? "bg-amber-500"
+                        : terminalStatus === "unavailable" || terminalStatus === "error"
+                          ? "bg-destructive"
+                          : "bg-muted-foreground/50"
+                }`}
+              />
+              {terminalStatus === "connecting" && (
+                <span className="text-[10px] font-mono font-normal text-muted-foreground">
+                  Connecting…
+                </span>
+              )}
+            </span>
             <button
               type="button"
               onClick={closePanel}
@@ -133,41 +157,48 @@ export default function WorkspacePanel() {
                 : "max-h-0 overflow-hidden"
             }
           >
-          {!connected ? (
-            <div className="border-t border-border p-4 animate-fade-in-up">
-              <div className="flex items-center gap-2 text-[11px] font-mono font-medium text-muted-foreground">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                Terminal ready
-              </div>
-              <p className="mt-2 text-[11px] font-mono text-muted-foreground">
-                Nexuss can execute commands when needed.
-              </p>
-              <div className="mt-3 rounded-lg bg-muted/30 p-3 font-mono text-xs text-muted-foreground">
-                <span className="text-primary">›</span> <span className="animate-pulse">_</span>
-              </div>
-            </div>
+          {terminalStatus !== "connected" ? (
+            <TerminalConnectionScreen
+              status={terminalStatus}
+              onConnect={() => void connectTerminal()}
+            />
           ) : (
             <div className="border-t border-border p-4 animate-fade-in-up">
-              <div className="flex items-center justify-between gap-2">
+              {/* Verified connection status — only ever shown after the local
+                  connector health + execution capability checks succeeded. */}
+              <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[10px] font-mono text-muted-foreground">
-                    {index ? `${index.files.length} files indexed` : "Indexing…"}
+                  <p className="flex items-center gap-2 text-[11px] font-mono font-medium text-foreground">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    Terminal Connected
                   </p>
-                  {index && index.files.length === 0 && (
-                    <p className="mt-0.5 text-[10px] font-mono text-muted-foreground/80">
-                      No supported files found in this folder.
-                    </p>
-                  )}
+                  <p className="mt-1.5 text-[11px] font-mono text-muted-foreground">
+                    {justConnected
+                      ? "Nexuss can now execute authorized terminal tasks on this device."
+                      : "Nexuss can use the authorized terminal on this device."}
+                  </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => void disconnect()}
-                  className="flex items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1 text-[10px] font-mono font-medium text-destructive transition-colors hover:bg-destructive/20 cursor-pointer"
+                  onClick={() => void disconnectTerminal()}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1 text-[10px] font-mono font-medium text-destructive transition-colors hover:bg-destructive/20 cursor-pointer"
                 >
                   <XCircleIcon className="h-3.5 w-3.5" />
                   Disconnect
                 </button>
               </div>
+
+              {index && (
+                <p className="mt-3 text-[10px] font-mono text-muted-foreground">
+                  {index.files.length} files indexed
+                  {index.files.length === 0 && (
+                    <span className="text-muted-foreground/80">
+                      {" "}
+                      — no supported files found in this folder.
+                    </span>
+                  )}
+                </p>
+              )}
 
               <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-2.5 py-2">
                 <SearchIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

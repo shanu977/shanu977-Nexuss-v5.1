@@ -18,6 +18,7 @@ export interface AuthorizedAction {
   source?: string; // for move/copy
   destination?: string; // for move/copy
   command?: string; // for run
+  expectedOutput?: string; // stdout the run action must contain to be considered successful
 }
 
 export interface StructuredToolResult {
@@ -34,6 +35,7 @@ export interface StructuredToolResult {
   path?: string; // verified absolute path from tool stdout, not from command
   error?: string;
   durationMs?: number;
+  verification?: string; // semantic check outcome ("verified" or failure reason)
 }
 
 export interface AgentGoalState {

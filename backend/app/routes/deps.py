@@ -10,13 +10,22 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import User, UserSettings
 from ..models.models import utc_now_ms
-from ..services import firebase_service
+from ..services import account_deletion, firebase_service
 
 logger = logging.getLogger("uvicorn.error")
 
 LOCAL_USER_ID = "test-uid-1"
 
 BLOCKED_MESSAGE = "This account has been blocked. Contact support for help."
+
+DELETION_IN_PROGRESS_MESSAGE = (
+    "Your account is being permanently deleted. This feature is locked until "
+    "the deletion finishes — no new account data can be created."
+)
+
+DELETED_ACCOUNT_MESSAGE = (
+    "This account no longer exists. Please sign in again."
+)
 
 
 def _ensure_not_blocked(user: User) -> User:
@@ -35,18 +44,16 @@ def _ensure_not_blocked(user: User) -> User:
     return user
 
 
-def get_current_user(
-    authorization: str | None = Header(None, alias="Authorization"),
-    db: Session = Depends(get_db),
-) -> User:
-    """Centralized authentication dependency.
+def _verify_bearer_token(authorization: str | None) -> tuple[str, dict]:
+    """Verify the Authorization header and return ``(firebase_uid, claims)``.
 
     1. Reads Authorization header (`Bearer <Firebase ID Token>`).
-    2. Verifies token with Firebase Admin SDK.
-    3. Extracts the verified Firebase UID.
-    4. Looks up the application user by firebase_uid.
-    5. Provisions a user and default UserSettings only for a new email.
-    6. Returns verified User instance.
+    2. Verifies the token with the Firebase Admin SDK.
+    3. Returns the signed, verified uid — never a client-supplied value.
+
+    The decoded claims are exposed so high-security routes (account deletion)
+    can enforce additional token-level requirements such as a recent
+    ``iat``.
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -89,15 +96,57 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token payload missing uid",
         )
+    return uid, decoded
 
-    email = decoded.get("email") or f"{uid}@firebase.user"
-    name = decoded.get("name") or email.split("@")[0]
-    photo_url = decoded.get("picture")
+
+def get_verified_firebase_session(
+    authorization: str | None = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> tuple[str, dict, User | None]:
+    """``(uid, claims, user_or_none)`` for routes that must survive deletion.
+
+    Used by the deletion status/start endpoints: they need the verified
+    identity but must keep working *while* (and after) the account row is
+    removed, so they never provision a user and never apply the deletion lock.
+    """
+    uid, decoded = _verify_bearer_token(authorization)
+    user = db.scalar(select(User).where(User.firebase_uid == uid))
+    return uid, decoded, user
+
+
+def get_current_identity(
+    authorization: str | None = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> tuple[User, dict]:
+    """Centralized authentication dependency.
+
+    Resolves the application user from the verified Firebase uid, then
+    enforces the account-deletion lock: while a deletion job exists the
+    account is frozen so no new user-owned rows can be created mid-deletion.
+    """
+    uid, decoded = _verify_bearer_token(authorization)
 
     # 1. Search user by firebase_uid
     user = db.scalar(select(User).where(User.firebase_uid == uid))
     if user is not None:
-        return _ensure_not_blocked(user)
+        if account_deletion.get_active_job(db, uid) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail=DELETION_IN_PROGRESS_MESSAGE,
+            )
+        return _ensure_not_blocked(user), decoded
+
+    # A deletion is already underway for this identity: never re-provision it
+    # (that would recreate the very rows the job is removing).
+    if account_deletion.get_active_job(db, uid) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail=DELETION_IN_PROGRESS_MESSAGE,
+        )
+
+    email = decoded.get("email") or f"{uid}@firebase.user"
+    name = decoded.get("name") or email.split("@")[0]
+    photo_url = decoded.get("picture")
 
     # A legacy row with the same email but no UID must be linked by a trusted
     # production data operation, not by the first token that presents that
@@ -106,6 +155,16 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User identity is not linked to this Firebase account.",
+        )
+
+    # Firebase Authentication is the source of truth for existence. An ID
+    # token stays verifiable until it expires even after the account was
+    # deleted, so confirm the account still exists before creating rows for
+    # it — otherwise a completed deletion would silently resurrect the user.
+    if not firebase_service.user_exists(uid):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=DELETED_ACCOUNT_MESSAGE,
         )
 
     # 2. Create a new application user from the verified Firebase identity.
@@ -148,7 +207,24 @@ def get_current_user(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="User provisioning race condition failed.",
             )
-    return _ensure_not_blocked(user)
+        if account_deletion.get_active_job(db, uid) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail=DELETION_IN_PROGRESS_MESSAGE,
+            )
+    return _ensure_not_blocked(user), decoded
+
+
+def get_current_user(
+    identity: tuple[User, dict] = Depends(get_current_identity),
+) -> User:
+    """Authenticated application user for a verified Firebase ID token.
+
+    Thin wrapper over :func:`get_current_identity` so every existing route
+    keeps the exact same behaviour while routes that need the verified token
+    claims can depend on ``get_current_identity`` directly.
+    """
+    return identity[0]
 
 
 def get_current_admin(user: User = Depends(get_current_user)) -> User:

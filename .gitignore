@@ -8,6 +8,11 @@ node_modules
 *.tsbuildinfo
 .DS_Store
 
+# Test runner / browser diagnostics output
+/test-results/
+/playwright-report/
+/.chrome-*-profile/
+
 # Python (backend)
 .venv/
 venv/

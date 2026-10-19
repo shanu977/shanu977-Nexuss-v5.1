@@ -26,7 +26,7 @@ export interface LocalChatMessage {
 
 const MODEL_DISCOVERY_TIMEOUT_MS = 6000;
 
-function timeoutFetch(
+export function timeoutFetch(
   url: string,
   opts: RequestInit,
   ms: number
@@ -80,6 +80,51 @@ async function isConnectorAvailable(): Promise<boolean> {
   }
 }
 
+// The shared connector probe gained an optional `{ force }` option (bypasses
+// the short health cache). Older runtimes still export the original 0-arg
+// signature, which harmlessly ignores the option. A locally typed alias keeps
+// both implementations compatible without casts at the call sites.
+type ConnectorProbe = (opts?: { force?: boolean }) => Promise<boolean>;
+const sharedConnectorProbe: ConnectorProbe = sharedIsConnectorAvailable;
+
+/**
+ * Fresh connector availability probe for flows that must not trust a cached
+ * answer (setup detection, model download). Passes `{ force: true }`; runtimes
+ * that predate the option fall back to their normal 5s TTL behaviour.
+ */
+export function probeLocalConnectorFresh(): Promise<boolean> {
+  return sharedConnectorProbe({ force: true });
+}
+
+// ---------------------------------------------------------------------------
+// Desktop (Electron) bridge surface.
+//
+// The preload bridge exposes `window.nexussDesktop.ollama` whose methods all
+// take a single object payload (see desktop/ipc-bridge.ts). Declaring the exact
+// shapes here keeps renderer and preload contracts in sync instead of silently
+// sending positional arguments into an object-parameter handler.
+// ---------------------------------------------------------------------------
+
+interface DesktopOllamaApi {
+  test?: (req: { endpoint: string; apiKey?: string }) => Promise<LocalTestResult>;
+}
+
+function getDesktopOllama(): DesktopOllamaApi | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { nexussDesktop?: { ollama?: DesktopOllamaApi } })
+    .nexussDesktop?.ollama;
+}
+
+/** The desktop bridge only ever talks to loopback; everything else uses fetch. */
+function isLoopbackEndpoint(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
 export async function testLocalEndpoint(
   rawEndpoint: string,
   providerType: string = "generic",
@@ -101,6 +146,20 @@ export async function testLocalEndpoint(
     providerType as never
   );
 
+  // Try the desktop IPC bridge first — the Electron main process fetches
+  // loopback endpoints without CORS/PNA restrictions, so this works even when
+  // the browser cannot reach Ollama directly. Non-loopback endpoints are not
+  // handled by the bridge and fall through to the normal fetch path.
+  const desktopOllama = getDesktopOllama();
+
+  if (isDesktop() && desktopOllama?.test && isLoopbackEndpoint(endpoint)) {
+    try {
+      return await desktopOllama.test({ endpoint, apiKey });
+    } catch {
+      // Fall through to the connector / direct fetch path
+    }
+  }
+
   // For Ollama on localhost:11434, try the Nexuss Local Connector first.
   if (
     providerType === "ollama" &&
@@ -116,44 +175,6 @@ export async function testLocalEndpoint(
         endpoint = CONNECTOR_ENDPOINT;
       }
     } catch {}
-  }
-
-  // Try desktop IPC first if available.
-  const desktopOllama = (
-    typeof window !== "undefined"
-      ? (
-          window as unknown as {
-            nexussDesktop?: {
-              ollama?: {
-                test?: (
-                  url: string,
-                  key?: string
-                ) => Promise<LocalTestResult>;
-              };
-            };
-          }
-        ).nexussDesktop?.ollama
-      : undefined
-  ) as
-    | {
-        test?: (
-          url: string,
-          key?: string
-        ) => Promise<LocalTestResult>;
-      }
-    | undefined;
-
-  if (isDesktop() && desktopOllama?.test) {
-    try {
-      const res = await desktopOllama.test(
-        endpoint,
-        apiKey
-      );
-
-      return res;
-    } catch {
-      // Fall through to direct fetch
-    }
   }
 
   // 1. Try /models discovery
@@ -631,76 +652,294 @@ export interface OllamaPullProgress {
   completed?: number;
   total?: number;
   percent?: number;
+  /** Bytes/sec measured from real download events — only set when known. */
+  bytesPerSecond?: number;
 }
 
+/** Thrown when the user cancels an in-flight model download. */
+export class PullCancelledError extends Error {
+  constructor() {
+    super("Download cancelled.");
+    this.name = "PullCancelledError";
+  }
+}
+
+export function isPullCancelled(e: unknown): boolean {
+  return (
+    e instanceof PullCancelledError ||
+    (e instanceof Error && (e.name === "PullCancelledError" || e.name === "AbortError"))
+  );
+}
+
+/** Conservative model id check — registry names, never shell input. */
+const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/:-]{0,127}$/;
+
+interface ActivePull {
+  model: string;
+  promise: Promise<DiscoveredOllamaModelDetailed>;
+  controller: AbortController;
+}
+
+let activePull: ActivePull | null = null;
+
+/** Model id of the download currently in flight, if any. */
+export function activeOllamaPullModel(): string | null {
+  return activePull?.model ?? null;
+}
+
+/** Cancel the in-flight download when the underlying transport supports it. */
+export function cancelOllamaPull(): void {
+  activePull?.controller.abort();
+}
+
+interface DesktopPullApi {
+  pullModel?: (model: string) => Promise<{
+    name: string;
+    size?: number;
+    modifiedAt?: string;
+    family?: string;
+    parameterSize?: string;
+    quantization?: string;
+  }>;
+  onPullProgress?: (
+    callback: (progress: OllamaPullProgress) => void
+  ) => () => void;
+}
+
+function getDesktopPullApi(): DesktopPullApi | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { nexussDesktop?: { ollama?: DesktopPullApi } })
+    .nexussDesktop?.ollama;
+}
+
+/**
+ * Download an Ollama model with real progress and cancellation support.
+ * Works in the desktop app (IPC) and in the browser (Ollama's NDJSON
+ * `/api/pull` stream, via the local connector when available so production
+ * browsers are not blocked by CORS). Duplicate pulls of the same model
+ * share one in-flight promise; a different model is rejected.
+ */
 export async function pullOllamaModel(
   model: string,
-  onProgress?: (
-    progress: OllamaPullProgress
-  ) => void
+  onProgress?: (progress: OllamaPullProgress) => void
 ): Promise<DiscoveredOllamaModelDetailed> {
-  const desktopOllama = (
-    typeof window !== "undefined"
-      ? (
-          window as unknown as {
-            nexussDesktop?: {
-              ollama?: {
-                pullModel?: (
-                  model: string
-                ) => Promise<{
-                  name: string;
-                  size?: number;
-                  modifiedAt?: string;
-                  family?: string;
-                  parameterSize?: string;
-                  quantization?: string;
-                }>;
-
-                onPullProgress?: (
-                  callback: (
-                    progress: OllamaPullProgress
-                  ) => void
-                ) => () => void;
-              };
-            };
-          }
-        ).nexussDesktop?.ollama
-      : undefined
-  );
-
-  if (
-    !isDesktop() ||
-    !desktopOllama?.pullModel
-  ) {
-    throw new Error(
-      "Local model download is only available in the Nexuss desktop app."
-    );
+  const id = model.trim();
+  if (!MODEL_ID_PATTERN.test(id)) {
+    throw new Error("That model name isn't valid. Pick a model from the list.");
+  }
+  if (activePull) {
+    if (activePull.model === id) return activePull.promise;
+    throw new Error("Another model download is already in progress.");
   }
 
-  const removeListener =
-    desktopOllama.onPullProgress?.(
-      (progress) => {
-        onProgress?.(progress);
+  const controller = new AbortController();
+  const promise = runOllamaPull(id, onProgress, controller.signal);
+  activePull = { model: id, promise, controller };
+  try {
+    return await promise;
+  } finally {
+    if (activePull?.promise === promise) activePull = null;
+  }
+}
+
+async function runOllamaPull(
+  model: string,
+  onProgress?: (progress: OllamaPullProgress) => void,
+  signal?: AbortSignal
+): Promise<DiscoveredOllamaModelDetailed> {
+  const desktop = getDesktopPullApi();
+  if (isDesktop() && desktop?.pullModel) {
+    // Desktop IPC has no safe cancellation: we can only refuse to start or
+    // discard the result after it completes.
+    if (signal?.aborted) throw new PullCancelledError();
+    const remove = desktop.onPullProgress?.((progress) => {
+      onProgress?.({ ...progress, model: progress.model || model });
+    });
+    try {
+      const result = await desktop.pullModel(model);
+      if (signal?.aborted) throw new PullCancelledError();
+      return {
+        id: result.name,
+        modelId: result.name,
+        size: result.size,
+        modified: result.modifiedAt,
+        family: result.family,
+        parameterSize: result.parameterSize,
+        quantization: result.quantization,
+      };
+    } finally {
+      remove?.();
+    }
+  }
+  return pullViaHttp(model, onProgress, signal);
+}
+
+function friendlyPullError(raw: string): string {
+  if (/pull model manifest|model.*not found|does not exist|no such model/i.test(raw)) {
+    return "That model wasn't found in the Ollama registry. Pick another model.";
+  }
+  if (/connection refused|econnrefused|fetch failed/i.test(raw)) {
+    return "Couldn't reach Ollama. Make sure it's running and try again.";
+  }
+  if (/not found/i.test(raw)) {
+    return "That model wasn't found in the Ollama registry. Pick another model.";
+  }
+  return raw.length > 160 ? "The download failed. Please try again." : raw;
+}
+
+async function readPullError(res: Response): Promise<string | null> {
+  try {
+    const text = await res.text();
+    try {
+      const parsed = JSON.parse(text) as { error?: unknown };
+      return typeof parsed?.error === "string" ? parsed.error : null;
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function pullViaHttp(
+  model: string,
+  onProgress?: (progress: OllamaPullProgress) => void,
+  signal?: AbortSignal
+): Promise<DiscoveredOllamaModelDetailed> {
+  const connectorUp = await probeLocalConnectorFresh();
+  const urls = connectorUp
+    ? ["http://127.0.0.1:11435/api/pull", "http://localhost:11434/api/pull"]
+    : ["http://localhost:11434/api/pull"];
+
+  let lastError: unknown = null;
+  for (const url of urls) {
+    if (signal?.aborted) throw new PullCancelledError();
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, stream: true }),
+        signal,
+      });
+    } catch (e) {
+      if (signal?.aborted) throw new PullCancelledError();
+      lastError = e;
+      continue;
+    }
+
+    if (!res.ok) {
+      const detail = await readPullError(res);
+      if (res.status === 404) {
+        throw new Error("That model wasn't found in the Ollama registry. Pick another model.");
       }
-    );
+      lastError = new Error(
+        detail ? friendlyPullError(detail) : `Ollama returned ${res.status} for the download request.`
+      );
+      continue;
+    }
+
+    try {
+      await consumePullStream(res, model, onProgress, signal);
+    } catch (e) {
+      if (signal?.aborted) throw new PullCancelledError();
+      throw e;
+    }
+    return { id: model, modelId: model };
+  }
+
+  if (lastError instanceof Error) throw lastError;
+  throw new Error("Couldn't reach Ollama to download the model. Make sure Ollama is running and try again.");
+}
+
+async function consumePullStream(
+  res: Response,
+  model: string,
+  onProgress?: (progress: OllamaPullProgress) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!res.body) throw new Error("Ollama returned an empty download stream.");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let speedRef: { t: number; bytes: number } | null = null;
+  let sawSuccess = false;
 
   try {
-    const result =
-      await desktopOllama.pullModel(model);
+    while (true) {
+      if (signal?.aborted) {
+        try {
+          await reader.cancel();
+        } catch {
+          // Ignore cancel failures.
+        }
+        throw new PullCancelledError();
+      }
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    return {
-      id: result.name,
-      modelId: result.name,
-      size: result.size,
-      modified: result.modifiedAt,
-      family: result.family,
-      parameterSize:
-        result.parameterSize,
-      quantization:
-        result.quantization,
-    };
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+
+        let event: {
+          status?: unknown;
+          total?: unknown;
+          completed?: unknown;
+          error?: unknown;
+        };
+        try {
+          event = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (typeof event.error === "string" && event.error) {
+          throw new Error(friendlyPullError(event.error));
+        }
+
+        const status = typeof event.status === "string" ? event.status : "";
+        const total = typeof event.total === "number" ? event.total : undefined;
+        const completed = typeof event.completed === "number" ? event.completed : undefined;
+
+        let bytesPerSecond: number | undefined;
+        if (completed != null) {
+          const now = Date.now();
+          if (!speedRef) {
+            speedRef = { t: now, bytes: completed };
+          } else if (now > speedRef.t) {
+            const delta = completed - speedRef.bytes;
+            if (delta >= 0) {
+              bytesPerSecond = Math.round(delta / ((now - speedRef.t) / 1000));
+            }
+            speedRef = { t: now, bytes: completed };
+          }
+        }
+
+        const percent =
+          total != null && total > 0 && completed != null
+            ? Math.min(100, (completed / total) * 100)
+            : undefined;
+
+        onProgress?.({ model, status, completed, total, percent, bytesPerSecond });
+        if (status === "success") sawSuccess = true;
+      }
+    }
+
+    if (signal?.aborted) throw new PullCancelledError();
+    if (!sawSuccess) {
+      throw new Error("The download ended before it finished. Please try again.");
+    }
   } finally {
-    removeListener?.();
+    try {
+      reader.releaseLock();
+    } catch {
+      // Lock may already be released after cancel().
+    }
   }
 }
 
@@ -891,9 +1130,15 @@ export async function* streamLocalChat(
         .toLowerCase()
         .includes("networkerror");
 
-    // Fast fallback through connector.
+    if (!isNetwork) {
+      throw new Error(
+        `Cannot connect to local model: ${msg}`
+      );
+    }
+
+    // Network/CORS failure on a direct Ollama endpoint: retry through the
+    // local connector, which proxies to Ollama without browser CORS limits.
     if (
-      isNetwork &&
       isDirect &&
       (
         endpoint ===
@@ -942,14 +1187,8 @@ export async function* streamLocalChat(
         );
       }
     } else {
-      if (isNetwork) {
-        throw new Error(
-          "Cannot connect to local model. Check that the server is running and CORS is configured (e.g., OLLAMA_ORIGINS=*)."
-        );
-      }
-
       throw new Error(
-        `Cannot connect to local model: ${msg}`
+        "Cannot connect to local model. Check that the server is running and CORS is configured (e.g., OLLAMA_ORIGINS=*)."
       );
     }
   }

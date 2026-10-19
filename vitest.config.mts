@@ -53,6 +53,17 @@ export default defineConfig({
           fileParallelism: false,
           testTimeout: 30_000
         }
+      },
+      {
+        extends: true,
+        test: {
+          // Loopback gateway tests: spawn the real connector on a free port.
+          name: "connector",
+          environment: "node",
+          include: ["local-connector/**/*.test.ts"],
+          fileParallelism: false,
+          testTimeout: 20_000
+        }
       }
     ]
   }

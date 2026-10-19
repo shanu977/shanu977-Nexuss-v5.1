@@ -1,9 +1,33 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import { useWorkspaceStore } from "@/workspace/store";
+import {
+  useTerminalConnectionStore,
+  resetTerminalConnection
+} from "@/workspace/terminalConnection";
+
+/** Health response the local connector answers with when it is running. */
+function healthOk() {
+  return new Response(JSON.stringify({ status: "ok", connector: "nexuss-local", terminal: "enabled" }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" }
+  });
+}
+
+/** Stub the connector health probe: reachable or unreachable. */
+function stubHealth(reachable: boolean) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      if (!reachable) throw new Error("Failed to fetch");
+      return healthOk();
+    })
+  );
+}
 
 beforeEach(async () => {
+  resetTerminalConnection();
   await useWorkspaceStore.getState().disconnect();
   useWorkspaceStore.getState().closePanel();
 });
@@ -11,45 +35,123 @@ beforeEach(async () => {
 afterEach(async () => {
   await useWorkspaceStore.getState().disconnect();
   cleanup();
+  resetTerminalConnection();
+  vi.unstubAllGlobals();
 });
 
-describe("WorkspacePanel", () => {
-  it("shows terminal workspace when no workspace is connected", () => {
+describe("WorkspacePanel connection screen", () => {
+  beforeEach(() => {
+    // Passive check on mount must not reach a connector.
+    stubHealth(false);
+  });
+
+  it("shows the one-click connect screen when the terminal is not connected", async () => {
     render(<WorkspacePanel />);
+    // The passive check runs on mount; wait for it to settle back to the
+    // connect screen before asserting.
+    expect(await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByLabelText("Terminal workspace")).toBeInTheDocument();
-    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
-    expect(screen.getByText(/Nexuss can execute commands when needed/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Connect workspace" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Try demo workspace" })).not.toBeInTheDocument();
-  });
-
-  it("shows terminal ready immediately without folder picker", async () => {
-    render(<WorkspacePanel />);
-    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
+    expect(screen.getByText("Connect Nexuss to your computer's terminal.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Connect workspace/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Try demo workspace/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/Connect a folder/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Try sample workspace/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/127\.0\.0\.1|ECONNREFUSED|Failed to fetch/)).not.toBeInTheDocument();
   });
 
-  it("runs a hybrid search and lists ranked results", async () => {
-    await useWorkspaceStore.getState().connectDemo();
-    useWorkspaceStore.setState({ pathEnabled: true });
+  it("starts expanded on the connection screen and toggles via the header", async () => {
     render(<WorkspacePanel />);
-    // Expand collapsed panel to reveal search
-    fireEvent.click(screen.getByRole("button", { name: /Terminal/i }));
-    const input = await screen.findByPlaceholderText("Search files, symbols, error text…");
-    fireEvent.change(input, { target: { value: "login" } });
-    const result = await screen.findByText("src/auth/login.ts");
-    expect(result).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: /Terminal/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: /Connect Terminal/ })).toBeInTheDocument();
   });
 
-  it("shows no-matches feedback for an unmatched query", async () => {
-    await useWorkspaceStore.getState().connectDemo();
-    useWorkspaceStore.setState({ pathEnabled: true });
+  it("shows the connecting screen while the connector is being verified", () => {
+    useTerminalConnectionStore.setState({ status: "connecting" });
     render(<WorkspacePanel />);
-    fireEvent.click(screen.getByRole("button", { name: /Terminal/i }));
-    const input = await screen.findByPlaceholderText("Search files, symbols, error text…");
-    fireEvent.change(input, { target: { value: "zzzznothing" } });
-    expect(await screen.findByText("No matches.")).toBeInTheDocument();
+    expect(screen.getByText("Connecting to your terminal...")).toBeInTheDocument();
+    expect(screen.getByLabelText("Connecting to terminal")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Connect Terminal/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the error screen with a Try Again action, without technical details", async () => {
+    useTerminalConnectionStore.setState({
+      status: "error",
+      failureReason: "invalid-response",
+      lastError: "unexpected health response"
+    });
+    render(<WorkspacePanel />);
+    // The passive check re-attempts once and settles back to the error screen.
+    expect(await screen.findByText("Terminal connection failed", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByText("node local-connector/server.js")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Try Again/ })).toBeInTheDocument();
+    expect(screen.queryByText(/127\.0\.0\.1|ECONNREFUSED|Failed to fetch/)).not.toBeInTheDocument();
+  });
+
+  it("connects the terminal after clicking Connect Terminal", async () => {
+    stubHealth(false);
+    render(<WorkspacePanel />);
+    const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+    // The connector starts, then the user connects with one click.
+    stubHealth(true);
+    fireEvent.click(connectBtn);
+
+    expect(await screen.findByText("Terminal Connected", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Disconnect/ })).toBeInTheDocument();
+    expect(
+      screen.getByText("Nexuss can now execute authorized terminal tasks on this device.")
+    ).toBeInTheDocument();
+    expect(useTerminalConnectionStore.getState().status).toBe("connected");
+  });
+
+  it("shows the connector-unavailable screen with the startup command when unreachable", async () => {
+    stubHealth(false);
+    render(<WorkspacePanel />);
+    const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+    fireEvent.click(connectBtn);
+
+    expect(await screen.findByText("Local connector not running", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByText("node local-connector/server.js")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Try Again/ })).toBeInTheDocument();
+    expect(useTerminalConnectionStore.getState().status).toBe("unavailable");
+    expect(screen.queryByText(/127\.0\.0\.1|ECONNREFUSED|Failed to fetch/)).not.toBeInTheDocument();
+  });
+
+  it("shows permission guidance when the browser blocks the local-network request", async () => {
+    stubHealth(false);
+    Object.defineProperty(window.navigator, "permissions", {
+      configurable: true,
+      value: { query: vi.fn(async () => ({ state: "denied" })) }
+    });
+    render(<WorkspacePanel />);
+    const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+    fireEvent.click(connectBtn);
+
+    expect(await screen.findByText("Local network permission required", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Try Again/ })).toBeInTheDocument();
+    expect(useTerminalConnectionStore.getState().status).toBe("permission_required");
+    delete (window.navigator as unknown as { permissions?: unknown }).permissions;
+  });
+
+  it("Disconnect returns to the connect screen and is remembered for the session", async () => {
+    stubHealth(false);
+    render(<WorkspacePanel />);
+    const connectBtn = await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 });
+    stubHealth(true);
+    fireEvent.click(connectBtn);
+    expect(await screen.findByText("Terminal Connected", {}, { timeout: 5000 })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Disconnect/ }));
+
+    expect(await screen.findByRole("button", { name: /Connect Terminal/ }, { timeout: 5000 })).toBeInTheDocument();
+    expect(useTerminalConnectionStore.getState().status).toBe("disconnected");
+    expect(window.sessionStorage.getItem("nexuss.terminal.disconnected")).toBe("1");
   });
 
   it("closes the panel via the header close button", () => {
@@ -58,35 +160,59 @@ describe("WorkspacePanel", () => {
     fireEvent.click(screen.getByLabelText("Close workspace panel"));
     expect(useWorkspaceStore.getState().panelOpen).toBe(false);
   });
+});
 
-  it("shows terminal ready even when folder access is unavailable — no picker required", async () => {
-    render(<WorkspacePanel />);
-    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Connect workspace" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/does not support folder access/i)).not.toBeInTheDocument();
+describe("WorkspacePanel connected workspace", () => {
+  beforeEach(async () => {
+    stubHealth(true);
+    useTerminalConnectionStore.setState({
+      status: "connected",
+      lastVerifiedAt: Date.now(),
+      justConnected: false,
+      lastError: null
+    });
+    await useWorkspaceStore.getState().connectDemo();
+    useWorkspaceStore.setState({ pathEnabled: true });
   });
 
-  it("starts collapsed and expands via the header toggle", () => {
+  it("shows the verified connection status with a Disconnect action", () => {
     render(<WorkspacePanel />);
-    const toggle = screen.getByRole("button", { name: /Terminal/i });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
-    expect(screen.getByText(/Nexuss can execute commands when needed/)).toBeInTheDocument();
+    expect(screen.getByText("Terminal Connected")).toBeInTheDocument();
+    expect(
+      screen.getByText("Nexuss can use the authorized terminal on this device.")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Disconnect/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Connect Terminal/ })).not.toBeInTheDocument();
   });
 
-  it("keeps the terminal ready across collapse/expand", async () => {
+  it("runs a hybrid search and lists ranked results", async () => {
     render(<WorkspacePanel />);
-    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
+    // Expands the collapsed connected panel to reveal search.
     fireEvent.click(screen.getByRole("button", { name: /Terminal/i }));
-    expect(screen.getByText("Terminal ready")).toBeInTheDocument();
+    const input = await screen.findByPlaceholderText("Search files, symbols, error text…");
+    fireEvent.change(input, { target: { value: "login" } });
+    const result = await screen.findByText("src/auth/login.ts");
+    expect(result).toBeInTheDocument();
+  });
+
+  it("shows no-matches feedback for an unmatched query", async () => {
+    render(<WorkspacePanel />);
+    fireEvent.click(screen.getByRole("button", { name: /Terminal/i }));
+    const input = await screen.findByPlaceholderText("Search files, symbols, error text…");
+    fireEvent.change(input, { target: { value: "zzzznothing" } });
+    expect(await screen.findByText("No matches.")).toBeInTheDocument();
   });
 });
 
 describe("WorkspacePanel agent section", () => {
   beforeEach(async () => {
+    stubHealth(true);
+    useTerminalConnectionStore.setState({
+      status: "connected",
+      lastVerifiedAt: Date.now(),
+      justConnected: false,
+      lastError: null
+    });
     await useWorkspaceStore.getState().connectDemo();
     useWorkspaceStore.setState({ pathEnabled: true, pendingChanges: [], agentLog: [], changeError: null });
   });
@@ -186,6 +312,13 @@ describe("WorkspacePanel command execution card", () => {
         capabilities: () => ({ run: true, test: true })
       }
     };
+    stubHealth(true);
+    useTerminalConnectionStore.setState({
+      status: "connected",
+      lastVerifiedAt: Date.now(),
+      justConnected: false,
+      lastError: null
+    });
     await useWorkspaceStore.getState().disconnect();
     await useWorkspaceStore.getState().connectDemo();
     useWorkspaceStore.setState({
@@ -238,7 +371,7 @@ describe("WorkspacePanel command execution card", () => {
           run: (req: { command: string }) => Promise<unknown>;
           test: () => Promise<unknown>;
           capabilities: () => { run: boolean; test: boolean };
-        }
+        };
       }
     }).nexussDesktop = {
       runtime: {

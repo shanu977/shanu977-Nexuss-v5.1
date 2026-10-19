@@ -7,6 +7,9 @@
 const http = require('http');
 const https = require('https');
 const url = require('url');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 const CONNECTOR_PORT = process.env.NEXUSS_CONNECTOR_PORT ? parseInt(process.env.NEXUSS_CONNECTOR_PORT, 10) : 11435;
 const OLLAMA_HOST = '127.0.0.1';
@@ -50,6 +53,113 @@ function setCorsHeaders(req, res) {
   res.setHeader('Vary', 'Origin, Access-Control-Request-Headers, Access-Control-Request-Private-Network');
 }
 
+// Conservative Ollama install detection: filesystem + PATH lookup only (no
+// shell spawns). Returns true/false, or null on platforms we don't know.
+function detectOllamaInstalled() {
+  try {
+    const candidates = [];
+    if (process.platform === 'win32') {
+      const local = process.env.LOCALAPPDATA;
+      const pf = process.env.ProgramFiles;
+      if (local) {
+        candidates.push(path.join(local, 'Programs', 'Ollama', 'ollama.exe'));
+        candidates.push(path.join(local, 'Ollama', 'ollama.exe'));
+      }
+      if (pf) candidates.push(path.join(pf, 'Ollama', 'ollama.exe'));
+      if (process.env.ProgramData) candidates.push(path.join(process.env.ProgramData, 'chocolatey', 'bin', 'ollama.exe'));
+      candidates.push(path.join(os.homedir(), 'scoop', 'shims', 'ollama.exe'));
+    } else if (process.platform === 'darwin') {
+      candidates.push('/Applications/Ollama.app');
+      candidates.push(path.join(os.homedir(), 'Applications', 'Ollama.app'));
+    } else if (process.platform === 'linux') {
+      candidates.push('/usr/local/bin/ollama');
+      candidates.push('/usr/bin/ollama');
+      candidates.push(path.join(os.homedir(), '.ollama', 'bin', 'ollama'));
+    } else {
+      return null;
+    }
+    for (const c of candidates) {
+      try { if (c && fs.existsSync(c)) return true; } catch {}
+    }
+    const binName = process.platform === 'win32' ? 'ollama.exe' : 'ollama';
+    for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+      if (!dir) continue;
+      try { if (fs.existsSync(path.join(dir, binName))) return true; } catch {}
+    }
+    return false;
+  } catch {
+    return null;
+  }
+}
+
+// Probe Ollama's /api/version with a short timeout. cb(running, version).
+function probeOllamaVersion(cb) {
+  let done = false;
+  const finish = (running, version) => { if (done) return; done = true; cb(running, version); };
+  try {
+    const probe = http.get({ hostname: OLLAMA_HOST, port: OLLAMA_PORT, path: '/api/version', timeout: 1500 }, (pr) => {
+      let data = '';
+      pr.on('data', (c) => { data += c; if (data.length > 4096) pr.destroy(); });
+      pr.on('error', () => finish(false, null));
+      pr.on('end', () => {
+        let version = null;
+        try { version = (JSON.parse(data) || {}).version || null; } catch {}
+        finish(pr.statusCode >= 200 && pr.statusCode < 300, version);
+      });
+    });
+    probe.on('timeout', () => { probe.destroy(); finish(false, null); });
+    probe.on('error', () => finish(false, null));
+  } catch {
+    finish(false, null);
+  }
+}
+
+// Proxy a request to Ollama. bodyBuffer overrides the client body (used for
+// pre-validated payloads such as /api/pull); otherwise the client body is piped.
+function proxyToOllama(req, res, targetPath, method, bodyBuffer) {
+  const options = {
+    hostname: OLLAMA_HOST,
+    port: OLLAMA_PORT,
+    path: targetPath,
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+  };
+  if (req.headers.authorization) {
+    options.headers['Authorization'] = req.headers.authorization;
+  }
+
+  const proxyReq = http.request(options, (proxyRes) => {
+    // Forward status and headers, but ensure CORS headers are set
+    setCorsHeaders(req, res);
+    // Don't forward CORS headers from Ollama, use our own
+    const headers = { ...proxyRes.headers };
+    delete headers['access-control-allow-origin'];
+    delete headers['access-control-allow-private-network'];
+    res.writeHead(proxyRes.statusCode, headers);
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error(`[Nexuss Connector] Proxy error for ${targetPath}:`, err.message);
+    if (!res.headersSent) {
+      setCorsHeaders(req, res);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Cannot connect to Ollama at ${OLLAMA_HOST}:${OLLAMA_PORT}. Is Ollama running?` }));
+    }
+  });
+
+  if (bodyBuffer) {
+    proxyReq.end(bodyBuffer);
+  } else if (method === 'POST' || method === 'PUT') {
+    req.pipe(proxyReq);
+  } else {
+    proxyReq.end();
+  }
+}
+
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url);
   const pathname = parsed.pathname || '/';
@@ -68,6 +178,102 @@ const server = http.createServer((req, res) => {
   if (pathname === '/health' || pathname === '/v1/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', connector: 'nexuss-local', ollama: `http://${OLLAMA_HOST}:${OLLAMA_PORT}`, terminal: 'enabled' }));
+    return;
+  }
+
+  // Ollama status for the automatic setup flow. Server-side probe (fs +
+  // /api/version) so the browser gets a truthful installed/running answer
+  // without CORS or private-network-access limits. GET only, loopback only.
+  if (pathname === '/v1/ollama/status') {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
+      return;
+    }
+    const statusOrigin = req.headers.origin;
+    if (statusOrigin && !isAllowedOrigin(statusOrigin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Origin ${statusOrigin} not allowed.` }));
+      return;
+    }
+    const installed = detectOllamaInstalled();
+    probeOllamaVersion((running, version) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        connector: 'nexuss-local',
+        ollama: { installed, running, version, endpoint: `http://${OLLAMA_HOST}:${OLLAMA_PORT}` },
+      }));
+    });
+    return;
+  }
+
+  // Free/total disk bytes for the volume holding the user's home directory.
+  // Read-only (fs.statfs), GET only, loopback + origin checked. Lets the setup
+  // wizard show a real "available storage" number instead of a browser guess.
+  // Returns { disk: null } when the Node build has no statfs — the UI then
+  // reports storage as unavailable rather than zero.
+  if (pathname === '/v1/system/disk') {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
+      return;
+    }
+    const diskOrigin = req.headers.origin;
+    if (diskOrigin && !isAllowedOrigin(diskOrigin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Origin ${diskOrigin} not allowed.` }));
+      return;
+    }
+    let disk = null;
+    try {
+      if (typeof fs.statfsSync === 'function') {
+        const target = os.homedir() || process.cwd();
+        const s = fs.statfsSync(target);
+        const blockSize = Number(s.bsize || s.blocksize || 4096);
+        const freeBytes = Number(s.bavail) * blockSize;
+        const totalBytes = Number(s.blocks) * blockSize;
+        if (Number.isFinite(freeBytes) && freeBytes >= 0) {
+          disk = { freeBytes, totalBytes: Number.isFinite(totalBytes) ? totalBytes : null };
+        }
+      }
+    } catch {
+      disk = null;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', connector: 'nexuss-local', disk }));
+    return;
+  }
+
+  // Model download: validate the model id server-side, then stream Ollama's
+  // NDJSON pull progress straight back to the client.
+  if (pathname === '/api/pull') {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }));
+      return;
+    }
+    const pullOrigin = req.headers.origin;
+    if (pullOrigin && !isAllowedOrigin(pullOrigin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Origin ${pullOrigin} not allowed.` }));
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; if (body.length > 4096) req.destroy(); });
+    req.on('end', () => {
+      let data;
+      try { data = JSON.parse(body || '{}'); } catch { data = null; }
+      const model = data && typeof data.model === 'string' ? data.model.trim() : '';
+      if (!data || !/^[a-zA-Z0-9][a-zA-Z0-9._/:-]{0,127}$/.test(model)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid model name.' }));
+        return;
+      }
+      data.model = model;
+      data.stream = true;
+      proxyToOllama(req, res, '/api/pull', 'POST', Buffer.from(JSON.stringify(data), 'utf8'));
+    });
     return;
   }
 
@@ -126,7 +332,10 @@ const server = http.createServer((req, res) => {
             for(let i=0;i<cmd.length;i++){ const ch=cmd[i]; if(q){ if(ch===q) q=null; else cur+=ch; } else if(ch==="'"||ch==='"'){ q=ch; } else if(ch===" "||ch==="\t"){ if(cur){ tokens.push(cur); cur=""; } } else cur+=ch; }
             if(q) return null; if(cur) tokens.push(cur); return tokens;
           };
-          const tokens = tokenize(command.replace(/\\/g, "/").replace(/\s+/g, " ").trim());
+          // NOTE: tokenization is used ONLY for allow-list validation.
+          // Execution must preserve the original quoting, otherwise PowerShell
+          // receives unquoted paths and fails on names containing spaces.
+          const tokens = tokenize(command.trim());
           if (!tokens || tokens.length===0) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Command could not be parsed.' }));
@@ -160,9 +369,32 @@ const server = http.createServer((req, res) => {
           const env = { ...process.env };
           // For simple Windows builtins, wrap via cmd.exe
           let spawnCmd, spawnArgs;
-          if (simpleBins.has(tokens[0]) || simpleBins.has(bin)) {
+          const isPsBin = /^(powershell|pwsh)(\.exe)?$/i.test(tokens[0]) || /^(get-childitem|get-psdrive)$/i.test(tokens[0]);
+          if (isPsBin) {
+            // PowerShell: hand the -Command payload to powershell.exe VERBATIM so quoting
+            // inside the script (quoted paths, $env: expansion) is interpreted by
+            // PowerShell exactly as authored. Re-tokenizing stripped those quotes and
+            // broke every path containing a space.
+            const lowerCmd = command.toLowerCase();
+            const cmdIdx = lowerCmd.indexOf('-command');
+            const headRaw = (cmdIdx >= 0 ? command.slice(0, cmdIdx) : tokens[0]).trim();
+            const headWords = tokenize(headRaw) || [tokens[0]];
+            const flags = headWords.slice(1).filter((w) => w.startsWith('-'));
+            const isShell = /^(powershell|pwsh)(\.exe)?$/i.test(tokens[0]);
+            let script = null;
+            if (cmdIdx >= 0) script = command.slice(cmdIdx + '-command'.length).trim();
+            else if (!isShell) script = command;
+            if (!script) {
+              spawnCmd = tokens[0];
+              spawnArgs = tokens.slice(1);
+            } else {
+              if (script.length >= 2 && script.startsWith('"') && script.endsWith('"')) script = script.slice(1, -1);
+              spawnCmd = isShell ? tokens[0] : 'powershell';
+              spawnArgs = [...(flags.length ? flags : ['-NoProfile']), '-Command', script];
+            }
+          } else if (simpleBins.has(tokens[0]) || simpleBins.has(bin)) {
             const cmd = tokens[0].toLowerCase();
-            if (cmd === 'dir' || cmd === 'ls' || cmd === 'Get-ChildItem') {
+            if (cmd === 'dir' || cmd === 'ls' || cmd === 'get-childitem') {
               spawnCmd = process.env.ComSpec || 'cmd.exe';
               spawnArgs = ['/d', '/s', '/c', command];
             } else if (cmd === 'echo' || cmd === 'pwd' || cmd === 'cat') {
@@ -195,6 +427,18 @@ const server = http.createServer((req, res) => {
           const timeoutMs = Math.min(120000, Math.max(1000, data.timeoutMs || 120000));
           let timedOut=false, killed=false;
           const timer = setTimeout(()=>{ timedOut=true; try{ if(process.platform==='win32'){ spawn('taskkill',['/pid',String(child.pid),'/t','/f'],{stdio:'ignore'}).unref(); } else { process.kill(-child.pid,'SIGTERM'); setTimeout(()=>{ try{ process.kill(-child.pid,'SIGKILL'); }catch{} },1500).unref(); } }catch{} }, timeoutMs);
+          // Guard against double responses: 'error' and 'close' can BOTH fire
+          // (e.g. spawn ENOENT from a missing cwd). Writing headers twice used
+          // to throw ERR_HTTP_HEADERS_SENT and kill the whole connector.
+          let responded = false;
+          const respond = (payload) => {
+            if (responded || res.writableEnded || res.destroyed) return;
+            responded = true;
+            try {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(payload));
+            } catch {}
+          };
           child.on('close', (code, signal) => {
             clearTimeout(timer);
             // Basic redaction of secrets (same as native/redact)
@@ -202,15 +446,13 @@ const server = http.createServer((req, res) => {
             const out = redact(stdout);
             const err = redact(stderr);
             const success = !timedOut && !killed && code===0 && signal===null;
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            respond({
               success, stdout: out, stderr: err, exitCode: code, signal, durationMs: Date.now()-start, timedOut, killed, outputTruncated: truncated, redacted: out!==stdout||err!==stderr, command, cwd
-            }));
+            });
           });
           child.on('error', (err) => {
             clearTimeout(timer);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success:false, stdout:"", stderr: err.message, exitCode: null, signal: null, durationMs: Date.now()-start, timedOut:false, killed:false, outputTruncated:false, redacted:false, command, cwd }));
+            respond({ success:false, stdout:"", stderr: err.message, exitCode: null, signal: null, durationMs: Date.now()-start, timedOut:false, killed:false, outputTruncated:false, redacted:false, command, cwd });
           });
         } catch (e) {
           if (!res.headersSent) {
@@ -223,13 +465,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Only allow /v1/models and /v1/chat/completions and /api/tags
-  const allowedPaths = ['/v1/models', '/v1/chat/completions', '/api/tags', '/health'];
-  const isAllowedPath = allowedPaths.some(p => pathname === p || pathname.startsWith(p + '/') || pathname === p.replace('/v1',''));
-  // For Ollama, we allow /v1/models, /v1/chat/completions, /api/tags, and also / (for health)
-  if (!isAllowedPath && pathname !== '/' && pathname !== '/v1/models' && !pathname.startsWith('/v1/') && !pathname.startsWith('/api/')) {
+  // Explicit allowlist of proxied Ollama paths (everything else 404s).
+  // /api/pull is handled above with extra validation.
+  const allowedPaths = new Set([
+    '/v1/models', '/v1/chat/completions', '/v1/embeddings',
+    '/models', '/chat/completions',
+    '/api/tags', '/api/version',
+    '/health', '/',
+  ]);
+  if (!allowedPaths.has(pathname)) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found. Only /v1/models, /v1/chat/completions, /api/tags allowed.' }));
+    res.end(JSON.stringify({ error: 'Not found. Allowed: /v1/models, /v1/chat/completions, /api/tags, /api/pull.' }));
     return;
   }
 
@@ -241,57 +487,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Proxy to Ollama
+  // Proxy to Ollama (client body piped for POST)
   const targetPath = pathname + (parsed.search || '');
-  const options = {
-    hostname: OLLAMA_HOST,
-    port: OLLAMA_PORT,
-    path: targetPath,
-    method: req.method,
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-  };
-  // Forward Authorization if present
-  if (req.headers.authorization) {
-    options.headers['Authorization'] = req.headers.authorization;
-  }
-
-  const proxyReq = http.request(options, (proxyRes) => {
-    // Forward status and headers, but ensure CORS headers are set
-    setCorsHeaders(req, res);
-    // Don't forward CORS headers from Ollama, use our own
-    const headers = { ...proxyRes.headers };
-    delete headers['access-control-allow-origin'];
-    delete headers['access-control-allow-private-network'];
-    res.writeHead(proxyRes.statusCode, headers);
-    proxyRes.pipe(res);
-  });
-
-  proxyReq.on('error', (err) => {
-    console.error(`[Nexuss Connector] Proxy error for ${targetPath}:`, err.message);
-    if (!res.headersSent) {
-      setCorsHeaders(req, res);
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `Cannot connect to Ollama at ${OLLAMA_HOST}:${OLLAMA_PORT}. Is Ollama running?` }));
-    }
-  });
-
-  // Pipe body for POST
-  if (req.method === 'POST' || req.method === 'PUT') {
-    req.pipe(proxyReq);
-  } else {
-    proxyReq.end();
-  }
+  proxyToOllama(req, res, targetPath, req.method, null);
 });
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} already in use. Is another connector running?`);
-  } else {
-    console.error(`[Nexuss Connector] Server error:`, err);
+    // Another connector already owns the port. If it answers /health, that is a
+    // healthy instance and starting a duplicate is not an error - exiting 1 here
+    // used to make launchers think the connector "died" when it was actually fine.
+    const probe = http.get(`http://127.0.0.1:${CONNECTOR_PORT}/health`, (pr) => {
+      pr.resume();
+      if (pr.statusCode === 200) {
+        console.log(`[Nexuss Connector] Port ${CONNECTOR_PORT} already served by a healthy connector. Nothing to start.`);
+        process.exit(0);
+      }
+      console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} is in use by another process that does not answer /health.`);
+      process.exit(1);
+    });
+    probe.on('error', () => {
+      console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} already in use but not responding to /health. Stop the other process first.`);
+      process.exit(1);
+    });
+    probe.setTimeout(2000, () => { probe.destroy(); });
+    return;
   }
+  console.error(`[Nexuss Connector] Server error:`, err);
   process.exit(1);
 });
 

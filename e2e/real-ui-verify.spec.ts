@@ -22,6 +22,13 @@ async function setupPage(page:any, mockContent='ok'){
       else await page.keyboard.press('Escape');
     } else await page.keyboard.press('Escape');
   }
+  // Verify the terminal connection (one-click connect if not verified yet).
+  const section=page.locator('section[aria-label="Terminal workspace"]');
+  if(await section.isVisible().catch(()=>false)){
+    const connectBtn=section.getByRole('button',{name:'Connect Terminal'});
+    if(await connectBtn.isVisible().catch(()=>false)) await connectBtn.click();
+    await expect(section.getByText('Terminal Connected')).toBeVisible({timeout:10000});
+  }
   await expect(page.getByLabel('Message input')).toBeVisible({timeout:10000});
 }
 async function send(page:any, text:string){
@@ -156,24 +163,20 @@ test('real ui end-to-end terminal verification', async ({ page }) => {
   // Should contain clarification like "what should i name" or "clarify"
   expect(bodyClarify).toMatch(/what should|name the folder|clarify/i);
 
-  // Terminal error honesty - try to ensure terminal closed case reports honestly
-  // Close terminal and attempt
-  const plus = page.getByRole('button',{name:'Add attachment'});
-  await plus.click();
-  const termBtn = page.getByRole('menuitem',{name:'Terminal'});
-  const pressed = await termBtn.getAttribute('aria-pressed');
-  if(pressed==='true') await termBtn.click();
+  // Terminal honesty - disconnect and attempt: nothing may be created
+  const section = page.locator('section[aria-label="Terminal workspace"]');
+  const discBtn = section.getByRole('button',{name:'Disconnect'});
+  if(await discBtn.isVisible().catch(()=>false)) await discBtn.click();
   await page.waitForTimeout(500);
   const errFolder = `${ROOT}\\nexuss_err_${UID}`;
   await send(page, `create a folder name called nexuss_err_${UID}`);
   expect(await exists(errFolder)).toBe(false);
   const bodyErr = (await page.locator('body').innerText()).toLowerCase();
   expect(bodyErr).toContain('terminal');
-  // reopen
-  await plus.click();
-  await page.getByRole('menuitem',{name:'Terminal'}).click();
-  await page.waitForTimeout(500);
-  // cleanup err folder if created after reopen (should not yet)
+  // reconnect with one click
+  await section.getByRole('button',{name:'Connect Terminal'}).click();
+  await expect(section.getByText('Terminal Connected')).toBeVisible({timeout:10000});
+  // cleanup err folder if created after reconnect (should not yet)
   if(await exists(errFolder)) await term(`powershell -NoProfile -Command "Remove-Item -LiteralPath '${errFolder}' -Recurse -Force"`);
 
   // Ensure no leftover

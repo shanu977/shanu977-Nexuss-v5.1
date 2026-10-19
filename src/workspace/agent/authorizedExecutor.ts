@@ -5,11 +5,12 @@
 
 import { getToolContext } from "./loop";
 import { toolRun } from "./tools";
-import { synthesizeCommand, PlannedAction, planFilesystemActions, hasExplicitTarget, getIncompleteClarification } from "./actionPlanner";
+import { synthesizeCommand, PlannedAction, planFilesystemActions, hasExplicitTarget, getIncompleteClarification, resolveActionTargetPath } from "./actionPlanner";
 import { getAgentState, setAgentState, createGoalState, updateGoalWithActions, completeAction, AuthorizedAction, StructuredToolResult, newActionId } from "./agentState";
 import { pushVerifiedObservation, getRecentExecutionContext, ExecutionContextEntry } from "./executionContext";
 import { resolveIntent } from "./intent";
 import { createLocalConnectorRuntime, isLocalConnectorAvailable } from "@/workspace/localTerminalRuntime";
+import { toUserFacingTerminalError, useTerminalConnectionStore } from "@/workspace/terminalConnection";
 import { normalizeRelativePath, assertInsideRoot } from "@/workspace/path";
 import { createAgentPlan } from "./llmPlanner";
 import { validateAgentPlan } from "./planValidator";
@@ -34,7 +35,7 @@ function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): Author
     let target = "";
     if (p.kind === "createFolder") target = p.name;
     else if (p.kind === "createFile") target = p.folderRef ? `${p.folderRef}/${p.name}` : p.name;
-    else if (p.kind === "writeFile") target = p.name;
+    else if (p.kind === "writeFile") target = (p as any).folderRef ? `${(p as any).folderRef}/${p.name}` : p.name;
     else if (p.kind === "delete") target = p.target;
     else if (p.kind === "list" || p.kind === "count") target = (p as any).target || "";
     else if (p.kind === "goTo") target = p.target;
@@ -53,6 +54,7 @@ function plannedToAuthorized(planned: PlannedAction[], _rawGoal: string): Author
       source: (p as any).source,
       destination: (p as any).destination,
       command: (p as any).command,
+      expectedOutput: (p as any).expectedOutput,
     } as AuthorizedAction;
   });
 }
@@ -223,6 +225,26 @@ export async function runAuthorizedGoal(
       };
     }
     return { executed: 0, succeeded: 0, failed: 0, observations: [], finalResponse: "" };
+  }
+
+  // Verified terminal connection is the single source of truth. Never execute
+  // (and never fake execution) unless the local connector connection has been
+  // established. The chat flow answers with the inline "Terminal access
+  // required" action before reaching here; this gate protects any other entry
+  // point into the executor.
+  if (useTerminalConnectionStore.getState().status !== "connected") {
+    const sDisconnected = createGoalState(chatId, userText, opts.workspacePath);
+    sDisconnected.status = "failed";
+    sDisconnected.failureReason = "terminal_disconnected";
+    setAgentState(sDisconnected);
+    return {
+      executed: 0,
+      succeeded: 0,
+      failed: 0,
+      observations: [],
+      finalResponse:
+        "Terminal access is not connected. Open the Terminal panel, connect the terminal, then try again — I won't pretend the action was completed without real execution.",
+    };
   }
 
   // ACTION path — allow execution when runtime is available even if panel is not open.
@@ -474,6 +496,9 @@ export async function runAuthorizedGoal(
       const healthMs = performance.now() - tHealthStart;
       console.debug(`[PERF] connector_health: ${healthMs.toFixed(1)}ms available=${available} (cached 5s, only for ACTION)`);
       if (!available) {
+        // The real connection check failed: record it so the UI stops
+        // showing a connected state that is no longer true.
+        useTerminalConnectionStore.getState().markUnavailable("health check failed before execution");
         const s = createGoalState(chatId, userText, opts.workspacePath);
         s.status = "failed";
         s.failureReason = "connector_unavailable";
@@ -482,8 +507,9 @@ export async function runAuthorizedGoal(
           executed: 0,
           succeeded: 0,
           failed: 1,
-          observations: [{ success: false, executed: false, verified: false, executor: "none", action: "connector_check", exitCode: null, stdout: "", stderr: "CONNECTOR_UNAVAILABLE", cwd: opts.workspacePath || "", command: "", error: "CONNECTOR_UNAVAILABLE" } as any],
-          finalResponse: `CONNECTOR_UNAVAILABLE: Local connector at http://127.0.0.1:11435 is not reachable. Your command was NOT executed. Please start the local connector with "node local-connector/server.js" and when Chrome prompts "Allow www.nexuss.in to access your local network" click Allow (or enable chrome://flags#block-insecure-private-network-requests). Then try again.`,
+          observations: [{ success: false, executed: false, verified: false, executor: "none", action: "connector_check", exitCode: null, stdout: "", stderr: "connector unavailable", cwd: opts.workspacePath || "", command: "", error: "connector unavailable" } as any],
+          finalResponse:
+            "I couldn't run that because your terminal connection was lost, so nothing was executed. Open the Terminal panel, reconnect your terminal, then try again.",
         };
       }
     } catch {}
@@ -822,11 +848,223 @@ async function tryBridgeFallback(
   return null;
 }
 
+type VerificationPlan =
+  | { kind: "path"; path: string; mustExist: boolean; type?: "Container" | "Leaf"; label: string }
+  | { kind: "content"; path: string; expected: string; label: string }
+  | { kind: "read"; intent?: string; actual?: string; expectedName?: string; expectedContent?: string; label: string }
+  | { kind: "list"; names: string[]; label: string }
+  | { kind: "output"; expected: string; label: string };
+
+interface VerificationOutcome {
+  ok: boolean;
+  ran: boolean;
+  command?: string;
+  detail?: string;
+}
+
+function psQuote(p: string): string {
+  return `'${p.replace(/'/g, "''")}'`;
+}
+
+function pathCheckCommand(path: string, mustExist: boolean, type?: "Container" | "Leaf"): string {
+  const cond = `Test-Path -LiteralPath ${psQuote(path)}${type ? ` -PathType ${type}` : ""}`;
+  const body = mustExist ? cond : `!(${cond})`;
+  return `powershell -NoProfile -Command "if (${body}) { exit 0 } else { exit 1 }"`;
+}
+
+function contentCheckCommand(path: string, expected: string): string {
+  const b64 = typeof Buffer !== "undefined"
+    ? Buffer.from(expected, "utf8").toString("base64")
+    : btoa(unescape(encodeURIComponent(expected)));
+  return `powershell -NoProfile -Command "if ([Convert]::ToBase64String([IO.File]::ReadAllBytes(${psQuote(path)})) -ceq '${b64}') { exit 0 } else { exit 1 }"`;
+}
+
+function extractPathFromCommand(cmd: string): string | undefined {
+  const m = cmd.match(/-LiteralPath\s+'([^']+)'/) || cmd.match(/-LiteralPath\s+"([^"]+)"/) || cmd.match(/(?:^|\s)-Path\s+'([^']+)'/) || cmd.match(/(?:^|\s)-Path\s+"([^"]+)"/);
+  return m ? m[1] : undefined;
+}
+
+function normalizePathForCompare(p: string): string {
+  return p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+function normalizeText(s: string): string {
+  return s.replace(/\r\n/g, "\n").replace(/\n+$/, "");
+}
+
+function buildVerificationPlan(
+  next: AuthorizedAction,
+  plannedLike: PlannedAction,
+  chatId: string,
+  hasExplicit: boolean,
+  userText: string,
+  prior: AuthorizedAction[]
+): VerificationPlan | null {
+  const priorFiles = prior.filter(a => a.type === "create_file" || a.type === "write_file");
+  const lastCreated = priorFiles[priorFiles.length - 1];
+  const expectedName = lastCreated ? (lastCreated.target.split("/").pop() || "").split("\\").pop() : undefined;
+  const expectedContent = [...priorFiles].reverse().find(a => typeof a.content === "string" && a.content.length > 0)?.content;
+
+  switch (next.type) {
+    case "create_folder": {
+      const p = resolveActionTargetPath(plannedLike, chatId, hasExplicit);
+      return p ? { kind: "path", path: p, mustExist: true, type: "Container", label: "created folder" } : null;
+    }
+    case "create_file": {
+      const p = resolveActionTargetPath(plannedLike, chatId, hasExplicit);
+      if (!p) return null;
+      const content = plannedLike.kind === "createFile" ? plannedLike.content : undefined;
+      if (content && content.length > 0) return { kind: "content", path: p, expected: content, label: "created file" };
+      return { kind: "path", path: p, mustExist: true, type: "Leaf", label: "created file" };
+    }
+    case "write_file": {
+      const p = resolveActionTargetPath(plannedLike, chatId, hasExplicit);
+      if (!p) return null;
+      const content = plannedLike.kind === "writeFile" ? plannedLike.content : undefined;
+      if (content && content.length > 0) return { kind: "content", path: p, expected: content, label: "file content" };
+      return { kind: "path", path: p, mustExist: true, type: "Leaf", label: "written file" };
+    }
+    case "delete": {
+      const p = resolveActionTargetPath(plannedLike, chatId, hasExplicit);
+      return p ? { kind: "path", path: p, mustExist: false, label: "deleted target" } : null;
+    }
+    case "copy":
+    case "move": {
+      const p = resolveActionTargetPath(plannedLike, chatId, hasExplicit);
+      return p ? { kind: "path", path: p, mustExist: true, label: `${next.type} destination` } : null;
+    }
+    case "read": {
+      if (!expectedContent && !expectedName) return null;
+      const actual = extractPathFromCommand(lastReadCommand);
+      return {
+        kind: "read",
+        intent: resolveActionTargetPath(plannedLike, chatId, hasExplicit),
+        actual,
+        expectedName,
+        expectedContent,
+        label: "read target",
+      };
+    }
+    case "run": {
+      const expected = (plannedLike as any).expectedOutput as string | undefined;
+      return expected ? { kind: "output", expected, label: "command output" } : null;
+    }
+    case "list": {
+      const names = new Set<string>();
+      // Files this goal itself deleted must not be expected in the listing.
+      const deleted = new Set<string>();
+      for (const a of prior) {
+        if (a.type === "delete") {
+          const d = (a.target.split("/").pop() || "").split("\\").pop();
+          if (d) deleted.add(d.toLowerCase());
+        }
+      }
+      for (const a of priorFiles) {
+        const n = (a.target.split("/").pop() || "").split("\\").pop();
+        if (n && !deleted.has(n.toLowerCase())) names.add(n);
+      }
+      const mentioned = userText.match(/[a-zA-Z0-9_\-]+\.[a-zA-Z0-9]{1,8}/g) || [];
+      for (const m of mentioned) if (m.length < 40 && !deleted.has(m.toLowerCase())) names.add(m);
+      return names.size ? { kind: "list", names: [...names], label: "listing" } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+async function fsFallbackVerify(plan: VerificationPlan): Promise<{ ok: boolean; detail: string } | null> {
+  const isTestEnv = typeof process !== "undefined" && (process.env.NODE_ENV === "test" || (process.env as any).VITEST);
+  if (!isTestEnv) return null;
+  try {
+    const fs = await import(/* webpackIgnore: true */ "fs/promises");
+    if (plan.kind === "path") {
+      let st: any = null;
+      try { st = await fs.stat(plan.path); } catch { st = null; }
+      const exists = !!st;
+      const typeOk = !plan.type || (plan.type === "Container" ? st.isDirectory() : st.isFile());
+      const ok = plan.mustExist ? exists && typeOk : !exists;
+      return { ok, detail: ok ? "" : `${plan.mustExist ? "Missing" : "Still present"}: ${plan.path} (${plan.label})` };
+    }
+    if (plan.kind === "content") {
+      let buf: Buffer | null = null;
+      try { buf = await fs.readFile(plan.path); } catch { buf = null; }
+      if (!buf) return { ok: false, detail: `Missing: ${plan.path} (${plan.label})` };
+      const b64 = buf.toString("base64");
+      const expB64 = Buffer.from(plan.expected, "utf8").toString("base64");
+      const ok = b64 === expB64;
+      return { ok, detail: ok ? "" : `Content mismatch at ${plan.path} (${plan.label})` };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+let lastReadCommand = "";
+
+async function runVerification(plan: VerificationPlan | null, ctx: ReturnType<typeof getToolContext>, stdout: string): Promise<VerificationOutcome> {
+  if (!plan) return { ok: true, ran: false };
+  if (plan.kind === "read") {
+    const nameOf = (p?: string) => p?.split("/").pop()?.split("\\").pop();
+    if (plan.intent && plan.actual && normalizePathForCompare(plan.intent) !== normalizePathForCompare(plan.actual)) {
+      return { ok: false, ran: true, detail: `Read target mismatch: intent ${plan.intent} vs executed ${plan.actual}` };
+    }
+    const name = nameOf(plan.actual) || nameOf(plan.intent);
+    if (plan.expectedName && name && plan.expectedName.toLowerCase() !== name.toLowerCase()) {
+      return { ok: false, ran: true, detail: `Read target mismatch: expected ${plan.expectedName}, got ${name}` };
+    }
+    if (plan.expectedContent && normalizeText(stdout) !== normalizeText(plan.expectedContent)) {
+      return { ok: false, ran: true, detail: `Read content mismatch: expected "${normalizeText(plan.expectedContent).slice(0, 80)}"` };
+    }
+    return { ok: true, ran: true };
+  }
+  if (plan.kind === "list") {
+    const out = stdout || "";
+    const missing = plan.names.filter(n => !out.toLowerCase().includes(n.toLowerCase()));
+    if (missing.length) {
+      return { ok: false, ran: true, detail: `Listing is missing expected entries: ${missing.join(", ")}` };
+    }
+    return { ok: true, ran: true };
+  }
+  if (plan.kind === "output") {
+    const ok = (stdout || "").toLowerCase().includes(plan.expected.toLowerCase());
+    return { ok, ran: true, detail: ok ? undefined : `Command output does not contain "${plan.expected.slice(0, 120)}"` };
+  }
+  const command = plan.kind === "path"
+    ? pathCheckCommand(plan.path, plan.mustExist, plan.type)
+    : contentCheckCommand(plan.path, plan.expected);
+  try {
+    const r = await toolRun(ctx, command);
+    const ok = !!r.success && (r.exitCode ?? 0) === 0;
+    if (ok) return { ok: true, ran: true, command };
+    const detail = plan.kind === "path"
+      ? `${plan.mustExist ? "Missing" : "Still present"}: ${plan.path} (${plan.label})`
+      : `Content mismatch at ${plan.path} (${plan.label})`;
+    return { ok: false, ran: true, command, detail };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const fsRes = await fsFallbackVerify(plan);
+    if (fsRes) return { ok: fsRes.ok, ran: true, command, detail: fsRes.ok ? undefined : fsRes.detail };
+    return { ok: false, ran: false, command, detail: `could not verify outcome: ${msg.slice(0, 200)}` };
+  }
+}
+
 async function executePending(
   chatId: string,
   userText: string,
   opts: { workspacePath: string | null }
 ): Promise<ExecutionReport> {
+  // Pending actions may only run through a verified terminal connection.
+  if (useTerminalConnectionStore.getState().status !== "connected") {
+    return {
+      executed: 0,
+      succeeded: 0,
+      failed: 0,
+      observations: [],
+      finalResponse:
+        "Terminal access is not connected. Open the Terminal panel, connect the terminal, then try again — I won't pretend the action was completed without real execution.",
+    };
+  }
   const ctx = getToolContext();
   // Re-evaluate explicit target for this turn (must win over previous context)
   const hasExplicit = hasExplicitTarget(userText);
@@ -895,10 +1133,16 @@ async function executePending(
           }
         }
         const cleanMsg = rawMsg.replace(/^NETWORK_ERROR:\s*/i, "").trim();
-        // Production: CONNECTOR_UNAVAILABLE — do not execute remotely, do not fabricate success
+        // The connector could not be reached during a real operation — the
+        // previous "connected" state is no longer true.
+        useTerminalConnectionStore.getState().markUnavailable(rawMsg);
+        // Never fabricate success. Technical connector details (URLs, ports,
+        // start commands) stay in developer logs; the user only sees an honest,
+        // actionable notice. The test-env branch keeps a short debug note (it
+        // never reaches a real user).
         const msg = isTestEnv && fallbackResult
-          ? `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult.stderr} Please ensure node local-connector/server.js is running.`
-          : `CONNECTOR_UNAVAILABLE: Cannot reach local terminal connector at http://127.0.0.1:11435. The local connector is not running or not reachable from your browser. Please start it with "node local-connector/server.js" and when Chrome prompts "Allow www.nexuss.in to access your local network" click Allow. Your command was NOT executed and no files were modified. Details: ${cleanMsg || rawMsg}`;
+          ? `Network error: ${cleanMsg || rawMsg} — terminal connector not reachable. ${fallbackResult.stderr}`
+          : "The terminal connection was lost, so nothing was changed on your machine. Your command was NOT executed. Open the Terminal panel, reconnect your terminal, then try again.";
         const res: StructuredToolResult = { success: false, executed: false, verified: false, executor: "none", action: next.type, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
         completeAction(chatId, next.id, res);
         pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });
@@ -907,7 +1151,10 @@ async function executePending(
         executed++;
         break;
       }
-      const msg = rawMsg;
+      // Non-network failures still route through the same sanitizer so a
+      // connector-layer message (e.g. TIMEOUT naming an internal command) can
+      // never leak; genuine command/policy errors pass through untouched.
+      const msg = toUserFacingTerminalError(rawMsg);
       const res: StructuredToolResult = { success: false, executed: false, verified: false, executor: "none", action: next.type, exitCode: null, stdout: "", stderr: msg, cwd: opts.workspacePath || "", command: cmd, error: msg };
       completeAction(chatId, next.id, res);
       pushVerifiedObservation(chatId, { userText, command: cmd, cwd: opts.workspacePath || "", stdout: "", stderr: msg, exitCode: null, success: false });
@@ -921,6 +1168,7 @@ async function executePending(
     console.debug(`[PERF] terminal_execution: ${execMs.toFixed(1)}ms success=${!!toolRes.success} exitCode=${toolRes.exitCode}`);
     executed++;
     const success = !!toolRes.success;
+    lastReadCommand = next.type === "read" ? cmd : "";
     // Natural-language error recovery: if positional parameter error due to bad quoting, retry with safe deterministic synthesis (already safe, but handle LLM edge)
     if (!success && toolRes.stderr && /positional parameter cannot be found/i.test(toolRes.stderr) && next.type === "create_folder") {
       console.debug(`[Agent] positional parameter error detected, folder name="${next.target}" - will not retry with same bad command, reporting for fix`);
@@ -991,22 +1239,40 @@ async function executePending(
       } catch {}
     }
 
+    // Semantic verification: exit code 0 alone does not prove the requested
+    // operation happened at the right place with the right content.
+    let verification: VerificationOutcome = { ok: true, ran: false };
+    if (success) {
+      try {
+        const all = state.requestedActions || [];
+        const idx = all.findIndex(a => a.id === next.id);
+        const prior = idx >= 0 ? all.slice(0, idx) : all.filter(a => a.id !== next.id);
+        const plan = buildVerificationPlan(next, plannedLike, chatId, hasExplicit, userText, prior);
+        verification = await runVerification(plan, ctx, toolRes.stdout || "");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        verification = { ok: false, ran: false, detail: `could not verify outcome: ${msg.slice(0, 200)}` };
+      }
+    }
+    const finalSuccess = success && verification.ok;
+
     const structured: StructuredToolResult = {
-      success,
+      success: finalSuccess,
       executed: true,
-      verified: success && toolRes.exitCode === 0,
+      verified: finalSuccess && (verification.ran ? true : toolRes.exitCode === 0),
       executor: "local-connector",
       action: next.type,
       exitCode: toolRes.exitCode ?? null,
       stdout: toolRes.stdout || "",
-      stderr: toolRes.stderr || "",
+      stderr: (toolRes.stderr || "") + (verification.ok ? "" : `\n${verification.detail}`),
       cwd: toolRes.cwd || opts.workspacePath || "",
       command: cmd,
       path: verifiedPath || toolRes.cwd || undefined,
+      verification: verification.ran ? (verification.ok ? "verified" : (verification.detail || "failed")) : (verification.detail ? `inconclusive: ${verification.detail}` : undefined),
     };
 
     const verifyMs = performance.now() - tVerifyStart;
-    console.debug(`[PERF] verification: ${verifyMs.toFixed(1)}ms path=${verifiedPath || "n/a"} verified=${success && toolRes.exitCode===0}`);
+    console.debug(`[PERF] verification: ${verifyMs.toFixed(1)}ms path=${verifiedPath || "n/a"} verified=${structured.verified} check=${verification.ran ? "ran" : "skip"}${verification.detail ? ` (${verification.detail})` : ""}`);
     completeAction(chatId, next.id, structured);
     // Store verified observation
     pushVerifiedObservation(chatId, {
@@ -1016,7 +1282,7 @@ async function executePending(
       stdout: toolRes.stdout || "",
       stderr: toolRes.stderr || "",
       exitCode: toolRes.exitCode ?? null,
-      success,
+      success: finalSuccess,
       // semantic hints for pronoun resolution - use verified type
       action: ((): any => {
         if (next.type === "create_folder") return "create";
@@ -1046,7 +1312,7 @@ async function executePending(
     } as any);
 
     observations.push(structured);
-    if (success) succeeded++; else { failed++; break; }
+    if (finalSuccess) succeeded++; else { failed++; break; }
   }
 
   const finalState = getAgentState(chatId);
@@ -1086,9 +1352,20 @@ async function executePending(
         const obs = o.result;
         if (obs?.stdout) parts.push(`Content of \`${o.target}\`:\n\`\`\`\n${obs.stdout.slice(0, 2000)}\n\`\`\``);
         else parts.push(`Read \`${o.target}\`: ${obs?.stderr || "empty"}`);
+      } else if (o.type === "run") {
+        const obs = o.result;
+        const label = (o.target || "command").replace(/\s+/g, " ").slice(0, 160);
+        if (obs?.stdout) parts.push(`Ran \`${label}\`\nOutput:\n\`\`\`\n${obs.stdout.slice(0, 2000)}\n\`\`\``);
+        else parts.push(`Ran \`${label}\`${obs?.stderr ? `\nError: ${obs.stderr.slice(0, 400)}` : ""}`);
       }
     }
     finalResponse = parts.join("\n\n") || `Completed ${executed} action(s).`;
+    const verifiedCount = observations.filter(o => o.verified === true).length;
+    if (observations.length > 0) {
+      finalResponse += verifiedCount === observations.length
+        ? `\n\nTask succeeded: all ${observations.length} requested outcome(s) were verified against the real filesystem.`
+        : `\n\nTask completed: ${verifiedCount} of ${observations.length} requested outcome(s) verified against the real filesystem.`;
+    }
   } else {
     finalResponse = finalState.failureReason === "terminal_closed"
       ? "Terminal is not available right now. Please open the Terminal panel to enable execution."
@@ -1104,15 +1381,20 @@ function authorizedToPlanned(a: AuthorizedAction): PlannedAction {
     case "create_file": {
       const name = a.target.includes("/") ? a.target.split("/").pop()! : a.target;
       const folderRef = a.target.includes("/") ? a.target.split("/").slice(0, -1).join("/") : undefined;
-      return { kind: "createFile", name, folderRef: folderRef === "it" || folderRef?.includes("/") ? folderRef : undefined, clause: a.rawClause, content: a.content };
+      return { kind: "createFile", name, folderRef: folderRef || undefined, clause: a.rawClause, content: a.content };
     }
-    case "write_file": return { kind: "writeFile", name: a.target.split("/").pop()!, content: a.content || "hello world", clause: a.rawClause };
+    case "write_file": {
+      const parts = a.target.split("/");
+      const name = parts.pop()!;
+      const folderRef = parts.length ? parts.join("/") : undefined;
+      return { kind: "writeFile", name, folderRef: folderRef || undefined, content: a.content || "hello world", clause: a.rawClause } as any;
+    }
     case "list": return { kind: "list", target: a.target || undefined, clause: a.rawClause };
     case "count": return { kind: "count", target: a.target || undefined, clause: a.rawClause };
     case "delete": return { kind: "delete", target: a.target, clause: a.rawClause };
     case "goTo": return { kind: "goTo", target: a.target, clause: a.rawClause };
     case "read": return { kind: "read", target: a.target, clause: a.rawClause };
-    case "run": return { kind: "run", command: (a as any).command || a.target, clause: a.rawClause } as any;
+    case "run": return { kind: "run", command: (a as any).command || a.target, clause: a.rawClause, expectedOutput: (a as any).expectedOutput } as any;
     case "move": return { kind: "move", source: (a as any).source, destination: (a as any).destination, clause: a.rawClause } as any;
     case "copy": return { kind: "copy", source: (a as any).source, destination: (a as any).destination, clause: a.rawClause } as any;
     default: return { kind: "list", clause: a.rawClause } as any;

@@ -94,7 +94,7 @@ export async function executeFencedTools(modelText: string): Promise<{ results: 
   if (changeBlock) {
     if (!canChange) {
       for (const op of changeBlock.changes) {
-        results.push({ kind: "change", path: op.path, success: false, error: "Terminal is not connected — connect workspace to use terminal tools." });
+        results.push({ kind: "change", path: op.path, success: false, error: "Terminal is not connected — connect the terminal to use terminal tools." });
       }
     } else {
       for (const op of changeBlock.changes) {

@@ -20,6 +20,13 @@ async function setup(page:any, mock='ok'){
       if(pr!=='true') await tb.click(); else await page.keyboard.press('Escape');
     } else await page.keyboard.press('Escape');
   }
+  // Verify the terminal connection (one-click connect if not verified yet).
+  const section=page.locator('section[aria-label="Terminal workspace"]');
+  if(await section.isVisible().catch(()=>false)){
+    const connectBtn=section.getByRole('button',{name:'Connect Terminal'});
+    if(await connectBtn.isVisible().catch(()=>false)) await connectBtn.click();
+    await expect(section.getByText('Terminal Connected')).toBeVisible({timeout:10000});
+  }
   await expect(page.getByLabel('Message input')).toBeVisible({timeout:10000});
 }
 async function send(page:any, txt:string){ await page.getByLabel('Message input').fill(txt); await page.getByRole('button',{name:'Send message'}).click(); await page.waitForTimeout(7500); }
