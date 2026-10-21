@@ -26,6 +26,9 @@ vi.mock("@/services/localModels", async (importOriginal) => {
   return {
     ...(orig as object),
     streamLocalChat: vi.fn(),
+    // The pre-flight Ollama ensure must never touch a real connector or
+    // spawn Ollama inside unit tests — default to "already verified".
+    ensureLocalModelConnection: vi.fn().mockResolvedValue({ ok: true, via: "skipped", alreadyRunning: true }),
     testLocalEndpoint: vi.fn().mockResolvedValue({ ok: true, message: "ok", models: ["llama3.2:3b"], endpointReachable: true, modelsDiscoverable: true }),
   };
 });

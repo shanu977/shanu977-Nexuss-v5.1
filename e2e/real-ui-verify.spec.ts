@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { test, expect } from '@playwright/test';
 const CONNECTOR='http://127.0.0.1:11435/v1/terminal/run';
 async function term(cmd:string){ const r=await fetch(CONNECTOR,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})}); return r.json(); }
@@ -8,8 +9,8 @@ async function sseMock(content:string){
 }
 async function setupPage(page:any, mockContent='ok'){
   await page.addInitScript(()=>{(window as any).__NEXUSS_E2E_BYPASS=true});
-  await page.route('**/chat/stream',async (route:any)=>{ await route.fulfill({status:200,headers:{'Content-Type':'text/event-stream'},body:sseMock(mockContent)}); });
-  await page.route('**/chat',async (route:any)=>{ await route.fulfill({status:200,headers:{'Content-Type':'text/event-stream'},body:sseMock(mockContent)}); });
+  await page.route('**/chat/stream',async (route:any)=>{ await route.fulfill({status:200,headers:{'Content-Type':'text/event-stream'},body:await sseMock(mockContent)}); });
+  await page.route('**/chat',async (route:any)=>{ await route.fulfill({status:200,headers:{'Content-Type':'text/event-stream'},body:await sseMock(mockContent)}); });
   await page.goto('/',{waitUntil:'domcontentloaded'});
   await page.waitForTimeout(1500);
   const plus=page.getByRole('button',{name:'Add attachment'});
@@ -34,9 +35,16 @@ async function setupPage(page:any, mockContent='ok'){
 async function send(page:any, text:string){
   await page.getByLabel('Message input').fill(text);
   await page.getByRole('button',{name:'Send message'}).click();
-  await page.waitForTimeout(7000);
+  // Wait for the turn to actually finish instead of guessing with a fixed
+  // sleep: the composer is disabled while the app is loading, and re-enabled
+  // once the reply (or the agent's executed result) is done.
+  await expect(page.getByLabel('Message input')).toBeEnabled({timeout: 60000});
+  await page.waitForTimeout(2000);
 }
-const ROOT='C:\\Users\\pilli\\Downloads\\shanu977-Nexuss-v5.1';
+// With no project folder selected (fresh browser profile), the app runs
+// commands from the user's home folder — the same root the connector trusts —
+// so every filesystem assertion below targets that root, never the repo dir.
+const ROOT=os.homedir();
 const UID = `nexuss_real_${Date.now()}`;
 
 test.beforeAll(async()=>{ const r=await fetch('http://127.0.0.1:11435/health'); if(!r.ok) throw new Error('connector down'); });
@@ -149,8 +157,26 @@ test('real ui end-to-end terminal verification', async ({ page }) => {
   // 10 verify removed
   expect(await exists(folder)).toBe(false);
 
-  // Conversational behavior checks
+  // Conversational behavior checks. Start a FRESH conversation: the terminal
+  // steps above left "Created folder ..." messages in the history, and these
+  // assertions must judge only what the assistant says NOW (a normal answer
+  // must never claim a folder was created).
   await setupPage(page, 'I am a normal answer without terminal');
+  await page.getByRole('button', { name: 'New chat' }).click();
+  await page.waitForTimeout(800);
+  // The terminal panel is app-level state, but reopen it if the chat switch
+  // closed it so the disconnect check below still targets the real control.
+  const sectionAfterNew = page.locator('section[aria-label="Terminal workspace"]');
+  if (!(await sectionAfterNew.isVisible().catch(() => false))) {
+    const plusAgain = page.getByRole('button', { name: 'Add attachment' });
+    await plusAgain.click();
+    const termAgain = page.getByRole('menuitem', { name: 'Terminal' });
+    if (await termAgain.isVisible().catch(() => false)) {
+      if ((await termAgain.getAttribute('aria-pressed')) !== 'true') await termAgain.click();
+      else await page.keyboard.press('Escape');
+    } else await page.keyboard.press('Escape');
+    await expect(sectionAfterNew).toBeVisible({ timeout: 8000 });
+  }
   await send(page, 'What is the capital of France?');
   let existsAfterNormal = await exists(`${ROOT}\\should_not_exist_${UID}`);
   expect(existsAfterNormal).toBe(false);

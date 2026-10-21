@@ -41,4 +41,7 @@ export interface ChatState {
   // as soon as the first chunk arrives and updated in place until completion).
   streamingMessageId: string | null;
   fallbackNotice: string | null;
+  /** True when `error` came from a recoverable local-connection failure and
+   *  the "Try again" action can safely resubmit the last user message. */
+  errorRetryable?: boolean;
 }
