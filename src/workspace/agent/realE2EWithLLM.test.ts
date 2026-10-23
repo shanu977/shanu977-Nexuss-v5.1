@@ -4,6 +4,7 @@ import { clearAgentState } from "./agentState";
 import { clearExecutionContext } from "./executionContext";
 import { useWorkspaceStore } from "@/workspace/store";
 import { useTerminalConnectionStore } from "@/workspace/terminalConnection";
+import { setTerminalRunCapability } from "@/workspace/localTerminalRuntime";
 import fs from "fs/promises";
 import path from "path";
 
@@ -25,8 +26,13 @@ describe("REAL E2E with LLM - kumar19 same name Downloads", () => {
     clearExecutionContext(chatId);
     useWorkspaceStore.setState({ panelOpen: true, workspacePath: testRoot, bridge: null, index: null, connected: true, runtime: null } as any);
     useTerminalConnectionStore.setState({ status: "connected", lastVerifiedAt: Date.now(), justConnected: false, lastError: null });
+    // This suite fakes a verified connection by setting the store directly
+    // (bypassing connect()), so it must also simulate the capability probe
+    // result — capabilities() is honest and reports run:false until verified.
+    setTerminalRunCapability(true);
   });
   afterAll(async () => {
+    setTerminalRunCapability(false);
     await fs.rm(testRoot, { recursive: true, force: true }).catch(()=>{});
     await fs.rm(path.join(outsideRoot, "kumar19"), { recursive: true, force: true }).catch(()=>{});
     clearAgentState(chatId);

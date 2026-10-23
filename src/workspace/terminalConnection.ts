@@ -16,7 +16,10 @@
 import { create } from "zustand";
 import {
   createLocalConnectorRuntime,
+  isLocalConnectorAvailable,
   probeLocalConnector,
+  probeTerminalExecutionCapability,
+  setTerminalRunCapability,
   type ConnectorProbeFailureReason,
   type ConnectorProbeResult
 } from "./localTerminalRuntime";
@@ -30,9 +33,7 @@ import {
   type TerminalDiagnosticCode
 } from "./terminalDiagnostics";
 import {
-  breakerAllowsRestart,
   createBreakerState,
-  getRecoveryConfig,
   recordRecoverySuccess,
   runBoundedRecovery,
   type BreakerState,
@@ -151,6 +152,8 @@ type EstablishResult = { ok: true } | { ok: false; reason: Exclude<TerminalFailu
 function statusForFailure(reason: Exclude<TerminalFailureReason, null>): TerminalConnectionStatus {
   if (reason === "permission") return "permission_required";
   if (reason === "timeout" || reason === "unreachable") return "unavailable";
+  // origin_blocked / incompatible / capability / http-error / invalid-response:
+  // reachable-but-wrong or policy outcomes get the error screen, not "unavailable".
   return "error";
 }
 
@@ -171,6 +174,37 @@ function diagnosticContext(): DiagnosticContext {
 function canAutoRecover(diag: TerminalDiagnostic): boolean {
   if (!isWindowsPlatform() || !hasTerminalSetupVerified()) return false;
   return diag.recovery.includes("restart_connector") || diag.recovery.includes("retry_probe");
+}
+
+/**
+ * Detail strings from real terminal-operation failures that describe a
+ * TRANSIENT connector loss (refused socket, transport error, timeout, the
+ * heartbeat's own "health check" wording) — exactly the class of failure the
+ * bounded recovery session exists to repair.
+ */
+const TRANSIENT_FAILURE_DETAIL_RE =
+  /NETWORK_ERROR|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|Failed to fetch|NetworkError|TIMEOUT:|did not respond|health check failed|connection lost|connector stopped|127\.0\.0\.1|localhost|:\d{4,5}\b|CORS/i;
+
+/**
+ * Detail strings that describe a policy/permission refusal. These need a
+ * human decision (or a deployment fix) and must never be routed into an
+ * automatic recovery that could "succeed" dishonestly.
+ */
+const POLICY_FAILURE_DETAIL_RE =
+  /permission|local network access|not allowed|origin .* not allowed|security policy|refused access|access denied|forbidden|\b403\b/i;
+
+/** Classify a raw failure detail so markUnavailable can route (or dead-end) truthfully. */
+function classifyFailureDetail(detail?: string): "transient" | "policy" | "other" {
+  if (!detail) return "other";
+  if (POLICY_FAILURE_DETAIL_RE.test(detail)) return "policy";
+  if (TRANSIENT_FAILURE_DETAIL_RE.test(detail)) return "transient";
+  return "other";
+}
+
+/** Short, single-line, developer-log-safe trigger label for a recovery session. */
+function sanitizeRecoveryTrigger(detail: string | undefined): string {
+  const flat = (detail || "connector lost").replace(/\s+/g, " ").trim().slice(0, 160);
+  return `terminal operation failed: ${flat}`;
 }
 
 /** Deduped health + capability verification shared by passive and active connects. */
@@ -206,8 +240,14 @@ async function establishConnection(opts?: { retry?: boolean; generation?: number
 }
 
 /**
- * Verify terminal execution capability is really available: the runtime object
- * must exist and advertise `run`. Returns false instead of faking success.
+ * Verify terminal execution capability is really available — no hard-coded
+ * `true` anywhere:
+ * - the local connector runtime: feature-detect GET /v1/terminal/capabilities
+ *   (falls back to the verified health contract's terminal flag on older
+ *   installs), then publish the verified flag so capabilities() is honest;
+ * - a native desktop bridge: its own capabilities() is the real local API.
+ * Returns false instead of faking success, and grants path capability only
+ * after a real verification.
  */
 async function verifyExecutionCapability(): Promise<boolean> {
   try {
@@ -218,8 +258,17 @@ async function verifyExecutionCapability(): Promise<boolean> {
       runtime = createLocalConnectorRuntime() as unknown as NativeRuntimeBridge;
       useWorkspaceStore.setState({ runtime });
     }
-    const caps = typeof runtime.capabilities === "function" ? runtime.capabilities() : null;
-    if (!caps?.run) return false;
+    const isConnectorRuntime = (runtime as { isAvailable?: unknown } | null)?.isAvailable === isLocalConnectorAvailable;
+    let capable: boolean;
+    if (isConnectorRuntime) {
+      capable = await probeTerminalExecutionCapability();
+      setTerminalRunCapability(capable);
+    } else {
+      // Native desktop bridge (window.nexussDesktop.runtime): honest native caps.
+      const caps = typeof runtime.capabilities === "function" ? runtime.capabilities() : null;
+      capable = !!caps?.run;
+    }
+    if (!capable) return false;
     // A verified connection grants terminal/workspace capability for the session.
     useWorkspaceStore.setState({ pathEnabled: true });
     return true;
@@ -279,6 +328,90 @@ export async function runTerminalHeartbeatTick(): Promise<void> {
   }
 }
 
+/**
+ * Recovery monitor: while the app sits in the honest failure state
+ * (`unavailable`/`error`), silently watch for the local connector to come
+ * back (user restarted it, machine woke up, OS dialog answered) and run the
+ * shared passive verification to reconnect automatically — no user gesture,
+ * no restart requests (restarts stay inside breaker-limited recovery
+ * sessions), no UI flapping while the connector is still down.
+ */
+const RECOVERY_MONITOR_INTERVAL_MS = 25_000;
+let recoveryMonitorTimer: ReturnType<typeof setInterval> | null = null;
+let recoveryMonitorTickInFlight = false;
+
+/** Only transient-ish failure states on a verified Windows install are watched. */
+function isRecoveryMonitorEligible(status: TerminalConnectionStatus, failureReason: TerminalFailureReason): boolean {
+  if (status !== "unavailable" && status !== "error") return false;
+  if (failureReason === "permission" || failureReason === "incompatible" || failureReason === "origin_blocked") return false;
+  if (!isWindowsPlatform() || !hasTerminalSetupVerified()) return false;
+  if (readDisconnectedByUser()) return false;
+  return true;
+}
+
+function onMonitorVisibilityChange(): void {
+  if (typeof document !== "undefined" && document.visibilityState === "visible") {
+    // Tab visible again: don't wait for the next interval, the user is here.
+    void runRecoveryMonitorTick();
+  }
+}
+
+function startRecoveryMonitor(): void {
+  if (recoveryMonitorTimer !== null || typeof window === "undefined") return;
+  recoveryMonitorTimer = setInterval(() => {
+    void runRecoveryMonitorTick();
+  }, RECOVERY_MONITOR_INTERVAL_MS);
+  document.addEventListener("visibilitychange", onMonitorVisibilityChange);
+}
+
+function stopRecoveryMonitor(): void {
+  if (recoveryMonitorTimer !== null) {
+    clearInterval(recoveryMonitorTimer);
+    recoveryMonitorTimer = null;
+  }
+  if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onMonitorVisibilityChange);
+}
+
+/** True while the background connector-recovery monitor is armed. Exported for tests. */
+export function isRecoveryMonitorActive(): boolean {
+  return recoveryMonitorTimer !== null;
+}
+
+/**
+ * One monitor tick: silent probe first (a down connector must not flip the UI
+ * every 25 s), and only after a real healthy answer run the shared passive
+ * verification (connecting → connected) that re-arms the heartbeat. Policy/
+ * permission answers stop the monitor — they need a human, not a timer.
+ * Exported for tests.
+ */
+export async function runRecoveryMonitorTick(): Promise<void> {
+  if (recoveryMonitorTickInFlight) return;
+  const current = useTerminalConnectionStore.getState();
+  if (!isRecoveryMonitorEligible(current.status, current.failureReason)) return;
+  recoveryMonitorTickInFlight = true;
+  try {
+    const generation = connectionGeneration;
+    const probe = await probeConnector(RECOVERY_PROBE_TIMEOUT_MS);
+    if (generation !== connectionGeneration) return;
+    if (!probe.ok) {
+      if (
+        probe.reason === "permission" ||
+        probe.reason === "origin_blocked" ||
+        (probe.reason === "http-error" && probe.httpStatus === 403)
+      ) {
+        stopRecoveryMonitor();
+      }
+      return;
+    }
+    const latest = useTerminalConnectionStore.getState();
+    if (!isRecoveryMonitorEligible(latest.status, latest.failureReason)) return;
+    // Connector answered for real: promote through the shared passive flow.
+    await useTerminalConnectionStore.getState().checkConnection();
+  } finally {
+    recoveryMonitorTickInFlight = false;
+  }
+}
+
 export interface TerminalConnectionState {
   /** Verified connection state — the single source of truth. */
   status: TerminalConnectionStatus;
@@ -294,6 +427,13 @@ export interface TerminalConnectionState {
   lastVerifiedAt: number | null;
   /** True when the user connected via the Connect button in this session. */
   justConnected: boolean;
+  /**
+   * True when the CURRENT failure/recovery cycle issued a consented restart
+   * request via the local launcher. Drives the "choose Allow" hint on the
+   * failure screen — the request was only issued, never confirmed, because a
+   * website cannot observe the OS confirmation dialog.
+   */
+  lastRestartRequested: boolean;
   /** Developer-only detail; never rendered in the UI. */
   lastError: string | null;
   /**
@@ -336,6 +476,7 @@ async function runRecoverySession(trigger: string): Promise<boolean> {
     recoveryStep: "checking",
     recoveryAttempt: 0,
     failureReason: null,
+    lastRestartRequested: false,
     lastError: trigger
   });
   console.debug(`[TerminalConnection] recovery started (${trigger})`);
@@ -344,8 +485,12 @@ async function runRecoverySession(trigger: string): Promise<boolean> {
     const outcome = await runBoundedRecovery({
       probe: () => probeConnector(RECOVERY_PROBE_TIMEOUT_MS),
       restart: () => {
-        console.debug("[TerminalConnection] requesting local connector restart via launcher");
-        return requestConnectorStart();
+        const outcome = requestConnectorStart();
+        console.debug(`[TerminalConnection] local connector restart request via launcher: ${outcome}`);
+        // Record that a request was ISSUED for the failure screen — the OS
+        // confirmation dialog ("Open Nexuss Terminal?") is invisible to us.
+        if (outcome === "requested") useTerminalConnectionStore.setState({ lastRestartRequested: true });
+        return outcome;
       },
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       onStep: (step, attempt) => {
@@ -353,7 +498,9 @@ async function runRecoverySession(trigger: string): Promise<boolean> {
         useTerminalConnectionStore.setState({ recoveryStep: step, recoveryAttempt: attempt });
       },
       isCancelled: () => cancelHandle.cancelled || generation !== connectionGeneration,
-      canUseLauncher: hasConnectorLauncher() && breakerAllowsRestart(breaker, Date.now(), getRecoveryConfig()),
+      // Launcher evidence ONLY — the breaker gate lives inside runBoundedRecovery
+      // so an open breaker surfaces as the explicit breaker_open outcome.
+      canUseLauncher: hasConnectorLauncher(),
       breaker,
       now: () => Date.now()
     });
@@ -410,6 +557,17 @@ async function runRecoverySession(trigger: string): Promise<boolean> {
           lastVerifiedAt: null,
           justConnected: false
         });
+      } else if (outcome.blockedBy === "origin") {
+        // Reachable but this origin is refused by the connector's allowlist —
+        // a security outcome; monitoring and auto-recovery stay off.
+        useTerminalConnectionStore.setState({
+          status: "error",
+          failureReason: "origin_blocked",
+          diagnosticCode: "origin_blocked",
+          recoveryStep: null,
+          lastVerifiedAt: null,
+          justConnected: false
+        });
       } else {
         useTerminalConnectionStore.setState({
           status: "error",
@@ -426,7 +584,7 @@ async function runRecoverySession(trigger: string): Promise<boolean> {
     useTerminalConnectionStore.setState({
       status: "unavailable",
       failureReason: "unreachable",
-      diagnosticCode: outcome.reason === "breaker_open" ? "connector_stopped" : diag.code,
+      diagnosticCode: outcome.reason === "breaker_open" ? "restart_throttled" : diag.code,
       recoveryStep: null,
       lastVerifiedAt: null,
       lastError: "recovery exhausted",
@@ -453,6 +611,7 @@ export const useTerminalConnectionStore = create<TerminalConnectionState>()((set
   recoveryAttempt: 0,
   lastVerifiedAt: null,
   justConnected: false,
+  lastRestartRequested: false,
   lastError: null,
 
   checkConnection: async () => {
@@ -531,7 +690,14 @@ export const useTerminalConnectionStore = create<TerminalConnectionState>()((set
     heartbeatMisses = 0;
     writeDisconnectedByUser(false);
     const generation = ++connectionGeneration;
-    set({ status: "connecting", lastError: null, failureReason: null, diagnosticCode: null, recoveryStep: null });
+    set({
+      status: "connecting",
+      lastError: null,
+      failureReason: null,
+      diagnosticCode: null,
+      recoveryStep: null,
+      lastRestartRequested: false
+    });
     const result = await establishConnection({ retry: true, generation });
     if (generation !== connectionGeneration) return get().status === "connected";
     if (get().status !== "connecting" && get().status !== "recovering") return get().status === "connected";
@@ -591,6 +757,7 @@ export const useTerminalConnectionStore = create<TerminalConnectionState>()((set
       recoveryAttempt: 0,
       lastVerifiedAt: null,
       justConnected: false,
+      lastRestartRequested: false,
       lastError: null
     });
     // Disable Nexuss terminal access for this session. The local connector
@@ -620,6 +787,24 @@ export const useTerminalConnectionStore = create<TerminalConnectionState>()((set
 
   markUnavailable: (detail) => {
     if (get().status !== "connected") return;
+    console.debug("[TerminalConnection] connection lost:", detail || "unknown");
+
+    // RC1 fix: a real terminal operation lost the connector — for a transient
+    // failure on a verified install that is exactly what the bounded recovery
+    // session repairs, so route INTO recovery instead of dead-ending the
+    // session with the heartbeat stopped and no watcher. Policy/permission
+    // refusals and machines without a recoverable install keep the honest,
+    // user-driven dead end (they need a human, not a retry loop).
+    if (classifyFailureDetail(detail) === "transient") {
+      const diag = classifyTerminalFailure({ ok: false, reason: "unreachable" }, diagnosticContext());
+      if (canAutoRecover(diag)) {
+        const trigger = sanitizeRecoveryTrigger(detail);
+        console.debug(`[TerminalConnection] transient terminal failure — starting bounded recovery (${trigger})`);
+        void get().recover(trigger);
+        return;
+      }
+    }
+
     stopHeartbeat();
     heartbeatMisses = 0;
     const diag = classifyTerminalFailure({ ok: false, reason: "unreachable" }, diagnosticContext());
@@ -632,7 +817,6 @@ export const useTerminalConnectionStore = create<TerminalConnectionState>()((set
       lastError: detail || "connector unavailable",
       justConnected: false
     });
-    console.debug("[TerminalConnection] connection lost:", detail || "unknown");
   },
 
   beginSetup: () => {
@@ -649,6 +833,7 @@ export const useTerminalConnectionStore = create<TerminalConnectionState>()((set
       recoveryAttempt: 0,
       lastVerifiedAt: null,
       justConnected: false,
+      lastRestartRequested: false,
       lastError: null
     });
   },
@@ -672,6 +857,25 @@ export const useTerminalConnectionStore = create<TerminalConnectionState>()((set
     });
   }
 }));
+
+// Single choke point for cross-cutting connection-state reactions:
+// 1. the verified execution capability dies whenever the connection leaves
+//    `connected`, so capabilities() can never claim `run` while disconnected;
+// 2. the recovery monitor arms only in the eligible failure states (verified
+//    Windows install, transient-ish reason, not an explicit user disconnect)
+//    and disarms everywhere else — including permission/policy outcomes,
+//    in-flight connects, and active recovery sessions (those drive their own
+//    probes and the heartbeat resumes on success).
+useTerminalConnectionStore.subscribe((state, prevState) => {
+  if (state.status !== "connected" && prevState.status === "connected") {
+    setTerminalRunCapability(false);
+  }
+  if (isRecoveryMonitorEligible(state.status, state.failureReason)) {
+    startRecoveryMonitor();
+  } else {
+    stopRecoveryMonitor();
+  }
+});
 
 /** Convenience predicate used by the chat gate and the executor. */
 export function isTerminalConnected(): boolean {
@@ -704,7 +908,9 @@ export function resetTerminalConnection(): void {
   establishInFlight = null;
   healthProbeInFlight = null;
   stopHeartbeat();
+  stopRecoveryMonitor();
   heartbeatMisses = 0;
+  setTerminalRunCapability(false);
   recordRecoverySuccess(breaker);
   writeDisconnectedByUser(false);
   useTerminalConnectionStore.setState({
@@ -715,6 +921,7 @@ export function resetTerminalConnection(): void {
     recoveryAttempt: 0,
     lastVerifiedAt: null,
     justConnected: false,
+    lastRestartRequested: false,
     lastError: null
   });
 }

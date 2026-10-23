@@ -30,7 +30,7 @@ function seq(...results: ConnectorProbeResult[]): () => Promise<ConnectorProbeRe
 
 function deps(overrides: Partial<RecoveryDeps> & Pick<RecoveryDeps, "probe">): RecoveryDeps {
   return {
-    restart: vi.fn(() => true),
+    restart: vi.fn(() => "requested" as const),
     sleep: vi.fn(async () => {}),
     canUseLauncher: false,
     breaker: createBreakerState(),
@@ -104,7 +104,7 @@ describe("runBoundedRecovery()", () => {
       { ok: false, reason: "unreachable" },
       { ok: true }
     );
-    const restart = vi.fn(() => true);
+    const restart = vi.fn(() => "requested" as const);
     const outcome = await runBoundedRecovery(deps({ probe, restart, canUseLauncher: true }), FAST);
     expect(outcome).toEqual({ ok: true });
     expect(restart).toHaveBeenCalledTimes(1);
@@ -112,7 +112,7 @@ describe("runBoundedRecovery()", () => {
 
   it("never restarts without launcher evidence", async () => {
     const probe = seq({ ok: false, reason: "unreachable" }, { ok: false, reason: "unreachable" });
-    const restart = vi.fn(() => true);
+    const restart = vi.fn(() => "requested" as const);
     const outcome = await runBoundedRecovery(deps({ probe, restart, canUseLauncher: false }), FAST);
     expect(outcome).toEqual({ ok: false, reason: "exhausted" });
     expect(restart).not.toHaveBeenCalled();
@@ -144,7 +144,7 @@ describe("runBoundedRecovery()", () => {
 
   it("blocks on a permission failure instead of restarting", async () => {
     const probe = seq({ ok: false, reason: "permission" });
-    const restart = vi.fn(() => true);
+    const restart = vi.fn(() => "requested" as const);
     const outcome = await runBoundedRecovery(deps({ probe, restart, canUseLauncher: true }), FAST);
     expect(outcome).toEqual({ ok: false, reason: "blocked", blockedBy: "permission" });
     expect(restart).not.toHaveBeenCalled();
@@ -156,12 +156,35 @@ describe("runBoundedRecovery()", () => {
     expect(outcome).toEqual({ ok: false, reason: "blocked", blockedBy: "policy" });
   });
 
+  it("blocks on an origin refusal instead of restarting", async () => {
+    // Reachable-but-refused is a security outcome: no restart may be issued.
+    const probe = seq({ ok: false, reason: "origin_blocked" });
+    const restart = vi.fn(() => "requested" as const);
+    const outcome = await runBoundedRecovery(deps({ probe, restart, canUseLauncher: true }), FAST);
+    expect(outcome).toEqual({ ok: false, reason: "blocked", blockedBy: "origin" });
+    expect(restart).not.toHaveBeenCalled();
+  });
+
+  it("does not count an unavailable restart bridge as issued", async () => {
+    const probe = seq({ ok: false, reason: "unreachable" }, { ok: true });
+    const restart = vi.fn(() => "unavailable" as const);
+    const steps: string[] = [];
+    const outcome = await runBoundedRecovery(
+      deps({ probe, restart, canUseLauncher: true, onStep: (step) => steps.push(step) }),
+      FAST
+    );
+    expect(outcome).toEqual({ ok: true });
+    expect(restart).toHaveBeenCalledTimes(1);
+    // restart() reported no request was issued → progress must not claim "restarting".
+    expect(steps).toEqual(["checking", "verifying"]);
+  });
+
   it("reports breaker_open instead of hammering a failing connector", async () => {
     const breaker = createBreakerState();
     const cfg = { ...FAST, maxRestartsPerWindow: 1 };
     recordRestart(breaker, Date.now(), cfg);
     const probe = seq({ ok: false, reason: "unreachable" });
-    const restart = vi.fn(() => true);
+    const restart = vi.fn(() => "requested" as const);
     const outcome = await runBoundedRecovery(deps({ probe, restart, canUseLauncher: true, breaker }), cfg);
     expect(outcome).toEqual({ ok: false, reason: "breaker_open" });
     expect(restart).not.toHaveBeenCalled();
