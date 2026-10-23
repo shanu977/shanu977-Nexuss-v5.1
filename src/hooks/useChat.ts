@@ -7,10 +7,12 @@ export function useChat() {
   const isStreaming = useChatStore((s) => s.isStreaming);
   const streamingMessageId = useChatStore((s) => s.streamingMessageId);
   const error = useChatStore((s) => s.error);
+  const errorRetryable = useChatStore((s) => s.errorRetryable ?? false);
   const sendMessageStream = useChatStore((s) => s.sendMessageStream);
   const stopGeneration = useChatStore((s) => s.stopGeneration);
   const editMessageAndRegenerate = useChatStore((s) => s.editMessageAndRegenerate);
   const regenerateResponse = useChatStore((s) => s.regenerateResponse);
+  const retryLastMessage = useChatStore((s) => s.retryLastMessage);
   const createNewChat = useChatStore((s) => s.createNewChat);
   const clearError = useChatStore((s) => s.clearError);
   const theme = useChatStore((s) => s.theme);
@@ -27,6 +29,7 @@ export function useChat() {
     isStreaming,
     streamingMessageId,
     error,
+    errorRetryable,
     theme,
     setTheme,
     provider,
@@ -37,6 +40,7 @@ export function useChat() {
     stopGeneration,
     editMessageAndRegenerate,
     regenerateResponse,
+    retryLastMessage,
     createNewChat,
     clearError
   };

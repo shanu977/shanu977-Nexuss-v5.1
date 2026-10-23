@@ -26,7 +26,8 @@ import { useUsageStore } from "@/store/usageStore";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useLocalModelStore } from "@/store/localModelStore";
 import { useWorkspaceStore } from "@/workspace/store";
-import { streamLocalChat } from "@/services/localModels";
+import { streamLocalChat, ensureLocalModelConnection, isLocalConnectionError, LocalConnectionError } from "@/services/localModels";
+import { finishLocalConnection, invalidateLocalConnection } from "@/store/localConnectionStore";
 import { SYSTEM_PROMPT, PHI3_SYSTEM_PROMPT, MINIMAL_PROMPT, PHI3_MINIMAL_PROMPT } from "@/services/localSystemPrompt";
 import { PerfTracker } from "@/utils/localPerf";
 import {
@@ -67,6 +68,9 @@ interface ChatStore extends ChatState {
     image?: string
   ) => Promise<void>;
   regenerateResponse: (messageId: string, image?: string) => Promise<void>;
+  /** Re-submit the last user message after a recoverable local-connection
+   *  failure. Reuses the existing user message — never creates a duplicate. */
+  retryLastMessage: () => Promise<void>;
 }
 
 function newId(): string {
@@ -186,7 +190,8 @@ async function requestAssistant(
     error: null,
     isStreaming: true,
     streamingMessageId: asstId,
-    fallbackNotice: null
+    fallbackNotice: null,
+    errorRetryable: false
   });
 
   // Create the streaming assistant message immediately (empty content) so the
@@ -322,6 +327,21 @@ async function requestAssistant(
       if (!localModel) throw new Error("No local model configured. Add one in Settings → Models. No cloud API key is required for local chat.");
       const localProvider = localState.providers.find((p) => p.id === localModel!.providerId);
       if (!localProvider || !localProvider.enabled) throw new Error("Local provider not found or disabled. Check Settings → Models.");
+      // Ollama on the default loopback endpoint: verify the service is
+      // actually running — and start it via the local connector when it is
+      // stopped — before building the request. The temporary connection card
+      // in the chat area shows this lifecycle and disappears once verified.
+      if (localProvider.providerType === "ollama") {
+        const connection = await ensureLocalModelConnection({
+          endpoint: localProvider.endpoint,
+          providerType: localProvider.providerType,
+          signal: abortController.signal,
+        });
+        if (!connection.ok) {
+          if (connection.reason === "cancelled") throw new Error("Request aborted.");
+          throw new LocalConnectionError(connection.message);
+        }
+      }
       perf.mark("T2_request_preparation_start");
       perf.mark("request_preparation_start");
       const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
@@ -710,9 +730,18 @@ async function requestAssistant(
     // controller only, so the external signal being aborted means the user
     // cancelled the request.
     if (!abortController.signal.aborted) {
-      useChatStore.setState({ error: getErrorMessage(e) });
+      useChatStore.setState({
+        error: getErrorMessage(e),
+        // Recoverable local-connection failures (Ollama not installed /
+        // could not start / health check failed) expose a "Try again" action.
+        errorRetryable: isLocalConnectionError(e)
+      });
     }
   } finally {
+    // The temporary connection card must never outlive the request — on
+    // success it is already on `connected`, on failure/cancellation it may
+    // still be mid-phase; either way settle it here.
+    finishLocalConnection();
     // If the stream produced no visible content at all (the request itself
     // threw before any chunk), drop the empty placeholder so no blank
     // assistant bubble lingers next to the error.
@@ -748,6 +777,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
   isStreaming: false,
   streamingMessageId: null,
   fallbackNotice: null,
+  errorRetryable: false,
   theme: "dark",
 
   reset: (clearStorage = false) => {
@@ -762,15 +792,17 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       isStreaming: false,
       streamingMessageId: null,
       fallbackNotice: null,
+      errorRetryable: false,
       theme: "dark"
     });
+    invalidateLocalConnection();
     if (clearStorage) {
       applyTheme("dark");
       clearAccountStorage();
     }
   },
 
-  clearError: () => set({ error: null }),
+  clearError: () => set({ error: null, errorRetryable: false }),
 
   setProvider: (provider) => {
     if (!PROVIDER_LIST.includes(provider)) return;
@@ -1007,6 +1039,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const chat = get().chats.find((c) => c.id === id);
     if (!chat || chat.userId !== uid) return;
     const messages = await messagesForChat(uid, id);
+    // Switching chats abandons any in-flight local connection UI: never show
+    // a "Connecting to local AI" card in a different conversation.
+    invalidateLocalConnection();
     set({ currentChat: chat, messages });
     setLastChatId(uid, id);
   },
@@ -1076,7 +1111,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     if (current.loading || current.isStreaming) return;
     // Set the in-flight flag synchronously so a second send issued before the
     // first reaches its first await can never slip through the guard.
-    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null });
+    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null, errorRetryable: false });
 
     // The entire flow is wrapped so any failure (local DB, network, provider)
     // surfaces as a user-visible error instead of failing silently.
@@ -1112,6 +1147,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
         isStreaming: false,
         streamingMessageId: null,
         fallbackNotice: null,
+        errorRetryable: false,
         currentChat: state.currentChat
           ? { ...state.currentChat, updatedAt }
           : state.currentChat,
@@ -1162,11 +1198,14 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const controller = activeAbortController;
     activeAbortController = null;
     if (controller) controller.abort();
+    // A stopped request also abandons any in-flight local connection work.
+    invalidateLocalConnection();
     set({
       loading: false,
       isStreaming: false,
       streamingMessageId: null,
-      error: null
+      error: null,
+      errorRetryable: false
     });
   },
 
@@ -1208,7 +1247,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const kept = messages.slice(0, idx);
     // Set the in-flight flag synchronously (before the first await) so a
     // racing regenerate/edit/send can never slip through the guard.
-    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null });
+    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null, errorRetryable: false });
     try {
       await db.transaction("rw", db.messages, db.chats, async () => {
         if (removedIds.length > 0) {
@@ -1284,7 +1323,7 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     const updatedAt = Date.now();
     // Set the in-flight flag synchronously (before the first await) so a
     // racing regenerate/edit/send can never slip through the guard.
-    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null });
+    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null, errorRetryable: false });
     try {
       await db.transaction("rw", db.messages, db.chats, async () => {
         if (removedIds.length > 0) {
@@ -1325,5 +1364,35 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
       .map((m) => ({ role: m.role, content: m.content }))
       .slice(-99);
     await requestAssistant(currentChat, userText, history, image);
+  },
+
+  // Retry action for recoverable local-connection failures (Ollama was not
+  // running / could not be started). Re-answers the LAST user message through
+  // the exact same request path — the original user message is reused, so no
+  // duplicate user message is ever created.
+  retryLastMessage: async () => {
+    const uid = currentUid();
+    if (!uid) return;
+    const currentChat = get().currentChat;
+    if (!currentChat || currentChat.userId !== uid) return;
+
+    const current = get();
+    if (current.loading || current.isStreaming) return;
+
+    const messages = get().messages;
+    const last = messages[messages.length - 1];
+    // Only meaningful when the last turn is a user message with no reply yet
+    // (the failed attempt dropped its empty assistant placeholder).
+    if (!last || last.role !== "user" || last.chatId !== currentChat.id) return;
+
+    const userText = last.content;
+    const history = messages
+      .slice(0, -1)
+      .filter((m) => m.content.trim().length > 0)
+      .map((m) => ({ role: m.role, content: m.content }))
+      .slice(-99);
+
+    set({ loading: true, error: null, isStreaming: false, fallbackNotice: null, errorRetryable: false });
+    await requestAssistant(currentChat, userText, history);
   }
 }));
