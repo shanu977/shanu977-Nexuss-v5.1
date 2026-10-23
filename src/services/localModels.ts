@@ -5,11 +5,20 @@ import {
   normalizeEndpoint,
   validateEndpoint,
   isDesktop,
+  LOCAL_PROVIDER_DEFAULT_ENDPOINTS,
 } from "@/types/localModels";
 
 import {
   isLocalConnectorAvailable as sharedIsConnectorAvailable,
 } from "@/workspace/localTerminalRuntime";
+
+import {
+  startLocalConnection,
+  resumeLocalConnection,
+  updateLocalConnection,
+  markLocalConnectionVerified,
+  finishLocalConnection,
+} from "@/store/localConnectionStore";
 
 export interface LocalTestResult {
   ok: boolean;
@@ -94,6 +103,391 @@ const sharedConnectorProbe: ConnectorProbe = sharedIsConnectorAvailable;
  */
 export function probeLocalConnectorFresh(): Promise<boolean> {
   return sharedConnectorProbe({ force: true });
+}
+
+// ---------------------------------------------------------------------------
+// Automatic Ollama connection / startup / recovery (web browser).
+//
+// The browser cannot launch a Windows executable, so the actual startup lives
+// in the local connector (`POST /v1/ollama/ensure`, origin-checked, single
+// server-side spawn, fixed trusted executable path). This module drives the
+// connection lifecycle:
+//
+//   idle → checking → starting → waiting_for_health → connected → idle
+//
+// and surfaces structured, user-safe failures (not installed / could not
+// start / health check failed / connector unreachable) so the chat can show
+// an actionable error and a retry instead of a bare HTTP status.
+// ---------------------------------------------------------------------------
+
+const CONNECTOR_BASE_URL = "http://127.0.0.1:11435";
+const CONNECTOR_STATUS_URL = `${CONNECTOR_BASE_URL}/v1/ollama/status`;
+const CONNECTOR_ENSURE_URL = `${CONNECTOR_BASE_URL}/v1/ollama/ensure`;
+const DIRECT_OLLAMA_HEALTH_URL = "http://127.0.0.1:11434/api/version";
+
+const CONNECTOR_STATUS_TIMEOUT_MS = 4000;
+const CONNECTOR_ENSURE_TIMEOUT_MS = 30000;
+const DIRECT_HEALTH_TIMEOUT_MS = 1500;
+const READY_POLL_INTERVAL_MS = 500;
+/** Bounded frontend wait when the connector reports Ollama still starting. */
+const READY_POLL_TIMEOUT_MS = 15000;
+
+export type LocalConnectionFailureReason =
+  | "cancelled"
+  | "not_installed"
+  | "not_started"
+  | "startup_failed"
+  | "startup_timeout"
+  | "connector_unreachable"
+  | "connector_outdated"
+  | "unavailable"
+  | "error";
+
+/** Actionable, user-safe copy per failure state — no stack traces or internals. */
+export const LOCAL_CONNECTION_MESSAGES: Record<Exclude<LocalConnectionFailureReason, "cancelled">, string> = {
+  not_installed:
+    "Ollama isn't installed on this computer. Install it from ollama.com, then send your message again.",
+  not_started:
+    "Ollama is installed but didn't start. Open the Ollama app once, then send your message again.",
+  startup_failed:
+    "Ollama couldn't be started automatically. Open the Ollama app once, then send your message again.",
+  startup_timeout:
+    "Ollama is taking longer than expected to start. Wait a few seconds, then send your message again.",
+  connector_unreachable:
+    "Nexuss couldn't reach your local connector, so Ollama couldn't be started automatically. Start Ollama on your computer (or re-run the Nexuss one-time setup), then send your message again.",
+  connector_outdated:
+    "Your local connector doesn't support automatic Ollama startup yet. Re-run the Nexuss one-time setup to update it, then send your message again.",
+  unavailable:
+    "Couldn't reach your local AI model. Check that Ollama is running, then send your message again.",
+  error:
+    "Couldn't connect to your local AI model. Check that Ollama is running, then send your message again.",
+};
+
+/** Connection-state failures are safe to retry via the "Try again" action. */
+export class LocalConnectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalConnectionError";
+  }
+}
+
+export function isLocalConnectionError(e: unknown): e is LocalConnectionError {
+  return (
+    e instanceof LocalConnectionError ||
+    (e instanceof Error && e.name === "LocalConnectionError")
+  );
+}
+
+export type EnsureLocalConnectionResult =
+  | { ok: true; via: "already_running" | "connector" | "desktop" | "direct" | "skipped"; alreadyRunning: boolean }
+  | { ok: false; reason: LocalConnectionFailureReason; message: string };
+
+/** Only the default local Ollama loopback endpoint gets automatic startup. */
+export function isDefaultOllamaLoopbackEndpoint(endpoint: string): boolean {
+  const norm = normalizeEndpoint(endpoint, "ollama");
+  return (
+    norm === "http://localhost:11434/v1" ||
+    norm === "http://127.0.0.1:11434/v1"
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchJsonSafe(
+  url: string,
+  ms: number,
+  signal?: AbortSignal
+): Promise<unknown | null> {
+  try {
+    const res = await timeoutFetch(url, { method: "GET", signal }, ms);
+    if (!res.ok) return null;
+    return (await res.json().catch(() => null)) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+interface ConnectorOllamaStatusBody {
+  installed: boolean | null;
+  running: boolean;
+}
+
+/** Server-side Ollama status via the connector (fs + /api/version probe). */
+async function fetchOllamaStatusViaConnector(
+  signal?: AbortSignal
+): Promise<ConnectorOllamaStatusBody | null> {
+  const body = (await fetchJsonSafe(CONNECTOR_STATUS_URL, CONNECTOR_STATUS_TIMEOUT_MS, signal)) as {
+    ollama?: { installed?: unknown; running?: unknown };
+  } | null;
+  const ollama = body?.ollama;
+  if (!ollama || typeof ollama.running !== "boolean") return null;
+  return {
+    installed: typeof ollama.installed === "boolean" ? ollama.installed : null,
+    running: ollama.running,
+  };
+}
+
+/** Direct browser probe of Ollama's own API (dev / permissive CORS only). */
+async function probeDirectOllamaHealth(signal?: AbortSignal): Promise<boolean> {
+  try {
+    const res = await timeoutFetch(
+      DIRECT_OLLAMA_HEALTH_URL,
+      { method: "GET", signal },
+      DIRECT_HEALTH_TIMEOUT_MS
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+type ConnectorEnsureOutcome =
+  | "running"
+  | "starting"
+  | "stopped"
+  | "missing"
+  | "failed"
+  | "outdated"
+  | "unreachable"
+  | "unexpected";
+
+/**
+ * Ask the connector to start Ollama (single server-side spawn) and wait for
+ * its bounded startup poll. A 404 means the user's connector predates the
+ * ensure endpoint and must be updated via the one-time setup.
+ */
+async function postConnectorEnsure(signal?: AbortSignal): Promise<ConnectorEnsureOutcome> {
+  let res: Response;
+  try {
+    res = await timeoutFetch(
+      CONNECTOR_ENSURE_URL,
+      { method: "POST", signal },
+      CONNECTOR_ENSURE_TIMEOUT_MS
+    );
+  } catch {
+    return "unreachable";
+  }
+  if (res.status === 404) return "outdated";
+  if (!res.ok) return "unexpected";
+  const body = (await res.json().catch(() => null)) as {
+    ollama?: { status?: unknown; running?: unknown };
+  } | null;
+  const status = body?.ollama?.status;
+  if (
+    status === "running" ||
+    status === "starting" ||
+    status === "stopped" ||
+    status === "missing" ||
+    status === "failed"
+  ) {
+    return status;
+  }
+  if (body?.ollama?.running === true) return "running";
+  return "unexpected";
+}
+
+interface DesktopEnsureBridge {
+  ensureRunning?: () => Promise<{
+    status?: string;
+    message?: string;
+    installed?: boolean;
+    running?: boolean;
+  }>;
+}
+
+function getDesktopEnsureBridge(): DesktopEnsureBridge | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { nexussDesktop?: { ollama?: DesktopEnsureBridge } })
+    .nexussDesktop?.ollama;
+}
+
+type SharedEnsureOutcome =
+  | { ok: true; via: "already_running" | "connector" | "desktop" | "direct"; alreadyRunning: boolean }
+  | { ok: false; reason: LocalConnectionFailureReason; message: string };
+
+let ensureInFlight: Promise<SharedEnsureOutcome> | null = null;
+
+function connectionFailure(reason: LocalConnectionFailureReason): SharedEnsureOutcome {
+  return {
+    ok: false,
+    reason,
+    message: reason === "cancelled" ? "Request cancelled." : LOCAL_CONNECTION_MESSAGES[reason],
+  };
+}
+
+function markConnectorReachable(): void {
+  // Keep the local connector cache in sync so the chat request that follows
+  // this verification prefers the connector endpoint without an extra probe.
+  cachedAvailable = true;
+  lastCheck = Date.now();
+}
+
+/**
+ * The single-flight startup/recovery operation. Concurrent callers share one
+ * execution (one status check / one spawn / one poll loop), so parallel
+ * messages during startup can never start multiple Ollama processes.
+ * Never rejects — every failure is a structured outcome.
+ */
+async function runSharedOllamaEnsure(): Promise<SharedEnsureOutcome> {
+  try {
+    // Desktop (Electron) knows install state precisely and has its own
+    // verified launcher — reuse it; the web connector path is the fallback.
+    if (isDesktop()) {
+      const ensure = getDesktopEnsureBridge()?.ensureRunning;
+      if (ensure) {
+        try {
+          const state = await ensure();
+          if (state.status === "running" || state.running === true) {
+            return { ok: true, via: "desktop", alreadyRunning: true };
+          }
+          if (state.status === "not_installed" || state.installed === false) {
+            return connectionFailure("not_installed");
+          }
+          if (state.status === "error") {
+            return connectionFailure("startup_failed");
+          }
+          // checking/starting: fall through to the connector/direct path.
+        } catch {
+          // Bridge failed — continue with connector/direct probing.
+        }
+      }
+    }
+
+    // 1. Server-side status (fast path: Ollama already healthy).
+    const status = await fetchOllamaStatusViaConnector();
+    if (status) {
+      if (status.running) {
+        markConnectorReachable();
+        return { ok: true, via: "already_running", alreadyRunning: true };
+      }
+      if (status.installed === false) {
+        return connectionFailure("not_installed");
+      }
+
+      // 2. Installed but stopped: ask the connector to start it and wait for
+      //    its bounded startup poll (single-flight server-side as well).
+      updateLocalConnection("starting");
+      const outcome = await postConnectorEnsure();
+      switch (outcome) {
+        case "running":
+          markConnectorReachable();
+          return { ok: true, via: "connector", alreadyRunning: false };
+        case "missing":
+          return connectionFailure("not_installed");
+        case "stopped":
+          return connectionFailure("not_started");
+        case "failed":
+          return connectionFailure("startup_failed");
+        case "outdated":
+          return connectionFailure("connector_outdated");
+        case "unreachable":
+          return connectionFailure("connector_unreachable");
+        case "starting": {
+          // The process is alive but its API is not up yet within the
+          // connector's window: keep waiting with real health polls for a
+          // bounded frontend budget instead of claiming success.
+          updateLocalConnection("waiting_for_health");
+          const deadline = Date.now() + READY_POLL_TIMEOUT_MS;
+          while (Date.now() < deadline) {
+            await sleep(READY_POLL_INTERVAL_MS);
+            const s = await fetchOllamaStatusViaConnector();
+            if (s?.running) {
+              markConnectorReachable();
+              return { ok: true, via: "connector", alreadyRunning: false };
+            }
+          }
+          return connectionFailure("startup_timeout");
+        }
+        default:
+          return connectionFailure("error");
+      }
+    }
+
+    // 3. Connector absent: Ollama may still be directly reachable (local dev
+    //    or permissive CORS). Otherwise we cannot verify or start anything.
+    if (await probeDirectOllamaHealth()) {
+      return { ok: true, via: "direct", alreadyRunning: true };
+    }
+    return connectionFailure("connector_unreachable");
+  } catch {
+    return connectionFailure("error");
+  }
+}
+
+async function raceWithAbort<T>(
+  p: Promise<T>,
+  signal?: AbortSignal
+): Promise<{ aborted: boolean; value?: T }> {
+  if (signal?.aborted) return { aborted: true };
+  return new Promise((resolve) => {
+    const onAbort = () => resolve({ aborted: true });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (value) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve({ aborted: false, value });
+      },
+      () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve({ aborted: true });
+      }
+    );
+  });
+}
+
+/**
+ * Ensure the local Ollama service is running and healthy before a chat
+ * request. Shows the connection lifecycle in the store (temporary card),
+ * shares one in-flight attempt across concurrent callers, and returns a
+ * structured, user-safe result. Cancellation resolves as `cancelled`
+ * without tearing down the shared attempt other callers may still need.
+ */
+export async function ensureLocalModelConnection(
+  opts: {
+    endpoint?: string;
+    providerType?: string;
+    signal?: AbortSignal;
+  } = {}
+): Promise<EnsureLocalConnectionResult> {
+  const providerType = opts.providerType ?? "ollama";
+  const endpoint = opts.endpoint ?? LOCAL_PROVIDER_DEFAULT_ENDPOINTS.ollama;
+
+  // Automatic startup only applies to the default local Ollama endpoint.
+  // Other local providers (LM Studio, vLLM, custom hosts) keep the normal path.
+  if (providerType !== "ollama" || !isDefaultOllamaLoopbackEndpoint(endpoint)) {
+    return { ok: true, via: "skipped", alreadyRunning: true };
+  }
+  if (opts.signal?.aborted) {
+    return { ok: false, reason: "cancelled", message: "Request cancelled." };
+  }
+
+  let op = ensureInFlight;
+  if (op) {
+    // A connection attempt is already running: join it instead of starting
+    // another one (concurrent messages coordinate instead of re-spawning).
+    resumeLocalConnection();
+  } else {
+    startLocalConnection();
+    op = runSharedOllamaEnsure();
+    ensureInFlight = op;
+    void op.finally(() => {
+      if (ensureInFlight === op) ensureInFlight = null;
+    });
+  }
+
+  const raced = await raceWithAbort(op, opts.signal);
+  if (raced.aborted || !raced.value) {
+    finishLocalConnection();
+    return { ok: false, reason: "cancelled", message: "Request cancelled." };
+  }
+  if (raced.value.ok) {
+    markLocalConnectionVerified();
+    return raced.value;
+  }
+  finishLocalConnection();
+  return raced.value;
 }
 
 // ---------------------------------------------------------------------------
@@ -966,6 +1360,46 @@ export const DEFAULT_LOCAL_NUM_PREDICT = 1024;
 export const DEFAULT_LOCAL_REPEAT_PENALTY = 1.1;
 
 /**
+ * Extract a user-safe error message from a local/connector error body.
+ * Handles string-valued `error` (the connector's `{"error":"Cannot connect
+ * to Ollama at ..."}` 502), object-valued `error.message`, `detail`, other
+ * message fields, and empty/malformed/unexpected bodies (→ null).
+ */
+export function extractLocalErrorDetail(raw: string): string | null {
+  const text = (raw || "").trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const p = parsed as { error?: unknown; detail?: unknown; message?: unknown };
+    if (typeof p.error === "string" && p.error.trim()) {
+      return p.error.trim();
+    }
+    if (p.error && typeof p.error === "object") {
+      const msg = (p.error as { message?: unknown }).message;
+      if (typeof msg === "string" && msg.trim()) return msg.trim();
+    }
+    if (typeof p.detail === "string" && p.detail.trim()) {
+      return p.detail.trim();
+    }
+    if (typeof p.message === "string" && p.message.trim()) {
+      return p.message.trim();
+    }
+    return null;
+  } catch {
+    // Not JSON (proxy error page or truncated body) — nothing safe to extract.
+    return null;
+  }
+}
+
+/** True when an error detail describes a lost local connection (not a model error). */
+export function isConnectionishDetail(detail: string): boolean {
+  return /cannot connect|connection refused|econnrefused|failed to fetch|fetch failed|is ollama running|bad gateway|socket hang up/i.test(
+    detail
+  );
+}
+
+/**
  * OpenAI-compatible streaming directly from browser to local endpoint.
  *
  * Works from both local development and production
@@ -1024,9 +1458,6 @@ export async function* streamLocalChat(
 
   // Desktop IPC is also available for local Ollama.
   // Keep browser streaming path here.
-
-  const url =
-    `${endpoint.replace(/\/$/, "")}/chat/completions`;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -1125,104 +1556,115 @@ export async function* streamLocalChat(
     }
   };
 
-  const isDirect =
-    endpoint !== CONNECTOR_ENDPOINT;
+  // One request attempt: POST to the current endpoint, falling back through
+  // the connector when a direct Ollama request fails with a network/CORS
+  // error. Extracted so the connection-recovery retry below reuses the exact
+  // same request (same body, headers and options) without duplicating logic.
+  // The URL is built per attempt because the 502 recovery may switch
+  // `endpoint` from direct Ollama to the local connector before the retry.
+  const requestCompletion = async (): Promise<Response> => {
+    const isDirect = endpoint !== CONNECTOR_ENDPOINT;
+    const url = `${endpoint.replace(/\/$/, "")}/chat/completions`;
 
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      signal: params.signal,
-    });
-  } catch (e: unknown) {
-    const msg =
-      e instanceof Error
-        ? e.message
-        : String(e);
+    try {
+      return await fetch(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: params.signal,
+      });
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : String(e);
 
-    if (
-      (e as Error).name ===
-      "AbortError"
-    ) {
-      throw new Error(
-        "Request aborted."
-      );
-    }
-
-    const isNetwork =
-      msg
-        .toLowerCase()
-        .includes("failed to fetch") ||
-      msg
-        .toLowerCase()
-        .includes("cors") ||
-      msg
-        .toLowerCase()
-        .includes("networkerror");
-
-    if (!isNetwork) {
-      throw new Error(
-        `Cannot connect to local model: ${msg}`
-      );
-    }
-
-    // Network/CORS failure on a direct Ollama endpoint: retry through the
-    // local connector, which proxies to Ollama without browser CORS limits.
-    if (
-      isDirect &&
-      (
-        endpoint ===
-          "http://localhost:11434/v1" ||
-        endpoint ===
-          "http://127.0.0.1:11434/v1"
-      )
-    ) {
-      const fallbackUrl =
-        `${CONNECTOR_ENDPOINT}/chat/completions`;
-
-      try {
-        if (
-          process.env.NODE_ENV !==
-          "production"
-        ) {
-          console.debug(
-            "[Perf] retry via connector after direct failed"
-          );
-        }
-
-        res = await fetch(
-          fallbackUrl,
-          {
-            method: "POST",
-            headers,
-            body,
-            signal: params.signal,
-          }
-        );
-
-        cachedAvailable = true;
-        lastCheck = Date.now();
-      } catch (e2: unknown) {
-        if (
-          (e2 as Error).name ===
-          "AbortError"
-        ) {
-          throw new Error(
-            "Request aborted."
-          );
-        }
-
+      if (
+        (e as Error).name ===
+        "AbortError"
+      ) {
         throw new Error(
-          "Cannot connect to local model. Check that Ollama is running and the Nexuss connector is started."
+          "Request aborted."
         );
       }
-    } else {
-      throw new Error(
-        "Cannot connect to local model. Check that the server is running and CORS is configured (e.g., OLLAMA_ORIGINS=*)."
-      );
+
+      const isNetwork =
+        msg
+          .toLowerCase()
+          .includes("failed to fetch") ||
+        msg
+          .toLowerCase()
+          .includes("cors") ||
+        msg
+          .toLowerCase()
+          .includes("networkerror");
+
+      if (!isNetwork) {
+        throw new Error(
+          `Cannot connect to local model: ${msg}`
+        );
+      }
+
+      // Network/CORS failure on a direct Ollama endpoint: retry through the
+      // local connector, which proxies to Ollama without browser CORS limits.
+      if (
+        isDirect &&
+        (
+          endpoint ===
+            "http://localhost:11434/v1" ||
+          endpoint ===
+            "http://127.0.0.1:11434/v1"
+        )
+      ) {
+        const fallbackUrl =
+          `${CONNECTOR_ENDPOINT}/chat/completions`;
+
+        try {
+          if (
+            process.env.NODE_ENV !==
+            "production"
+          ) {
+            console.debug(
+              "[Perf] retry via connector after direct failed"
+            );
+          }
+
+          const fallbackRes = await fetch(
+            fallbackUrl,
+            {
+              method: "POST",
+              headers,
+              body,
+              signal: params.signal,
+            }
+          );
+
+          cachedAvailable = true;
+          lastCheck = Date.now();
+          return fallbackRes;
+        } catch (e2: unknown) {
+          if (
+            (e2 as Error).name ===
+            "AbortError"
+          ) {
+            throw new Error(
+              "Request aborted."
+            );
+          }
+
+          throw new Error(
+            "Cannot connect to local model. Check that Ollama is running and the Nexuss connector is started."
+          );
+        }
+      } else {
+        throw new Error(
+          "Cannot connect to local model. Check that the server is running and CORS is configured (e.g., OLLAMA_ORIGINS=*)."
+        );
+      }
     }
-  }
+  };
+
+  res = await requestCompletion();
 
   if (
     process.env.NODE_ENV !==
@@ -1253,21 +1695,61 @@ export async function* streamLocalChat(
     );
   }
 
-  if (!res.ok) {
-    let detail =
-      `Local model error (${res.status})`;
+  // Read the error body and extract a user-safe detail. Supports every shape
+  // the connector and OpenAI-compatible servers emit: string-valued `error`
+  // (the connector's 502 body), object-valued `error.message`, `detail`,
+  // empty, malformed and unexpected bodies.
+  const readErrorDetail = async (r: Response): Promise<string | null> => {
+    const raw = await r.text().catch(() => "");
+    return extractLocalErrorDetail(raw);
+  };
 
-    try {
-      const j = await res.json();
+  // Connection-level failure: the connector could not reach Ollama (HTTP 502).
+  // Verify health, restart Ollama if needed, and retry the exact request at
+  // most once. Model errors (404), auth (401) and unrelated HTTP failures are
+  // never retried. The first response's body is deliberately not consumed
+  // here: only the status code drives the recovery decision, and the retry
+  // produces its own response (or its own error).
+  if (
+    res.status === 502 &&
+    isDefaultOllamaLoopbackEndpoint(params.endpoint) &&
+    !params.signal?.aborted
+  ) {
+    const recovery = await ensureLocalModelConnection({
+      endpoint: params.endpoint,
+      signal: params.signal,
+    });
 
-      if (j?.error?.message) {
-        detail = j.error.message;
-      } else if (
-        typeof j?.detail === "string"
-      ) {
-        detail = j.detail;
+    if (!recovery.ok) {
+      if (recovery.reason === "cancelled") {
+        throw new Error("Request aborted.");
       }
-    } catch {}
+      throw new LocalConnectionError(recovery.message);
+    }
+
+    // Health was just verified through the connector: prefer its endpoint so
+    // the retry does not repeat a CORS-blocked direct round-trip.
+    if (
+      recovery.via === "connector" ||
+      recovery.via === "already_running"
+    ) {
+      endpoint = CONNECTOR_ENDPOINT;
+    }
+
+    res = await requestCompletion();
+
+    if (res.status === 502) {
+      const retryDetail = await readErrorDetail(res);
+      throw new LocalConnectionError(
+        !retryDetail || isConnectionishDetail(retryDetail)
+          ? LOCAL_CONNECTION_MESSAGES.unavailable
+          : retryDetail
+      );
+    }
+  }
+
+  if (!res.ok) {
+    const detail = await readErrorDetail(res);
 
     if (res.status === 401) {
       throw new Error(
@@ -1281,7 +1763,18 @@ export async function* streamLocalChat(
       );
     }
 
-    throw new Error(detail);
+    if (res.status === 502) {
+      // A gateway/connection failure we could not (or did not) recover from.
+      // Never surface a bare status: connection-shaped bodies map to the
+      // actionable recovery copy instead of raw connector internals.
+      throw new LocalConnectionError(
+        !detail || isConnectionishDetail(detail)
+          ? LOCAL_CONNECTION_MESSAGES.unavailable
+          : detail
+      );
+    }
+
+    throw new Error(detail || `Local model error (${res.status})`);
   }
 
   if (!res.body) {

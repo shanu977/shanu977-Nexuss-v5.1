@@ -9,6 +9,11 @@ import { Message } from "@/types";
 import { useChatStore } from "@/store";
 import { NexussLogo } from "@/components/admin/NexussLogo";
 import TerminalConnectCard from "@/components/TerminalConnectCard";
+import LocalConnectionCard from "@/components/LocalConnectionCard";
+import {
+  useLocalConnectionStore,
+  isConnectionCardVisible,
+} from "@/store/localConnectionStore";
 import { TERMINAL_CONNECT_REQUIRED_MESSAGE } from "@/workspace/terminalConnection";
 
 interface MessageListProps {
@@ -54,6 +59,13 @@ export default function MessageList({
   const [draft, setDraft] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Local Ollama connection lifecycle: while it is active the temporary
+  // connection card replaces the empty assistant bubble + thinking dots so
+  // the two indicators never compete.
+  const connecting = useLocalConnectionStore((s) =>
+    isConnectionCardVisible(s.phase)
+  );
 
   // Tracks whether the user is at/near the bottom of the conversation. Manual
   // scrolling always wins: once the user scrolls beyond the threshold, auto-
@@ -202,28 +214,43 @@ if (messages.length === 0 && !loading && !isStreaming) {
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-6">
-        {messages.map((msg) => (
-          <MessageItem
-            key={msg.id}
-            message={msg}
-            streaming={isStreaming && msg.id === streamingMessageId}
-            isEditing={editingId === msg.id}
-            draft={editingId === msg.id ? draft : msg.content}
-            copied={copiedId === msg.id}
-            busy={busyId === msg.id}
-            disabled={blocked}
-            onDraftChange={setDraft}
-            onStartEdit={startEdit}
-            onCancelEdit={cancelEdit}
-            onSaveEdit={saveEdit}
-            onCopy={handleCopy}
-            onRegenerate={handleRegenerate}
-          />
-        ))}
+        {messages.map((msg) => {
+          // While the local connection card is up, the empty streaming
+          // placeholder would show a second "thinking" indicator — hide it;
+          // it reappears (with the thinking dots) as soon as the connection
+          // is verified and streaming begins.
+          const hiddenPlaceholder =
+            connecting &&
+            msg.id === streamingMessageId &&
+            msg.content.trim() === "";
+          if (hiddenPlaceholder) return null;
+          return (
+            <MessageItem
+              key={msg.id}
+              message={msg}
+              streaming={isStreaming && msg.id === streamingMessageId}
+              isEditing={editingId === msg.id}
+              draft={editingId === msg.id ? draft : msg.content}
+              copied={copiedId === msg.id}
+              busy={busyId === msg.id}
+              disabled={blocked}
+              onDraftChange={setDraft}
+              onStartEdit={startEdit}
+              onCancelEdit={cancelEdit}
+              onSaveEdit={saveEdit}
+              onCopy={handleCopy}
+              onRegenerate={handleRegenerate}
+            />
+          );
+        })}
+
+        {/* Temporary local-connection status card (removed automatically
+            once the connection is verified or fails). */}
+        <LocalConnectionCard />
 
         {/* Thinking indicator — shown while the request is starting, before
-            streaming begins. */}
-        {loading && !isStreaming && (
+            streaming begins. Suppressed while the connection card is up. */}
+        {loading && !isStreaming && !connecting && (
           <div className="flex items-center gap-3 self-start max-w-[90%]">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-card border border-border">
               <img src="/nexuss-logo.png" alt="NEXUSS" className="w-4 h-4 object-contain" />

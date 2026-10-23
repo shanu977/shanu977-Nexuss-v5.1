@@ -44,7 +44,17 @@ vi.mock("@/services/localModels", () => ({
   timeoutFetch: vi.fn(),
   cancelOllamaPull: vi.fn(),
   activeOllamaPullModel: vi.fn(() => null),
-  isPullCancelled: vi.fn(() => false)
+  isPullCancelled: vi.fn(() => false),
+  // chatStore's pre-flight Ollama ensure — default to "already verified" so
+  // these component tests never touch a connector or spawn Ollama.
+  ensureLocalModelConnection: vi.fn(async () => ({ ok: true, via: "skipped", alreadyRunning: true })),
+  isLocalConnectionError: (e: unknown) => e instanceof Error && e.name === "LocalConnectionError",
+  LocalConnectionError: class LocalConnectionError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "LocalConnectionError";
+    }
+  },
 }));
 vi.mock("@/services/ollamaSetup", () => ({
   detectOllamaSetup: mocks.detectOllamaSetup,

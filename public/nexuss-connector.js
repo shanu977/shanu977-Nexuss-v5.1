@@ -306,8 +306,9 @@ function resolveSimpleArgPath(root, cwd, arg) {
 }
 
 // Conservative Ollama install detection: filesystem + PATH lookup only (no
-// shell spawns). Returns true/false, or null on platforms we don't know.
-function detectOllamaInstalled() {
+// shell spawns). Returns the trusted executable/app path plus whether this
+// platform can launch it directly, or null when nothing was found.
+function findOllamaExecutable() {
   try {
     const candidates = [];
     if (process.platform === 'win32') {
@@ -320,27 +321,217 @@ function detectOllamaInstalled() {
       if (pf) candidates.push(path.join(pf, 'Ollama', 'ollama.exe'));
       if (process.env.ProgramData) candidates.push(path.join(process.env.ProgramData, 'chocolatey', 'bin', 'ollama.exe'));
       candidates.push(path.join(os.homedir(), 'scoop', 'shims', 'ollama.exe'));
+      for (const c of candidates) {
+        try { if (c && fs.existsSync(c)) return { path: c, launchable: true }; } catch {}
+      }
+      const binName = 'ollama.exe';
+      for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+        if (!dir) continue;
+        try {
+          const full = path.join(dir, binName);
+          if (fs.existsSync(full)) return { path: full, launchable: true };
+        } catch {}
+      }
+      return null;
     } else if (process.platform === 'darwin') {
-      candidates.push('/Applications/Ollama.app');
-      candidates.push(path.join(os.homedir(), 'Applications', 'Ollama.app'));
+      // macOS ships Ollama as an app bundle; it must be opened via `open -a`,
+      // which this connector deliberately does not do — report the install
+      // location but not a direct launch method.
+      const apps = ['/Applications/Ollama.app', path.join(os.homedir(), 'Applications', 'Ollama.app')];
+      for (const c of apps) {
+        try { if (fs.existsSync(c)) return { path: c, launchable: false }; } catch {}
+      }
+      return null;
     } else if (process.platform === 'linux') {
-      candidates.push('/usr/local/bin/ollama');
-      candidates.push('/usr/bin/ollama');
-      candidates.push(path.join(os.homedir(), '.ollama', 'bin', 'ollama'));
-    } else {
+      const bins = [
+        '/usr/local/bin/ollama',
+        '/usr/bin/ollama',
+        path.join(os.homedir(), '.ollama', 'bin', 'ollama'),
+      ];
+      for (const c of bins) {
+        try { if (fs.existsSync(c)) return { path: c, launchable: true }; } catch {}
+      }
       return null;
     }
-    for (const c of candidates) {
-      try { if (c && fs.existsSync(c)) return true; } catch {}
-    }
-    const binName = process.platform === 'win32' ? 'ollama.exe' : 'ollama';
-    for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-      if (!dir) continue;
-      try { if (fs.existsSync(path.join(dir, binName))) return true; } catch {}
-    }
-    return false;
+    return null;
   } catch {
     return null;
+  }
+}
+
+// Conservative Ollama install detection: filesystem + PATH lookup only (no
+// shell spawns). Returns true/false, or null on platforms we don't know.
+function detectOllamaInstalled() {
+  try {
+    if (process.platform !== 'win32' && process.platform !== 'darwin' && process.platform !== 'linux') {
+      return null;
+    }
+    return findOllamaExecutable() !== null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ollama startup (web connector). The browser cannot launch a Windows
+// executable, so `POST /v1/ollama/ensure` runs here with hard boundaries:
+//   - the executable path comes ONLY from trusted local detection above
+//     (never from the request body or any client-supplied value);
+//   - `shell: false` — no cmd.exe, no PowerShell, no string interpolation;
+//   - arguments are fixed (`serve` on POSIX; the bare app launcher on
+//     Windows, which starts the Ollama service);
+//   - a single in-flight ensure per connector process (concurrent HTTP
+//     requests share it) so parallel chat messages can never spawn multiple
+//     Ollama processes;
+//   - readiness is only ever declared by Ollama's real /api/version health
+//     probe, polled at a bounded interval with a bounded startup timeout.
+// ---------------------------------------------------------------------------
+
+const OLLAMA_START_TIMEOUT_MS = process.env.NEXUSS_OLLAMA_START_TIMEOUT_MS
+  ? Math.max(1000, parseInt(process.env.NEXUSS_OLLAMA_START_TIMEOUT_MS, 10) || 20000)
+  : 20000;
+const OLLAMA_POLL_INTERVAL_MS = process.env.NEXUSS_OLLAMA_POLL_INTERVAL_MS
+  ? Math.max(50, parseInt(process.env.NEXUSS_OLLAMA_POLL_INTERVAL_MS, 10) || 400)
+  : 400;
+
+/** promisified probeOllamaVersion. Resolves { running, version }. */
+function probeOllamaHealthAsync() {
+  return new Promise((resolve) => {
+    probeOllamaVersion((running, version) => resolve({ running, version }));
+  });
+}
+
+/** Spawn the trusted Ollama executable. shell:false, fixed args, hidden. */
+function spawnOllamaProcess(exePath) {
+  const { spawn } = require('child_process');
+  // Windows: the bare app launcher starts the Ollama service (same entry
+  // point the user double-clicks). POSIX: `ollama serve` runs the server.
+  const args = process.platform === 'win32' ? [] : ['serve'];
+  return spawn(exePath, args, {
+    windowsHide: true,
+    shell: false,
+    detached: false,
+    stdio: 'ignore',
+    env: process.env,
+  });
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+let ollamaEnsureInFlight = null;
+
+/**
+ * Ensure Ollama is running and healthy. Concurrent callers share ONE
+ * execution. Injectable deps exist purely for unit tests; production uses
+ * the real detection/probe/spawn implementations above. Never throws.
+ */
+function ensureOllamaRunning(deps = {}) {
+  if (ollamaEnsureInFlight) return ollamaEnsureInFlight;
+  ollamaEnsureInFlight = runOllamaEnsure(deps).finally(() => { ollamaEnsureInFlight = null; });
+  return ollamaEnsureInFlight;
+}
+
+async function runOllamaEnsure(deps) {
+  const startedAt = Date.now();
+  const detectInstalled = deps.detectInstalled || detectOllamaInstalled;
+  const findExecutable = deps.findExecutable || findOllamaExecutable;
+  const probeHealth = deps.probeHealth || probeOllamaHealthAsync;
+  const spawnOllama = deps.spawnOllama || spawnOllamaProcess;
+  const timeoutMs = typeof deps.timeoutMs === 'number' ? deps.timeoutMs : OLLAMA_START_TIMEOUT_MS;
+  const pollIntervalMs = typeof deps.pollIntervalMs === 'number' ? deps.pollIntervalMs : OLLAMA_POLL_INTERVAL_MS;
+  const doSleep = deps.sleep || sleep;
+
+  const result = (status, extra) => ({
+    status,
+    installed: extra && 'installed' in extra ? extra.installed : null,
+    running: status === 'running',
+    started: !!(extra && extra.started),
+    version: (extra && extra.version) || null,
+    endpoint: `http://${OLLAMA_HOST}:${OLLAMA_PORT}`,
+    durationMs: Date.now() - startedAt,
+    error: (extra && extra.error) || null,
+  });
+
+  try {
+    const installed = detectInstalled();
+    if (installed === false) {
+      return result('missing', {
+        installed: false,
+        error: 'Ollama is not installed on this computer.',
+      });
+    }
+
+    // Fast path: already healthy — never launch a second instance.
+    const health = await probeHealth();
+    if (health.running) {
+      return result('running', { installed: installed !== false, version: health.version });
+    }
+
+    const exe = findExecutable();
+    if (!exe || !exe.launchable) {
+      return result('stopped', {
+        installed: installed !== false,
+        error: 'Ollama is installed but could not be started automatically on this system. Start Ollama manually and try again.',
+      });
+    }
+
+    let child;
+    try {
+      child = spawnOllama(exe.path);
+    } catch (e) {
+      return result('failed', {
+        installed: true,
+        error: 'Ollama could not be started automatically.',
+      });
+    }
+
+    // Track early process death so a failed launch is reported as `failed`
+    // instead of burning the whole startup timeout.
+    let exited = false;
+    let spawnErrored = false;
+    if (child && typeof child.on === 'function') {
+      child.on('error', () => { spawnErrored = true; });
+      child.on('exit', () => { exited = true; });
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const now = Date.now();
+      if (now >= deadline) break;
+      await doSleep(Math.min(pollIntervalMs, deadline - now));
+      const probe = await probeHealth();
+      if (probe.running) {
+        return result('running', { installed: true, started: true, version: probe.version });
+      }
+      if (spawnErrored || exited) {
+        return result('failed', {
+          installed: true,
+          started: true,
+          error: 'Ollama could not be started automatically. Open the Ollama app once, then try again.',
+        });
+      }
+    }
+
+    if (!exited && !spawnErrored) {
+      // Process is up but its API has not answered yet within the bounded
+      // window — report `starting` (NOT ready) so callers keep polling
+      // health instead of assuming success.
+      return result('starting', {
+        installed: true,
+        started: true,
+        error: 'Ollama is still starting up.',
+      });
+    }
+    return result('failed', {
+      installed: true,
+      started: true,
+      error: 'Ollama could not be started automatically.',
+    });
+  } catch (e) {
+    return result('failed', {
+      installed: null,
+      error: 'Ollama could not be started automatically.',
+    });
   }
 }
 
@@ -458,6 +649,46 @@ const server = http.createServer((req, res) => {
         status: 'ok',
         connector: 'nexuss-local',
         ollama: { installed, running, version, endpoint: `http://${OLLAMA_HOST}:${OLLAMA_PORT}` },
+      }));
+    });
+    return;
+  }
+
+  // Ollama startup/recovery for the web chat: verify health, and when the
+  // service is stopped launch the TRUSTED detected executable (shell:false,
+  // fixed args — the request body can never name a program or command), then
+  // poll Ollama's real /api/version until healthy or a bounded timeout.
+  // Single-flight server-side: concurrent requests share one attempt.
+  // POST only, loopback + origin checked, same protections as /v1/ollama/status.
+  if (pathname === '/v1/ollama/ensure') {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }));
+      return;
+    }
+    const ensureOrigin = req.headers.origin;
+    if (ensureOrigin && !isAllowedOrigin(ensureOrigin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Origin ${ensureOrigin} not allowed.` }));
+      return;
+    }
+    // Any request body is ignored — startup never accepts client paths or commands.
+    req.resume();
+    ensureOllamaRunning().then((outcome) => {
+      if (res.writableEnded || res.destroyed) return;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', connector: 'nexuss-local', ollama: outcome }));
+    }).catch(() => {
+      if (res.writableEnded || res.destroyed) return;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        connector: 'nexuss-local',
+        ollama: {
+          status: 'failed', installed: null, running: false, started: false, version: null,
+          endpoint: `http://${OLLAMA_HOST}:${OLLAMA_PORT}`, durationMs: 0,
+          error: 'Ollama could not be started automatically.',
+        },
       }));
     });
     return;
@@ -902,4 +1133,9 @@ module.exports = {
   isAbsolutePath,
   realpathAllowingMissing,
   resolveSimpleArgPath,
+  // Ollama install/startup helpers — exported for the unit test suite only.
+  // The HTTP surface above is the only way the browser can reach them.
+  detectOllamaInstalled,
+  findOllamaExecutable,
+  ensureOllamaRunning,
 };

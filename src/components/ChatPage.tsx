@@ -27,8 +27,10 @@ export default function ChatPage({
     isStreaming,
     streamingMessageId,
     error,
+    errorRetryable,
     sendMessageStream,
     stopGeneration,
+    retryLastMessage,
     clearError
   } = useChat();
 
@@ -70,6 +72,14 @@ export default function ChatPage({
           >
             <span aria-hidden="true">⚠</span>
             <span className="flex-1">{error}</span>
+            {errorRetryable && !loading && !isStreaming && (
+              <button
+                onClick={() => void retryLastMessage()}
+                className="shrink-0 rounded bg-destructive/20 px-2 py-0.5 text-[11px] font-medium hover:bg-destructive/30"
+              >
+                Try again
+              </button>
+            )}
             <button
               onClick={clearError}
               className="shrink-0 rounded bg-destructive/20 px-2 py-0.5 text-[11px] font-medium hover:bg-destructive/30"
