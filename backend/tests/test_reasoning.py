@@ -115,3 +115,62 @@ def test_filters_reasoning_delimited_with_crlf_line_endings():
 def test_never_exposes_reasoning_when_a_crlf_block_is_unclosed():
     raw = " thinking\r\nunfinished internal reasoning"
     assert filter_reasoning(raw) == ""
+
+
+def test_keeps_numbered_answer_with_result_heading():
+    raw = (
+        "Here is the fix:\n\n"
+        "1. Stop the service.\n"
+        "2. Run the migration.\n"
+        "3. Restart.\n\n"
+        "Summary: applied the fix in 3 steps."
+    )
+    assert filter_reasoning(raw) == raw
+
+
+def test_keeps_plan_heading_answer():
+    raw = "Plan:\n- update config\n- restart server\n\nResult: the server is healthy again."
+    assert filter_reasoning(raw) == raw
+
+
+def test_keeps_decision_heading_answer():
+    raw = "Decision: the bug is in chatStore, not the backend."
+    assert filter_reasoning(raw) == raw
+
+
+def test_strips_internal_cot_heading_but_keeps_output_generation_answer():
+    raw = (
+        "Strategy: pick a friendly greeting\n"
+        "Draft: say hello\n"
+        'Final Output Generation -> "Hello! How can I help you today?"'
+    )
+    assert filter_reasoning(raw) == "Hello! How can I help you today?"
+
+
+def test_keeps_context_rich_reply_intact():
+    raw = (
+        "The Nexus connector failed because the token expired at 14:02 UTC.\n"
+        "\n"
+        "Next steps:\n"
+        "1. Open the connector settings.\n"
+        "2. Paste a fresh token.\n"
+        "3. Reconnect and check the status light.\n"
+        "\n"
+        "Result: reconnection should succeed immediately after saving the token."
+    )
+    assert filter_reasoning(raw) == raw
+
+
+def test_does_not_rewrite_greeting_when_no_deliberation_leaked():
+    raw = "Hello! How can I help you with your code today?"
+    assert filter_reasoning(raw) == raw
+
+
+def test_streaming_after_planning_heading_does_not_freeze():
+    from app.utils.reasoning import ReasoningFilter
+
+    f = ReasoningFilter()
+    out = f.push("Strategy: think first.\n")
+    out += f.push("Now the real answer.\n")
+    out += f.flush()
+    assert "Now the real answer." in out

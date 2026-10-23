@@ -257,6 +257,55 @@ describe("WorkspacePanel connection screen", () => {
     delete (window.navigator as unknown as { permissions?: unknown }).permissions;
   });
 
+  it("explains an origin-blocked refusal without leaking technical details", async () => {
+    useTerminalConnectionStore.setState({
+      status: "error",
+      failureReason: "origin_blocked",
+      diagnosticCode: "origin_blocked"
+    });
+    render(<WorkspacePanel />);
+
+    expect(
+      await screen.findByText("Terminal access blocked for this site", {}, { timeout: 5000 })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/isn't allowed to use the local terminal service/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Try Again/ })).toBeInTheDocument();
+    expect(
+      screen.queryByText(/127\.0\.0\.1|CORS|localhost|ECONNREFUSED|allowlist/)
+    ).not.toBeInTheDocument();
+  });
+
+  it("tells the user to allow the OS dialog after a restart request was issued", async () => {
+    window.localStorage.setItem("nexuss.terminal.setupVerified", "1");
+    stubHealth(false);
+    useTerminalConnectionStore.setState({
+      status: "unavailable",
+      failureReason: "unreachable",
+      lastRestartRequested: true
+    });
+    render(<WorkspacePanel />);
+
+    expect(await screen.findByText(/asks to open/, {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByText(/Terminal connection lost/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry/ })).toBeInTheDocument();
+  });
+
+  it("omits the OS-dialog hint when no restart request was ever issued", async () => {
+    // Same verified-install failure screen, but this cycle never issued a
+    // launcher request — the Allow hint must not appear.
+    window.localStorage.setItem("nexuss.terminal.setupVerified", "1");
+    stubHealth(false);
+    useTerminalConnectionStore.setState({
+      status: "unavailable",
+      failureReason: "unreachable",
+      lastRestartRequested: false
+    });
+    render(<WorkspacePanel />);
+
+    expect(await screen.findByText(/Terminal connection lost/, {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.queryByText(/asks to open/)).not.toBeInTheDocument();
+  });
+
   it("Disconnect returns to the connect screen and is remembered for the session", async () => {
     stubHealth(false);
     render(<WorkspacePanel />);

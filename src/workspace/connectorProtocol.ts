@@ -59,16 +59,18 @@ export function clearConnectorLauncherMemory(): void {
 }
 
 /**
- * Ask Windows to start the installed connector via the registered protocol
- * handler. Fire-and-forget by design: the OS may show a one-time confirmation
- * dialog, and there is no callback channel back to the page. The caller must
- * verify success the only honest way — by polling the health endpoint.
- *
- * Returns false when the environment cannot issue the request at all (SSR /
- * missing DOM); the request itself is still best-effort in a browser.
+ * Outcome of asking Windows to start the installed connector via the
+ * registered protocol handler. `requested` only means the DOM navigation was
+ * issued — the OS may show a one-time confirmation dialog, and there is no
+ * callback channel back to the page, so this is NEVER evidence that the
+ * connector started. The caller must verify success the only honest way — by
+ * polling the health endpoint. `unavailable` means the environment cannot
+ * issue the request at all (SSR / missing DOM) or the DOM insert failed.
  */
-export function requestConnectorStart(): boolean {
-  if (typeof document === "undefined" || typeof window === "undefined") return false;
+export type ConnectorStartOutcome = "requested" | "unavailable";
+
+export function requestConnectorStart(): ConnectorStartOutcome {
+  if (typeof document === "undefined" || typeof window === "undefined") return "unavailable";
   try {
     const iframe = document.createElement("iframe");
     iframe.style.display = "none";
@@ -85,8 +87,8 @@ export function requestConnectorStart(): boolean {
         // Already detached.
       }
     }, 120000);
-    return true;
+    return "requested";
   } catch {
-    return false;
+    return "unavailable";
   }
 }

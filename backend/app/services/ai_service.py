@@ -100,12 +100,14 @@ def handle_chat(db: Session, user: User, payload: ChatRequest) -> ChatResponse:
                 "for screen analysis. Select a different provider or model."
             )
         messages = prompt_service.build_vision_messages(
-            history, payload.message, payload.image
+            history, payload.message, payload.image, user_name=user.name
         )
         fallback_models = VISION_MODELS
     else:
         primary_model = model
-        messages = prompt_service.build_messages(history, payload.message)
+        messages = prompt_service.build_messages(
+            history, payload.message, user_name=user.name
+        )
 
     # Optional workspace context (relevant local files selected by the client's
     # Path engine) is attached as its own prompt region before the user message,
@@ -204,12 +206,14 @@ def handle_chat_stream(db: Session, user: User, payload: ChatRequest) -> Iterato
                 "for screen analysis. Select a different provider or model."
             )
         messages = prompt_service.build_vision_messages(
-            history, payload.message, payload.image
+            history, payload.message, payload.image, user_name=user.name
         )
         fallback_models = VISION_MODELS
     else:
         primary_model = model
-        messages = prompt_service.build_messages(history, payload.message)
+        messages = prompt_service.build_messages(
+            history, payload.message, user_name=user.name
+        )
 
     if payload.workspace_context:
         messages = prompt_service.attach_workspace_context(

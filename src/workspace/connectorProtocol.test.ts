@@ -36,10 +36,12 @@ describe("launcher evidence memory", () => {
 });
 
 describe("requestConnectorStart()", () => {
-  it("fires a hidden iframe at the fixed start URL", () => {
+  it("fires a hidden iframe at the fixed start URL and reports the request as issued", () => {
     expect(CONNECTOR_START_URL).toBe("nexuss://start-connector");
-    const ok = requestConnectorStart();
-    expect(ok).toBe(true);
+    const outcome = requestConnectorStart();
+    // "requested" only means the DOM navigation was issued — never that the
+    // connector actually started (the OS confirmation dialog is invisible).
+    expect(outcome).toBe("requested");
     const iframe = document.querySelector("iframe");
     expect(iframe).not.toBeNull();
     expect(iframe!.getAttribute("src")).toBe(CONNECTOR_START_URL);

@@ -42,6 +42,17 @@ export type TerminalDiagnosticCode =
   | "connection_refused"
   /** The connector refused this origin (security policy — never bypassed). */
   | "security_policy_denial"
+  /**
+   * The connector is reachable but its origin allowlist does not include this
+   * site (proved by the no-cors reachability discriminator). Security policy —
+   * never auto-recovered, never bypassed.
+   */
+  | "origin_blocked"
+  /**
+   * Auto-recovery restarts are currently throttled by the circuit breaker
+   * after repeated restart attempts — probing continues, restarting waits.
+   */
+  | "restart_throttled"
   /** A required local runtime (Node.js) is missing on this computer. */
   | "missing_dependency"
   /** Nothing classified the failure — surface a generic retry path. */
@@ -105,6 +116,16 @@ export function classifyTerminalFailure(
         recovery: ["grant_permission", "retry_probe"],
         message:
           "Allow Nexuss to access the local network in your browser, then try again. Check the site permission in your browser's address bar."
+      };
+
+    case "origin_blocked":
+      // Reachable, but this origin is not on the connector's allowlist.
+      // A human must resolve it (deployment/config) — never auto-recovered.
+      return {
+        code: "origin_blocked",
+        recovery: ["manual_intervention"],
+        message:
+          "This site isn't allowed to use the local terminal service. If you didn't expect this, no changes were made."
       };
 
     case "timeout":

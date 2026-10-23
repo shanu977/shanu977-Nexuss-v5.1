@@ -1338,6 +1338,28 @@ async function consumePullStream(
 }
 
 /**
+ * Default maximum number of tokens a local model may generate per reply.
+ *
+ * This is an OUTPUT budget (Ollama `num_predict`), not a context-window
+ * budget: 1024 tokens (~750 words) is generous for ordinary chat answers and
+ * long explanations alike. Callers can override per request.
+ */
+export const DEFAULT_LOCAL_NUM_PREDICT = 1024;
+
+/**
+ * Repetition penalty sent EXPLICITLY with every local chat request.
+ *
+ * Ollama's classic default is 1.1, but affected setups do not reliably apply
+ * it (e.g. quantized KV cache via `OLLAMA_KV_CACHE_TYPE=q4_0`, CPU-only
+ * runners). Without it, models like qwen2.5-coder:7b degenerate into repeated
+ * tokens ("Hello! How can I I assist you today?"), producing broken,
+ * truncated, context-less replies. Passing the value explicitly restores
+ * coherent output; 1.1 is the long-standing, model-agnostic default and never
+ * suppresses legitimate content.
+ */
+export const DEFAULT_LOCAL_REPEAT_PENALTY = 1.1;
+
+/**
  * Extract a user-safe error message from a local/connector error body.
  * Handles string-valued `error` (the connector's `{"error":"Cannot connect
  * to Ollama at ..."}` 502), object-valued `error.message`, `detail`, other
@@ -1391,6 +1413,7 @@ export async function* streamLocalChat(
     apiKey?: string;
     signal?: AbortSignal;
     numPredict?: number;
+    repeatPenalty?: number;
     keepAlive?: string;
   }
 ): AsyncGenerator<
@@ -1445,6 +1468,13 @@ export async function* streamLocalChat(
       `Bearer ${params.apiKey.trim()}`;
   }
 
+  const numPredict =
+    params.numPredict ??
+    DEFAULT_LOCAL_NUM_PREDICT;
+  const repeatPenalty =
+    params.repeatPenalty ??
+    DEFAULT_LOCAL_REPEAT_PENALTY;
+
   const body = JSON.stringify({
     model: params.modelId,
     messages: params.messages,
@@ -1452,13 +1482,14 @@ export async function* streamLocalChat(
     keep_alive: params.keepAlive ?? "5m",
 
     options: {
-      num_predict:
-        params.numPredict ?? 1024,
+      num_predict: numPredict,
       temperature: 0.7,
+      repeat_penalty: repeatPenalty,
     },
 
-    max_tokens:
-      params.numPredict ?? 1024,
+    // OpenAI-compatible gateways (and Ollama's own /v1 layer) read
+    // top-level max_tokens; keep it in lockstep with num_predict.
+    max_tokens: numPredict,
   });
 
   const perfStart = performance.now();

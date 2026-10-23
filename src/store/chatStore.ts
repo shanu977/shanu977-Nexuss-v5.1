@@ -346,6 +346,11 @@ async function requestAssistant(
       perf.mark("request_preparation_start");
       const isPhi3 = localModel.modelId.toLowerCase().includes("phi3");
       const wsStateForPrompt = useWorkspaceStore.getState();
+      // Identity: address the user by display name (never email).
+      const userName = useAuthStore.getState().user?.displayName?.trim() || "";
+      const identityMsg = userName
+        ? { role: "system" as const, content: `The user's name is ${userName}. Use their first name naturally when it fits, but do not repeat it in every reply.` }
+        : null;
       // Lightweight vs full context: normal chat skips terminal/workspace/execution bloat
       // Cache static strings: basePrompt/minimal are constants, terminalStatus only varies by terminal connection + model
       const allMessages: { role: string; content: string }[] = (() => {
@@ -356,6 +361,7 @@ async function requestAssistant(
           // Only build workspace if needed; for "hello" buildContextFor returns null via fast path (no search)
           const wsRes = useWorkspaceStore.getState().buildContextFor(text);
           const msgs: { role: string; content: string }[] = [{ role: "system", content: minimal }];
+          if (identityMsg) msgs.push(identityMsg);
           if (wsRes?.contextText) msgs.push({ role: "system" as const, content: `Workspace context:\n${wsRes.contextText}` });
           msgs.push(...lightHistory, { role: "user", content: text });
           if (process.env.NODE_ENV !== "production") {
@@ -378,6 +384,7 @@ async function requestAssistant(
         const execContextText = formatExecutionContextForPrompt(chat.id);
         return [
           { role: "system", content: basePrompt },
+          ...(identityMsg ? [identityMsg] : []),
           { role: "system", content: terminalStatus },
           ...(workspaceResult?.contextText ? [{ role: "system" as const, content: `Workspace context:\n${workspaceResult.contextText}` }] : []),
           ...(execContextText ? [{ role: "system" as const, content: execContextText }] : []),

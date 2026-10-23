@@ -763,6 +763,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Honest capability advertisement: what this connector REALLY offers on the
+  // terminal surface. The web app feature-detects this endpoint (older
+  // connectors simply 404 and the client falls back to the /health terminal
+  // flag), so no protocol bump is needed — the shape itself is the signal.
+  if (pathname === '/v1/terminal/capabilities') {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
+      return;
+    }
+    const capOrigin = req.headers.origin;
+    if (capOrigin && !isAllowedOrigin(capOrigin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Origin ${capOrigin} not allowed.` }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      connector: 'nexuss-local',
+      protocol: CONNECTOR_PROTOCOL,
+      version: CONNECTOR_VERSION,
+      capabilities: { run: true, test: true }
+    }));
+    return;
+  }
+
   // Terminal endpoint: POST /v1/terminal/run -> real Windows process, gated by
   // the command policy AND the workspace boundary.
   if (pathname === '/v1/terminal/run') {
@@ -1035,23 +1062,39 @@ const server = http.createServer((req, res) => {
 function startServer() {
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      // Another connector already owns the port. If it answers /health, that is a
-      // healthy instance and starting a duplicate is not an error - exiting 1 here
-      // used to make launchers think the connector "died" when it was actually fine.
+      // Another process already owns the port. Classify it, exactly once, and
+      // ALWAYS terminate with a truthful exit code + actionable message:
+      //   - answers /health 200 -> a healthy connector is running: exit 0;
+      //   - answers otherwise / errors -> a foreign process holds the port: exit 1;
+      //   - accepts TCP but never answers within 2s (silent occupant): exit 1.
+      // Previously the timeout branch destroyed the probe without exiting, so
+      // the process could leave silently and launchers believed the connector
+      // had started when nothing was listening. The occupant is never killed.
+      let settled = false;
+      const finish = (code, msg) => {
+        if (settled) return;
+        settled = true;
+        try {
+          fs.writeSync(code === 0 ? 1 : 2, msg + '\n');
+        } catch {
+          if (code === 0) console.log(msg); else console.error(msg);
+        }
+        process.exit(code);
+      };
       const probe = http.get(`http://127.0.0.1:${CONNECTOR_PORT}/health`, (pr) => {
         pr.resume();
         if (pr.statusCode === 200) {
-          console.log(`[Nexuss Connector] Port ${CONNECTOR_PORT} already served by a healthy connector. Nothing to start.`);
-          process.exit(0);
+          finish(0, `[Nexuss Connector] Port ${CONNECTOR_PORT} already served by a healthy connector. Nothing to start.`);
         }
-        console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} is in use by another process that does not answer /health.`);
-        process.exit(1);
+        finish(1, `[Nexuss Connector] Port ${CONNECTOR_PORT} is in use by another process that answered /health with HTTP ${pr.statusCode}. Stop that process first, then start the connector again.`);
       });
       probe.on('error', () => {
-        console.error(`[Nexuss Connector] Port ${CONNECTOR_PORT} already in use but not responding to /health. Stop the other process first.`);
-        process.exit(1);
+        finish(1, `[Nexuss Connector] Port ${CONNECTOR_PORT} is in use, but that process is not the Nexuss connector (no /health). Stop the program using port ${CONNECTOR_PORT}, then start the connector again.`);
       });
-      probe.setTimeout(2000, () => { probe.destroy(); });
+      probe.setTimeout(2000, () => {
+        finish(1, `[Nexuss Connector] Port ${CONNECTOR_PORT} is in use by a process that did not answer /health within 2000 ms. Stop that program (check Task Manager), then start the connector again.`);
+        probe.destroy();
+      });
       return;
     }
     console.error(`[Nexuss Connector] Server error:`, err);

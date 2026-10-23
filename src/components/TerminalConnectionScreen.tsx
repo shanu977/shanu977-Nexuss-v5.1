@@ -38,6 +38,8 @@ export default function TerminalConnectionScreen({
   const recoveryStep = useTerminalConnectionStore((s) => s.recoveryStep);
   const cancelRecovery = useTerminalConnectionStore((s) => s.cancelRecovery);
   const beginSetup = useTerminalConnectionStore((s) => s.beginSetup);
+  const failureReason = useTerminalConnectionStore((s) => s.failureReason);
+  const lastRestartRequested = useTerminalConnectionStore((s) => s.lastRestartRequested);
 
   if (status === "connecting") {
     return (
@@ -151,6 +153,31 @@ export default function TerminalConnectionScreen({
     );
   }
 
+  // This origin is reachable to the connector but not on its allowlist: a
+  // security-policy outcome. No auto-recovery, no bypass — just the honest
+  // explanation and a manual retry (a deployment fix could make it work).
+  if (status === "error" && failureReason === "origin_blocked") {
+    return (
+      <div className="border-t border-border p-4 animate-fade-in-up">
+        <p className="text-xs font-mono font-semibold text-foreground">
+          Terminal access blocked for this site
+        </p>
+        <p className="mt-1.5 text-[11px] font-mono text-muted-foreground">
+          This site isn&apos;t allowed to use the local terminal service on this
+          computer. If you didn&apos;t expect this, no changes were made.
+        </p>
+        <button
+          type="button"
+          onClick={onConnect}
+          className="mt-3 flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-2 text-[11px] font-mono font-medium text-foreground transition-colors hover:bg-muted/70 cursor-pointer"
+        >
+          <TerminalIcon className="h-3.5 w-3.5" />
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
   // unavailable / error: connector unreachable or verification failed.
   if (status === "unavailable" || status === "error") {
     if (!isWindowsPlatform()) {
@@ -220,6 +247,13 @@ export default function TerminalConnectionScreen({
           We couldn&apos;t reach your terminal service. It may have been closed —
           retry to reconnect.
         </p>
+        {lastRestartRequested && (
+          <p className="mt-1.5 text-[11px] font-mono text-muted-foreground">
+            If your computer asks to open{" "}
+            <span className="text-foreground">Nexuss Terminal</span>, choose{" "}
+            <span className="text-foreground">Allow</span>.
+          </p>
+        )}
         <div className="mt-3 flex items-center gap-2">
           <button
             type="button"

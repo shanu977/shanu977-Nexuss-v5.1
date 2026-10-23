@@ -14,6 +14,9 @@
 
 import type { ConnectorProbeResult } from "./localTerminalRuntime";
 import type { RecoveryAction } from "./terminalDiagnostics";
+import type { ConnectorStartOutcome } from "./connectorProtocol";
+
+export type { ConnectorStartOutcome };
 
 export interface RecoveryConfig {
   /** Total probe attempts per recovery session (first probe included). */
@@ -101,11 +104,18 @@ export function recordRecoverySuccess(state: BreakerState): void {
 
 export type RecoveryStep = "checking" | "restarting" | "verifying";
 
+/**
+ * Outcome of asking the local launcher to start the connector. `requested`
+ * only means the request was ISSUED (the OS may still show a confirmation
+ * dialog) — success is always decided later by a real health probe, never by
+ * this return value. `unavailable` means no launcher/bridge existed at all.
+ */
+
 export interface RecoveryDeps {
   /** Forced health probe (no cache). */
   probe: () => Promise<ConnectorProbeResult>;
-  /** Ask the local launcher to start the connector. Returns false when unavailable. */
-  restart: () => boolean;
+  /** Ask the local launcher to start the connector. Reports whether a request was issued. */
+  restart: () => ConnectorStartOutcome;
   /** Injectable sleep for backoff. */
   sleep: (ms: number) => Promise<void>;
   /** Progress callback for the UI. */
@@ -123,7 +133,7 @@ export type RecoveryOutcome =
   | { ok: true }
   | { ok: false; reason: "exhausted" | "cancelled" | "breaker_open" }
   /** Recovery stopped because a human decision is required. */
-  | { ok: false; reason: "blocked"; blockedBy: "permission" | "policy" };
+  | { ok: false; reason: "blocked"; blockedBy: "permission" | "policy" | "origin" };
 
 /**
  * Run one bounded recovery session:
@@ -141,13 +151,21 @@ export async function runBoundedRecovery(deps: RecoveryDeps, cfg: RecoveryConfig
   let probe = await deps.probe();
   if (probe.ok) return { ok: true };
   if (probe.reason === "permission") return { ok: false, reason: "blocked", blockedBy: "permission" };
+  // Reachable-but-refused origin: security policy, not a restartable failure.
+  if (probe.reason === "origin_blocked") return { ok: false, reason: "blocked", blockedBy: "origin" };
 
   // One restart request per session, only with launcher evidence and breaker budget.
   let restartIssued = false;
   if (deps.canUseLauncher && probe.reason !== "http-error" && breakerAllowsRestart(deps.breaker, now(), cfg)) {
-    deps.onStep?.("restarting", 0);
-    recordRestart(deps.breaker, now(), cfg);
-    restartIssued = deps.restart();
+    const startOutcome = deps.restart();
+    // Only an actually-issued request counts: it charges the breaker, drives
+    // the "restarting" UI step, and later lets the failure screen hint at the
+    // OS confirmation dialog. An unavailable bridge is a no-op.
+    if (startOutcome === "requested") {
+      restartIssued = true;
+      recordRestart(deps.breaker, now(), cfg);
+      deps.onStep?.("restarting", 0);
+    }
   } else if (deps.canUseLauncher && !breakerAllowsRestart(deps.breaker, now(), cfg)) {
     return { ok: false, reason: "breaker_open" };
   }
@@ -163,6 +181,8 @@ export async function runBoundedRecovery(deps: RecoveryDeps, cfg: RecoveryConfig
     if (probe.ok) return { ok: true };
     // A restart can surface a permission prompt — that needs the user, stop.
     if (probe.reason === "permission") return { ok: false, reason: "blocked", blockedBy: "permission" };
+    // Reachable but this origin is refused — stop, never bypass a policy.
+    if (probe.reason === "origin_blocked") return { ok: false, reason: "blocked", blockedBy: "origin" };
     // 403/security responses mid-recovery are policy denials, not flakiness.
     if (probe.reason === "http-error" && probe.httpStatus === 403) {
       return { ok: false, reason: "blocked", blockedBy: "policy" };
