@@ -122,12 +122,61 @@ function partialMarkerAt(text: string): number | null {
 const TRAILING_WHITESPACE = /[\t \r\n]+$/;
 const LEADING_WHITESPACE = /^[\t \r\n]+/;
 
-// Planning / CoT headings that must never be shown. Matches lines like
+// Planning / CoT heading lines that must never be shown. Matches lines like
 // "Strategy: ...", "Draft: ...", "Refine: ..." etc (case-insensitive,
 // optional markdown wrapping). They are stripped as reasoning.
+//
+// IMPORTANT: the set is deliberately limited to unambiguous internal
+// chain-of-thought labels. Ordinary answer structure ("Summary:", "Result:",
+// "Plan:", "Steps:", "Conclusion:", "Decision:") is legitimate user-facing
+// content; treating it as reasoning used to truncate and mangle real answers
+// (everything before/after such a heading was discarded).
 const PLANNING_HEADING_RE =
-  /^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*(Final Output Generation|Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Follow Constraints?|Constraints|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$|^\s*\[.*(?:Done|Proceeds).*?\]\s*$|^\s*[-*]?\s*(?:Ready|Proceeds)\.?\s*[✅]*\s*$/im;
+  /^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*(Final Output Generation|Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Follow Constraints?|Constraints|Checks?|Thought Process|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought)\b[^:\n]*?\)?\s*(?::|->)\s*.*$|^\s*\[.*(?:Done|Proceeds).*?\]\s*$/im;
 
+// Heading names whose after-delimiter text IS the final answer (keep it).
+const ANSWER_HEADING_NAMES = new Set([
+  "output generation",
+  "final output generation",
+  "final polish",
+]);
+
+interface PlanningHeading {
+  name: string;
+  after: string;
+}
+
+/** Match one line as an internal planning heading, or null. */
+function matchPlanningHeading(line: string): PlanningHeading | null {
+  const m = line.match(PLANNING_HEADING_RE);
+  if (!m) return null;
+  let name = (m[1] ?? "").trim().toLowerCase();
+  if (!name) {
+    const low = line.trim().toLowerCase();
+    name = low.includes("done") ? "done" : "proceeds";
+  }
+  const arrow = line.indexOf("->");
+  const colon = line.indexOf(":");
+  let after = "";
+  if (arrow !== -1 && colon !== -1) {
+    after = arrow < colon ? line.slice(arrow + 2) : line.slice(colon + 1);
+  } else if (arrow !== -1) {
+    after = line.slice(arrow + 2);
+  } else if (colon !== -1) {
+    after = line.slice(colon + 1);
+  }
+  return {
+    name,
+    after: after.replace(/^[ *#\t\r\n"'✅]+/, "").replace(/["'✅\s]+$/, "").trim(),
+  };
+}
+
+/**
+ * Remove internal planning heading LINES from the text, keeping every other
+ * line untouched. Only "output generation"-style headings pass their
+ * after-delimiter content through; all other internal heading lines are
+ * dropped whole. Surrounding answer content is never discarded.
+ */
 function stripPlanningHeadings(text: string): string {
   if (!text || !PLANNING_HEADING_RE.test(text)) return text;
   const rawLines: string[] = [];
@@ -141,136 +190,47 @@ function stripPlanningHeadings(text: string): string {
     rawLines.push(text.slice(pos, nl + 1));
     pos = nl + 1;
   }
-  let lastIdx = -1;
-  let lastAfter = "";
-  let lastName = "";
-  for (let i = 0; i < rawLines.length; i++) {
-    const line = rawLines[i].replace(/\r?\n$/, "");
-    const m = line.match(PLANNING_HEADING_RE);
-    if (m) {
-      lastIdx = i;
-      if (m[1]) {
-        lastName = m[1].trim().toLowerCase();
-      } else {
-        const low = line.trim().toLowerCase();
-        if (low.includes("done")) lastName = "done";
-        else if (low.includes("proceeds")) lastName = "proceeds";
-        else lastName = "proceeds";
-      }
-      const arrow = line.indexOf("->");
-      const colon = line.indexOf(":");
-      if (arrow !== -1 && colon !== -1) {
-        if (arrow < colon) lastAfter = line.slice(arrow + 2).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
-        else lastAfter = line.slice(colon + 1).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
-      } else if (arrow !== -1) {
-        lastAfter = line.slice(arrow + 2).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
-      } else if (colon !== -1) {
-        lastAfter = line.slice(colon + 1).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
-      } else {
-        lastAfter = "";
-      }
+  let out = "";
+  let removed = false;
+  for (const rawLine of rawLines) {
+    const line = rawLine.replace(/\r?\n$/, "");
+    const m = matchPlanningHeading(line);
+    if (!m) {
+      out += rawLine;
+      continue;
+    }
+    removed = true;
+    if (ANSWER_HEADING_NAMES.has(m.name) && m.after) {
+      out += `${m.after}\n`;
     }
   }
-  if (lastIdx === -1) return text;
-  const remaining = rawLines.slice(lastIdx + 1).join("");
-  if (remaining.trim()) {
-    let cleaned = remaining.replace(/^\r?\n/, "").trim();
-    cleaned = cleaned.replace(/^\s*\d+\.\s*/, "");
-    return cleaned;
-  }
-  const answerHeadings = new Set([
-    "output generation",
-    "final output generation",
-    "final polish",
-    "decision",
-    "final choice",
-    "choice",
-    "conclusion",
-    "summary",
-    "result",
-    "final answer",
-  ]);
-  if (answerHeadings.has(lastName) && lastAfter.trim()) return lastAfter.trim();
-  // Keep preamble before first heading if present
-  let firstIdx = -1;
-  for (let i = 0; i < rawLines.length; i++) {
-    if (PLANNING_HEADING_RE.test(rawLines[i].replace(/\r?\n$/, ""))) {
-      firstIdx = i;
-      break;
-    }
-  }
-  const prefix = firstIdx > 0 ? rawLines.slice(0, firstIdx).join("").trim() : "";
-  if (prefix) return prefix;
-  if (rawLines.length === 1) return "";
-  return answerHeadings.has(lastName) ? lastAfter.trim() : "";
+  if (!removed) return text;
+  return out.replace(/^\r?\n/, "");
 }
+
+// Deliberation markers that indicate the visible reply leaked internal
+// back-and-forth ("Let's try...", "Final decision: ...", ...).
+const DELIBERATION_RE =
+  /Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,|I should respond|I should acknowledge|should respond with|Follow Constraints|Final Output Generation|Respond only with|Never reveal internal|Be helpful and concise|Acknowledge the friendly|I need to keep it tight/i;
+const DELIBERATION_PARAGRAPH_RE =
+  /Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal|Acknowledge the friendly/i;
 
 function stripFreeformDeliberation(text: string): string {
   if (!text) return text;
   let t = text.replace(/^\s*(?:NEXUSS\s*:?\s*)?:\*\*\s*/i, "").trim();
   t = t.replace(/^\s*:\*\*\s*/, "").trim();
-  if (/Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,|I should respond|I should acknowledge|should respond with|Follow Constraints|Final Output Generation|Respond only with|Never reveal internal|Be helpful and concise|Acknowledge the friendly/i.test(t)) {
-    const parts = t.split(/\n\s*\n/);
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const p = parts[i];
-      if (!p.trim() || /Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal|Acknowledge the friendly/i.test(p)) continue;
-      const m_q = p.match(/"([^"]*How can I help[^"]*)"/i);
-      if (m_q) return m_q[1].trim().replace(/^["']|["']$/g, "").trim();
-      const m_q2 = p.match(/"([^"]+)"/);
-      if (m_q2 && /Hello|Hi/i.test(m_q2[1]) && !/Let's|Actually|I will|Final decision|Refined plan/i.test(m_q2[1])) return m_q2[1].trim();
-      if (/Hello|Hi.*How can I help/i.test(p) && p.trim().length < 120) return p.trim().replace(/^["']|["']$/g, "").trim();
-    }
-    const quotes = [...t.matchAll(/"([^"]*How can I help[^"]*)"/gi)].map((m) => m[1].trim());
-    if (quotes.length) {
-      // Prefer last that is not inside deliberation paragraph
-      for (let i = quotes.length - 1; i >= 0; i--) {
-        const q = quotes[i];
-        const idx = t.indexOf(q);
-        const paraStart = t.lastIndexOf("\n\n", idx);
-        const para = t.slice(paraStart, idx + q.length + 50);
-        if (!/Let's try|Actually,|Final decision|Wait,|I should|Follow Constraints|Final Output Generation/i.test(para)) return q.trim().replace(/^["']|["']$/g, "").trim();
-      }
-      return quotes[quotes.length - 1].trim().replace(/^["']|["']$/g, "").trim();
-    }
-    const mEx = t.match(/Example:\s*"([^"]+)"/i);
-    if (mEx && /As an AI|don't drink coffee|How can I help|Hello! How can I help/i.test(mEx[1])) {
-      const after = t.slice((mEx.index ?? 0) + mEx[0].length).trim().replace(/^[\s\d.:\-✅]*/, "");
-      if (after && after.length > 20 && !/Acknowledge the friendly|I should respond/i.test(after.slice(0, 80))) {
-        if (/As an AI|don't drink coffee|How can I help|Hello!/i.test(after)) {
-          const afterClean = after.replace(/^\s*\d+\.\s*/, "").trim().replace(/^["']|["']$/g, "").trim();
-          if (afterClean) return afterClean;
-        }
-      }
-      return mEx[1].trim();
-    }
-    let mLove: RegExpMatchArray | null = null;
-    for (const mm of t.matchAll(/I'd love to, but as an AI.*/gi)) mLove = mm as unknown as RegExpMatchArray;
-    if (mLove && mLove.index !== undefined) {
-      const cand = t.slice(mLove.index).trim().replace(/^["']|["']$/g, "").trim();
-      if (cand.length > 20) return cand;
-    }
-    let last: RegExpMatchArray | null = null;
-    for (const mm of t.matchAll(/I(?:'m| am) an AI assistant/gi)) last = mm;
-    if (last && last.index !== undefined) return t.slice(last.index).trim().replace(/^:\*\*\s*/, "").trim();
-    for (let i = parts.length - 1; i >= 0; i--)
-      if (parts[i].trim() && !/Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal/i.test(parts[i])) {
-        const cleaned = parts[i].trim().replace(/^\s*\d+\.\s*/, "");
-        if (cleaned) return cleaned;
-      }
-    if (/Acknowledge the friendly|I should acknowledge/i.test(t)) {
-      const mFinal = t.match(/(I'd love to, but as an AI.*|Hello! How can I help.*)/i);
-      if (mFinal) return mFinal[1].trim().replace(/^["']|["']$/g, "").trim();
-    }
+  if (!DELIBERATION_RE.test(t)) return t;
+  // Deliberation leaked into the visible reply. Keep the last paragraph that
+  // is not itself deliberation. The answer is NEVER rewritten into a
+  // different fragment (e.g. an extracted greeting): replacing a real answer
+  // with a generic greeting destroys context and is worse than a small leak.
+  const parts = t.split(/\n\s*\n/);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (!p.trim() || DELIBERATION_PARAGRAPH_RE.test(p)) continue;
+    return p.trim().replace(/^\s*\d+\.\s*/, "");
   }
-  if (/I need to keep it tight/i.test(t)) {
-    let last: RegExpMatchArray | null = null;
-    for (const mm of t.matchAll(/I(?:'m| am) an AI assistant designed to be helpful/gi)) last = mm;
-    if (last && last.index !== undefined) return t.slice(last.index).trim().replace(/^:\*\*\s*/, "").trim();
-    const m3 = t.match(/I(?:'m| am) an AI assistant/i);
-    if (m3 && m3.index !== undefined) return t.slice(m3.index).trim();
-  }
-  if (t.startsWith(":**")) t = t.slice(3).trim();
-  return t;
+  return "";
 }
 
 export class ReasoningFilter {
@@ -278,7 +238,6 @@ export class ReasoningFilter {
   private pending = "";
   private emitted = false;
   private planBuf = "";
-  private sawPlanning = false;
 
   private isPlanPrefix(line: string): boolean {
     if (/:\*\*|I should|Acknowledge the friendly|Follow Constraints|Final Output Generation/i.test(line)) return true;
@@ -290,6 +249,8 @@ export class ReasoningFilter {
     if (t === "") return true;
     let first = t.split(":")[0].trim();
     first = first.replace(/\(.*?\)/g, "").trim();
+    // Only unambiguous internal CoT labels are held back. Ordinary answer
+    // words (summary/result/plan/steps/...) must stream through untouched.
     const candidates = [
       "strategy",
       "mental",
@@ -315,18 +276,6 @@ export class ReasoningFilter {
       "output generation",
       "thought process",
       "thought",
-      "plan",
-      "steps",
-      "step",
-      "decision",
-      "final choice",
-      "choice",
-      "conclusion",
-      "summary",
-      "result",
-      "final answer",
-      "proceeds",
-      "done",
     ];
     return candidates.some(
       (c) => c.startsWith(first) && first.length <= c.length || first.startsWith(c)
@@ -336,26 +285,16 @@ export class ReasoningFilter {
   private planPush(text: string): string {
     if (!text) return "";
     this.planBuf += text;
-    if (PLANNING_HEADING_RE.test(this.planBuf)) this.sawPlanning = true;
-    if (this.sawPlanning) {
-      if (!this.planBuf.includes("\n")) return "";
-      return "";
-    }
     let out = "";
     while (this.planBuf.includes("\n")) {
       const idx = this.planBuf.indexOf("\n");
       const line = this.planBuf.slice(0, idx + 1);
       this.planBuf = this.planBuf.slice(idx + 1);
-      if (PLANNING_HEADING_RE.test(line.replace(/\r?\n$/, ""))) continue;
-      if (/:\*\*|I should respond|I should acknowledge|Acknowledge the friendly/i.test(line)) {
-        this.sawPlanning = true;
-        continue;
-      }
+      const bare = line.replace(/\r?\n$/, "");
+      // Drop internal CoT heading lines and deliberation leak artifacts only.
+      if (matchPlanningHeading(bare)) continue;
+      if (/:\*\*|I should respond|I should acknowledge|Acknowledge the friendly/i.test(bare)) continue;
       out += line;
-    }
-    if (this.sawPlanning) {
-      if (out) this.planBuf = out + this.planBuf;
-      return "";
     }
     if (this.planBuf && this.isPlanPrefix(this.planBuf)) return out;
     if (this.planBuf) {
@@ -371,41 +310,9 @@ export class ReasoningFilter {
     const line = this.planBuf;
     this.planBuf = "";
     if (!line.includes("\n")) {
-      const m = line.trim().match(PLANNING_HEADING_RE);
+      const m = matchPlanningHeading(line);
       if (m) {
-        let name = "";
-        if (m[1]) name = m[1].trim().toLowerCase();
-        else {
-          const low = line.trim().toLowerCase();
-          if (low.includes("done")) name = "done";
-          else if (low.includes("proceeds")) name = "proceeds";
-          else name = "done";
-        }
-        const answerHeadings = new Set([
-          "output generation",
-          "final output generation",
-          "final polish",
-          "decision",
-          "final choice",
-          "choice",
-          "conclusion",
-          "summary",
-          "result",
-          "final answer",
-        ]);
-        if (!answerHeadings.has(name)) return "";
-        const arrow = line.indexOf("->");
-        const colon = line.indexOf(":");
-        let after = "";
-        if (arrow !== -1 && colon !== -1) {
-          if (arrow < colon) after = line.slice(arrow + 2).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
-          else after = line.slice(colon + 1).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
-        } else if (arrow !== -1) {
-          after = line.slice(arrow + 2).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
-        } else if (colon !== -1) {
-          after = line.slice(colon + 1).replace(/^[ *#\t\r\n"'✅]+/, "").trim();
-        }
-        if (after) return after;
+        if (ANSWER_HEADING_NAMES.has(m.name) && m.after) return m.after;
         return "";
       }
     }
@@ -430,8 +337,7 @@ export class ReasoningFilter {
   flush(): string {
     if (this.state === "thinking") {
       this.pending = "";
-      let tail = this.planFlush();
-      if (this.sawPlanning && /^\s*\d+\.\s*/.test(tail)) tail = tail.replace(/^\s*\d+\.\s*/, "");
+      const tail = this.planFlush();
       return stripFreeformDeliberation(tail).trim();
     }
 
@@ -456,15 +362,12 @@ export class ReasoningFilter {
     if (out.length > 0) this.emitted = true;
     const planTail = this.planFlush();
     const combined = out + planTail;
-    let stripped = stripPlanningHeadings(combined);
-    if (this.sawPlanning && /^\s*\d+\.\s*/.test(stripped)) stripped = stripped.replace(/^\s*\d+\.\s*/, "");
-    const strippedFree = stripFreeformDeliberation(stripped).trim();
-    const combinedFree = stripFreeformDeliberation(combined).trim();
-    if (strippedFree !== combinedFree && this.emitted) {
-      if (strippedFree.length < combinedFree.length) return strippedFree;
-    }
-    if (strippedFree !== combinedFree) return strippedFree;
-    return combinedFree;
+    const stripped = stripPlanningHeadings(combined);
+    const cleaned =
+      stripped === combined
+        ? combined
+        : stripped.replace(/^\s*\d+\.\s*/, "");
+    return stripFreeformDeliberation(cleaned).trim();
   }
 
   private step(): string | "wait" {

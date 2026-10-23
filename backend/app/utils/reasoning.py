@@ -48,35 +48,69 @@ _BARE_LINE_MARKER_RE = re.compile(
 _TRAILING_WHITESPACE = re.compile(r"[\t \r\n]+$")
 _LEADING_WHITESPACE = re.compile(r"^[\t \r\n]+")
 
-# Planning / chain-of-thought headings that must never be shown to the user.
+# Planning / chain-of-thought heading lines that must never be shown to the user.
 # These appear as bare lines like "Strategy: ...", "Draft: ...", "Refine: ..." etc.
 # They are stripped as reasoning even when not wrapped in thinking/response markers.
 # Also catches numbered headings ("4. Strategy:"), bracket markers ("[Done]"),
-# and standalone "Proceeds." / "Checks against guidelines:" variants, plus arrow
-# delimiters like "Output Generation -> \"Hello\"".
+# and arrow delimiters like "Output Generation -> \"Hello\"".
+#
+# The set is deliberately limited to unambiguous internal chain-of-thought
+# labels. Ordinary answer structure ("Summary:", "Result:", "Plan:",
+# "Steps:", "Conclusion:", "Decision:") is legitimate user-facing content;
+# treating it as reasoning used to truncate and mangle real answers
+# (everything before/after such a heading was discarded).
 _PLANNING_HEADING_RE = re.compile(
     r"^\s*(?:\d+\.\s*)?(?:\*\*|#{1,6}\s*)?\(?\s*"
-    r"(Final Output Generation|Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Follow Constraints?|Constraints|Checks?|Thought Process|Final choice|Final answer|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought|Plan|Decision|Choice|Conclusion|Summary|Result|Ready|Proceeds)\b[^:\n]*?\)?\s*(?::|->)\s*.*$"
-    r"|^\s*\[.*(?:Done|Proceeds).*?\]\s*$"
-    r"|^\s*[-*]?\s*(?:Ready|Proceeds)\.?\s*[✅]*\s*$",
+    r"(Final Output Generation|Output Generation|Final Polish|Internal instructions?|Prompt text|Planning text|Follow Constraints?|Constraints|Checks?|Thought Process|Chain[-\s]?of[-\s]?thought|Self[-\s]?Correction|Strategy|Mental|Draft|Refine|Verification|Analysis|Reasoning|Thought)\b[^:\n]*?\)?\s*(?::|->)\s*.*$"
+    r"|^\s*\[.*(?:Done|Proceeds).*?\]\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+
+# Heading names whose after-delimiter text IS the final answer (keep it).
+_ANSWER_HEADING_NAMES = {
+    "output generation",
+    "final output generation",
+    "final polish",
+}
 
 _WAIT = object()
 
 
-def _is_planning_heading(line: str) -> bool:
-    return bool(_PLANNING_HEADING_RE.match(line.strip()))
+def _match_planning_heading(line: str) -> tuple[str, str] | None:
+    """Match one line as an internal planning heading.
+
+    Returns ``(name, after_delimiter_text)`` or None.
+    """
+    m = _PLANNING_HEADING_RE.match(line)
+    if not m:
+        return None
+    grp = m.group(1)
+    if grp is not None:
+        name = grp.strip().lower()
+    else:
+        low = line.strip().lower()
+        name = "done" if "done" in low else "proceeds"
+    arrow = line.find("->")
+    colon = line.find(":")
+    after = ""
+    if arrow != -1 and colon != -1:
+        after = line[arrow + 2 :] if arrow < colon else line[colon + 1 :]
+    elif arrow != -1:
+        after = line[arrow + 2 :]
+    elif colon != -1:
+        after = line[colon + 1 :]
+    after = after.strip(" *#\t\r\n\"'✅")
+    return name, after
 
 
 def _strip_freeform_deliberation(text: str) -> str:
     """Strip free-form deliberation that is not heading-based.
 
-    Handles leaks like:
-      "Hi there! How can I help you?"\\nLet's try...\\n"Hello! How can I assist you?"\\nFinal decision: "Hi there!..."
-      and
-      ":** I need to keep it tight... I am an AI assistant..."
-    Keeps only the final quoted greeting or the final "I am an AI assistant..." block.
+    When the visible reply leaked internal back-and-forth ("Let's try...",
+    "Final decision: ...", ...), keep the last paragraph that is not itself
+    deliberation. The answer is NEVER rewritten into a different fragment
+    (e.g. an extracted greeting): replacing a real answer with a generic
+    greeting destroys context and is worse than a small leak.
     """
     if not text:
         return text
@@ -84,196 +118,55 @@ def _strip_freeform_deliberation(text: str) -> str:
     # Strip leading "NEXUSS:**" / "NEXUSS :**" / ":**" artifacts that leak from the model
     t = re.sub(r"^\s*(?:NEXUSS\s*:?\s*)?:\*\*\s*", "", text, flags=re.IGNORECASE).strip()
     t = re.sub(r"^\s*:\*\*\s*", "", t).strip()
-    # If text contains deliberation keywords and multiple quoted candidates, keep last quoted greeting
-    # This covers the "hi" leak with many "Let's try" / "Final decision" quoted candidates
-    if re.search(r"Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,|I should respond|I should acknowledge|should respond with|Follow Constraints|Final Output Generation|Respond only with|Never reveal internal|Be helpful and concise|Acknowledge the friendly", t, re.IGNORECASE):
-        # Paragraph-aware: find last quoted greeting in a clean paragraph (no deliberation keywords on same paragraph)
+    if re.search(
+        r"Let's try|Let's stick|Actually, the user|Final decision|Refined plan|I will say|I will just|Let's go|Wait,|I should respond|I should acknowledge|should respond with|Follow Constraints|Final Output Generation|Respond only with|Never reveal internal|Be helpful and concise|Acknowledge the friendly|I need to keep it tight",
+        t,
+        re.IGNORECASE,
+    ):
         parts = re.split(r"\n\s*\n", t)
         for p in reversed(parts):
-            if not p.strip() or re.search(r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal|Acknowledge the friendly", p, re.IGNORECASE):
+            if not p.strip() or re.search(
+                r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal|Acknowledge the friendly",
+                p,
+                re.IGNORECASE,
+            ):
                 continue
-            m_q = re.search(r'"([^"]*How can I help[^"]*)"', p, re.IGNORECASE)
-            if m_q:
-                return m_q.group(1).strip().strip('"').strip()
-            # Also check for quoted greeting without How can I help, but Hello/Hi
-            m_q2 = re.search(r'"([^"]+)"', p)
-            if m_q2 and re.search(r"Hello|Hi", m_q2.group(1), re.IGNORECASE):
-                # Ensure quoted itself is not deliberation
-                if not re.search(r"Let's|Actually|I will|Final decision|Refined plan", m_q2.group(1), re.IGNORECASE):
-                    return m_q2.group(1).strip()
-            # If paragraph itself is a greeting without quotes
-            if re.search(r"Hello|Hi.*How can I help", p, re.IGNORECASE) and len(p.strip()) < 120:
-                return p.strip().strip('"').strip()
-        # Fallback: global search for quoted greetings in clean context
-        quotes = re.findall(r'"([^"]*How can I help[^"]*)"', t, re.IGNORECASE)
-        if quotes:
-            # Filter out those inside deliberation paragraphs
-            clean_quotes = []
-            for q in quotes:
-                # Find paragraph containing this quote
-                idx = t.find(q)
-                para_start = t.rfind("\n\n", 0, idx)
-                para = t[para_start:idx+len(q)+50]
-                if not re.search(r"Let's try|Actually,|Final decision|Wait,|I should|Follow Constraints|Final Output Generation", para, re.IGNORECASE):
-                    clean_quotes.append(q)
-            if clean_quotes:
-                return clean_quotes[-1].strip().strip('"').strip()
-            return quotes[-1].strip().strip('"').strip()
-        # Handle "Example: \"...final answer...\"" pattern where final answer is quoted and then repeated plain
-        m_ex = re.search(r'Example:\s*"([^"]+)"', t, re.IGNORECASE | re.DOTALL)
-        if m_ex and re.search(r"As an AI|don't drink coffee|How can I help|Hello! How can I help", m_ex.group(1), re.IGNORECASE):
-            after = t[m_ex.end():].strip()
-            # Strip leading numbered marker like "5." / "5.I'd"
-            after = re.sub(r'^[\s\d\.\:\-\u2705]*', '', after)
-            if after and len(after) > 20 and not re.search(r"Acknowledge the friendly|I should respond", after[:80], re.IGNORECASE):
-                if re.search(r"As an AI|don't drink coffee|How can I help|Hello!", after, re.IGNORECASE):
-                    # Return the plain final answer after the example, not the quoted example itself
-                    # Clean up any leading enumeration still present
-                    after_clean = re.sub(r'^\s*\d+\.\s*', '', after).strip().strip('"').strip()
-                    if after_clean:
-                        return after_clean
-            return m_ex.group(1).strip()
-        # Fallback: extract from "I'd love to, but as an AI" onward when deliberation leaked in same paragraph
-        m_love = re.search(r"I'd love to, but as an AI.*", t, re.IGNORECASE | re.DOTALL)
-        if m_love:
-            # Prefer the last occurrence (the plain final answer, not the quoted example)
-            last_love = None
-            for mm in re.finditer(r"I'd love to, but as an AI.*", t, re.IGNORECASE | re.DOTALL):
-                last_love = mm
-            if last_love:
-                candidate = t[last_love.start():].strip()
-                # Trim trailing deliberation artifacts like '5.' prefix already handled, strip quotes
-                candidate = candidate.strip().strip('"').strip()
-                # If candidate still contains deliberation prefix like 'Example:', strip it
-                if len(candidate) > 20:
-                    return candidate
-        # For tell-me-about-yourself, keep from "I am an AI assistant" onward
-        m2 = None
-        for mm in re.finditer(r"I(?:'m| am) an AI assistant", t, re.IGNORECASE):
-            m2 = mm
-        if m2:
-            return t[m2.start():].strip().lstrip(":** ").strip()
-        # Generic: keep last paragraph that looks like final answer
-        parts = re.split(r"\n\s*\n", t)
-        # Return last non-deliberation paragraph
-        for p in reversed(parts):
-            if p.strip() and not re.search(r"Let's try|Let's stick|Actually,|Final decision|Refined plan|I will |Wait,|Okay,|I should|Follow Constraints|Final Output Generation|Respond only with|Never reveal", p, re.IGNORECASE):
-                # Strip leading enumeration "6. "
-                cleaned = re.sub(r"^\s*\d+\.\s*", "", p.strip())
-                if cleaned:
-                    return cleaned
-        # Last resort: if text still contains deliberation but also contains a clear final answer sentence, extract it
-        # e.g. single paragraph with ":** Acknowledge... 5.I'd love..." -> take from "I'd love" onward
-        if re.search(r"Acknowledge the friendly|I should acknowledge", t, re.IGNORECASE):
-            m_final = re.search(r"(I'd love to, but as an AI.*|Hello! How can I help.*)", t, re.IGNORECASE | re.DOTALL)
-            if m_final:
-                return m_final.group(1).strip().strip('"').strip()
-    # Specific for "I need to keep it tight" deliberation before final AI intro
-    if re.search(r"I need to keep it tight", t, re.IGNORECASE):
-        m2 = None
-        for mm in re.finditer(r"I(?:'m| am) an AI assistant designed to be helpful", t, re.IGNORECASE):
-            m2 = mm
-        if m2:
-            return t[m2.start():].strip().lstrip(":** ").strip()
-        # Fallback: strip leading ":**" already done, try to find "I am an AI"
-        m3 = re.search(r"I(?:'m| am) an AI assistant", t, re.IGNORECASE)
-        if m3:
-            return t[m3.start():].strip()
-    # Strip leading ":**" artifact for tell-me case
-    if t.startswith(":**"):
-        t = t[3:].strip()
+            cleaned = re.sub(r"^\s*\d+\.\s*", "", p.strip())
+            if cleaned:
+                return cleaned
+        return ""
     return t
 
 
 def _strip_planning_headings(text: str) -> str:
-    """Remove planning / CoT heading blocks, keeping only the final answer.
+    """Remove internal planning heading LINES, keeping every other line.
 
-    If the text contains lines like "Strategy: ...", the entire block up to and
-    including the last such heading is discarded. When the last heading line
-    itself carries the answer after its colon (e.g. "Output Generation: Hello!"),
-    that after-colon content is returned. Otherwise the text after the last
-    heading's newline is returned.
+    Only "output generation"-style headings pass their after-delimiter
+    content through; all other internal heading lines are dropped whole.
+    Surrounding answer content is never discarded.
     """
     if not text or not _PLANNING_HEADING_RE.search(text):
         return _strip_freeform_deliberation(text)
     lines = text.splitlines(True)
-    last_idx = -1
-    last_after = ""
-    last_heading_name = ""
-    for i, line in enumerate(lines):
-        m = _PLANNING_HEADING_RE.match(line.rstrip("\r\n"))
-        if m:
-            last_idx = i
-            grp = m.group(1)
-            if grp is not None:
-                last_heading_name = grp.strip().lower()
-            else:
-                # Bracket / Proceeds match has no capture group 1
-                txt = line.strip().lower()
-                if "done" in txt:
-                    last_heading_name = "done"
-                elif "proceeds" in txt:
-                    last_heading_name = "proceeds"
-                else:
-                    last_heading_name = "proceeds"
-            # Support both ":" and "->" delimiters
-            dpos = -1
-            arrow = line.find("->")
-            colon = line.find(":")
-            if arrow != -1 and colon != -1:
-                dpos = min(arrow, colon)
-                # If arrow is delimiter, take after arrow, else after colon
-                if arrow < colon:
-                    after = line[arrow + 2 :].strip(" *#\t\r\n\"'✅")
-                    last_after = after
-                    continue
-            elif arrow != -1:
-                after = line[arrow + 2 :].strip(" *#\t\r\n\"'✅")
-                last_after = after
-                continue
-            elif colon != -1:
-                after = line[colon + 1 :].strip(" *#\t\r\n\"'✅")
-                last_after = after
-            else:
-                last_after = ""
-    if last_idx == -1:
-        return text
-    remaining = "".join(lines[last_idx + 1 :])
-    if remaining.strip():
-        cleaned = remaining.lstrip("\r\n").strip()
-        # Strip leading enumeration like "6. " that is artifact of the chain
-        cleaned = re.sub(r"^\s*\d+\.\s*", "", cleaned)
-        return cleaned
-    # No remaining text after the last heading: only return after-colon if the
-    # last heading is an answer-type heading, otherwise treat it as
-    # reasoning-only and return empty to trigger fallback. If there was content
-    # before the first heading, keep it (e.g. "Preamble\nStrategy: ...").
-    answer_headings = {
-        "output generation",
-        "final output generation",
-        "final polish",
-        "decision",
-        "final choice",
-        "choice",
-        "conclusion",
-        "summary",
-        "result",
-        "final answer",
-    }
-    if last_heading_name.lower() in answer_headings and last_after.strip():
-        return last_after.strip()
-    # Find first heading to check for preamble
-    first_idx = -1
-    for i, line in enumerate(lines):
-        if _PLANNING_HEADING_RE.match(line.rstrip("\r\n")):
-            first_idx = i
-            break
-    prefix = "".join(lines[:first_idx]).strip() if first_idx > 0 else ""
-    if prefix:
-        return prefix
-    if len(lines) == 1:
-        return ""
-    return last_after.strip() if last_heading_name.lower() in answer_headings else ""
+    out_parts: list[str] = []
+    removed = False
+    for line in lines:
+        m = _match_planning_heading(line.rstrip("\r\n"))
+        if m is None:
+            out_parts.append(line)
+            continue
+        removed = True
+        name, after = m
+        if name in _ANSWER_HEADING_NAMES and after:
+            out_parts.append(after + "\n")
+    if not removed:
+        return _strip_freeform_deliberation(text)
+    joined = "".join(out_parts)
+    if joined.startswith("\r\n"):
+        joined = joined[2:]
+    elif joined.startswith("\n"):
+        joined = joined[1:]
+    return _strip_freeform_deliberation(joined)
 
 
 def _classify_angle_tag(tag: str) -> str:
@@ -370,7 +263,6 @@ class ReasoningFilter:
         self.pending = ""
         self.emitted = False
         self._plan_buf = ""
-        self._saw_planning = False
 
     def _is_plan_prefix(self, line: str) -> bool:
         # Hold back lines that look like leaked deliberation (":**", "I should", "Acknowledge")
@@ -388,6 +280,8 @@ class ReasoningFilter:
         # Remove possible trailing colon content and parenthetical for prefix check
         first = t.split(":")[0].strip()
         first = re.sub(r"\(.*?\)", "", first).strip()
+        # Only unambiguous internal CoT labels are held back. Ordinary answer
+        # words (summary/result/plan/steps/...) must stream through untouched.
         candidates = [
             "strategy",
             "mental",
@@ -413,65 +307,31 @@ class ReasoningFilter:
             "output generation",
             "thought process",
             "thought",
-            "plan",
-            "steps",
-            "step",
-            "decision",
-            "final choice",
-            "choice",
-            "conclusion",
-            "summary",
-            "result",
-            "final answer",
-            "proceeds",
-            "done",
         ]
         return any(
             c.startswith(first) and len(first) <= len(c) or first.startswith(c) for c in candidates
         ) or any(first.startswith(c.split()[0]) for c in candidates)
 
     def _plan_push(self, text: str) -> str:
-        """Streaming-safe planning-heading filter: drops heading lines and
-        buffers content between first and last heading until flush, so
-        intermediate non-heading lines inside the reasoning block never leak."""
+        """Streaming-safe planning-heading filter: drops internal CoT heading
+        lines and deliberation leak lines, buffering only the trailing partial
+        line that could still become a heading. Visible answer content is never
+        discarded, no matter how many headings appear."""
         if not text:
             return ""
         self._plan_buf += text
-        if _PLANNING_HEADING_RE.search(self._plan_buf):
-            self._saw_planning = True
-        # If we have ever seen a planning heading, buffer everything until flush
-        # (the final answer is only known after the last heading). This prevents
-        # leaking lines like "hi" that sit between Strategy and Draft.
-        if self._saw_planning:
-            # Hold back an incomplete trailing line that could still become a heading
-            if "\n" not in self._plan_buf:
-                return ""
-            # Keep at least the last incomplete line buffered
-            # Only emit if we are sure no heading will appear later – but we
-            # cannot be sure until flush, so hold all when a heading has been seen.
-            # Check if the buffer ends with a partial heading prefix – hold it.
-            # Otherwise, still hold the whole buffer until flush for safety.
-            # We still need to allow the case where no heading has been seen yet:
-            # fall through to per-line logic only when no heading seen.
-            return ""
         out_parts: list[str] = []
         while "\n" in self._plan_buf:
             idx = self._plan_buf.index("\n")
             line = self._plan_buf[: idx + 1]
             self._plan_buf = self._plan_buf[idx + 1 :]
-            if _PLANNING_HEADING_RE.match(line.rstrip("\r\n")):
+            bare = line.rstrip("\r\n")
+            if _match_planning_heading(bare) is not None:
                 continue
-            # Drop leaked deliberation lines that precede headings (e.g. ":** I should...")
+            # Drop leaked deliberation lines (e.g. ":** I should...")
             if re.search(r":\*\*|I should respond|I should acknowledge|Acknowledge the friendly", line, re.IGNORECASE):
-                # Treat as planning: hold subsequent content until flush
-                self._saw_planning = True
                 continue
             out_parts.append(line)
-        # If we discovered deliberation mid-push, hold everything for flush-time cleaning
-        if self._saw_planning:
-            if out_parts:
-                self._plan_buf = "".join(out_parts) + self._plan_buf
-            return ""
         # If the remaining buffer could still become a heading, hold it
         if self._plan_buf and self._is_plan_prefix(self._plan_buf):
             return "".join(out_parts)
@@ -489,41 +349,11 @@ class ReasoningFilter:
         self._plan_buf = ""
         # Only treat as single heading if no newline (single incomplete line)
         if "\n" not in line:
-            m = _PLANNING_HEADING_RE.match(line.strip())
+            m = _match_planning_heading(line.strip())
             if m:
-                grp = m.group(1)
-                if grp is not None:
-                    name = grp.strip().lower()
-                else:
-                    low = line.strip().lower()
-                    name = "done" if "done" in low else "proceeds" if "proceeds" in low else "done"
-                answer_headings = {
-                    "output generation",
-                    "final output generation",
-                    "final polish",
-                    "decision",
-                    "final choice",
-                    "choice",
-                    "conclusion",
-                    "summary",
-                    "result",
-                    "final answer",
-                }
-                if name not in answer_headings:
+                name, after = m
+                if name not in _ANSWER_HEADING_NAMES:
                     return ""
-                # Support both ":" and "->"
-                arrow = line.find("->")
-                colon = line.find(":")
-                after = ""
-                if arrow != -1 and colon != -1:
-                    if arrow < colon:
-                        after = line[arrow + 2 :].strip(" *#\t\r\n\"'✅")
-                    else:
-                        after = line[colon + 1 :].strip(" *#\t\r\n\"'✅")
-                elif arrow != -1:
-                    after = line[arrow + 2 :].strip(" *#\t\r\n\"'✅")
-                elif colon != -1:
-                    after = line[colon + 1 :].strip(" *#\t\r\n\"'✅")
                 if after:
                     return after
                 return ""
@@ -547,10 +377,8 @@ class ReasoningFilter:
     def flush(self) -> str:
         if self.state == "thinking":
             self.pending = ""
-            # Preserve any visible answer that was already buffered in planBuf
             tail = self._plan_flush()
-            # Strip leading enumeration if we had planning
-            if self._saw_planning and re.match(r"^\s*\d+\.\s*", tail):
+            if re.match(r"^\s*\d+\.\s*", tail):
                 tail = re.sub(r"^\s*\d+\.\s*", "", tail)
             return _strip_freeform_deliberation(tail).strip()
 
@@ -571,27 +399,14 @@ class ReasoningFilter:
 
         if out:
             self.emitted = True
-        # Flush any buffered planning line, then apply batch heading strip as
-        # defense-in-depth for cases where headings were not newline-delimited.
         plan_tail = self._plan_flush()
         combined = out + plan_tail
-        # If the combined output still contains planning headings as a batch
-        # (e.g. a complete "Strategy: ...\\nAnswer" arrived in one chunk),
-        # strip them now.
         stripped = _strip_planning_headings(combined)
-        # Strip leading enumeration artifact if we saw planning
-        if self._saw_planning and re.match(r"^\s*\d+\.\s*", stripped):
+        # Only apply enumeration cleanup when the batch strip actually removed
+        # something; otherwise a normal numbered answer keeps its numbering.
+        if stripped != combined and re.match(r"^\s*\d+\.\s*", stripped):
             stripped = re.sub(r"^\s*\d+\.\s*", "", stripped)
-        # Apply freeform deliberation stripping as final defense
-        stripped_free = _strip_freeform_deliberation(stripped).strip()
-        combined_free = _strip_freeform_deliberation(combined).strip()
-        # Use freeform-cleaned versions for comparison
-        if stripped_free != combined_free and self.emitted:
-            if len(stripped_free) < len(combined_free):
-                return stripped_free
-        if stripped_free != combined_free:
-            return stripped_free
-        return combined_free
+        return _strip_freeform_deliberation(stripped).strip()
 
     def _step(self) -> str | object:
         if not self.pending:
